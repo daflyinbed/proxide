@@ -74,6 +74,21 @@ impl Into<logforth::record::Level> for LogLevel {
         }
     }
 }
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct BinaryConfig {
+    pub category: String,
+    pub description: String,
+    pub upstream_type: UpstreamType,
+    pub repo: String,
+    pub dist_url: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub enum UpstreamType {
+    NpmMirror,
+}
+
 pub fn load_config(path: &str) -> Result<Config> {
     let content = std::fs::read_to_string(path)?;
     let config: Config = toml::from_str(&content)?;

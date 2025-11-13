@@ -3,6 +3,7 @@ CREATE TABLE binaries (
   `id` bigint unsigned PRIMARY KEY AUTO_INCREMENT,
   `gmt_created` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT 'create time',
   `gmt_modified` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT 'modified time',
+  `category` varchar(50) NOT NULL COMMENT 'binary category, e.g.: node, sass',
   `parent` varchar(500) NOT NULL COMMENT 'binary parent name, e.g.: /, /v1.0.0/, /v1.0.0/docs/',
   `name` varchar(200) NOT NULL COMMENT 'binary name, dir should ends with /',
   `is_dir` boolean NOT NULL DEFAULT FALSE COMMENT 'is directory',

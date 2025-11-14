@@ -3,7 +3,7 @@ pub mod handlers;
 pub mod repository;
 pub mod routes;
 pub mod state;
-
+pub mod error;
 use crate::routes::build_router;
 use crate::state::AppState;
 use anyhow::Result;

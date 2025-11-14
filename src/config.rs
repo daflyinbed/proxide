@@ -1,24 +1,29 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use utoipa::ToSchema;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Config {
     pub database: DatabaseConfig,
     pub server: ServerConfig,
     pub storage: StorageConfig,
     pub log: LogConfig,
+    pub binary: Vec<BinaryConfig>,
 }
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DatabaseConfig {
     pub uri: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ServerConfig {
     #[serde(default = "default_binding")]
     pub binding: String,
     pub port: u16,
+    pub root_url: String,
 }
 
 impl ServerConfig {
@@ -36,12 +41,14 @@ pub enum StorageConfig {
     S3(S3Config),
 }
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LocalConfig {
     pub max_size: u64,
     pub directory: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct S3Config {
     pub max_size: u64,
     pub endpoint: String,
@@ -52,10 +59,12 @@ pub struct S3Config {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LogConfig {
     pub level: LogLevel,
 }
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub enum LogLevel {
     Error,
     Warn,
@@ -75,16 +84,24 @@ impl Into<logforth::record::Level> for LogLevel {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct BinaryConfig {
     pub category: String,
     pub description: String,
+    pub upstreams: Vec<UpstreamConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UpstreamConfig {
     pub upstream_type: UpstreamType,
     pub repo: String,
     pub dist_url: String,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub enum UpstreamType {
     NpmMirror,
 }

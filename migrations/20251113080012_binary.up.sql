@@ -1,5 +1,5 @@
 -- Add migration script here
-CREATE TABLE binaries (
+CREATE TABLE `binaries` (
   `id` bigint unsigned PRIMARY KEY AUTO_INCREMENT,
   `gmt_created` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT 'create time',
   `gmt_modified` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT 'modified time',
@@ -12,7 +12,7 @@ CREATE TABLE binaries (
   UNIQUE KEY `uk_category_parent_name` (`parent`, `name`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb3;
 
-CREATE TABLE tasks (
+CREATE TABLE `tasks` (
   `id` bigint unsigned PRIMARY KEY AUTO_INCREMENT,
   `gmt_created` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT 'create time',
   `gmt_modified` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT 'modified time',

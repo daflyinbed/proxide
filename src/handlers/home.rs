@@ -1,9 +1,5 @@
-use crate::state::AppState;
 use axum::{
     Json, debug_handler,
-    extract::State,
-    http::{StatusCode, Uri, header},
-    response::{Html, IntoResponse, Response},
 };
 use serde::Serialize;
 use utoipa::ToSchema;

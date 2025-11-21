@@ -172,13 +172,22 @@ pub async fn show_binary(
     match subpath.rsplit_once("/") {
         Some((parent, name)) => {
             if !parent.is_empty() && !name.is_empty() {
-                let items = state
+                let item = state
                     .repo
                     .find_binary(&binary_name, parent, name)
                     .await
-                    .map_err(|err| WebError::CustomApiError(err.into()))?;
-
-                todo!("download")
+                    .map_err(|err| WebError::CustomApiError(err.into()))?
+                    .ok_or(WebError::NotFound)?;
+                if item.is_dir {
+                    let items = state
+                        .repo
+                        .list_binaries(&binary_name, &subpath)
+                        .await
+                        .map_err(|err| WebError::CustomApiError(err.into()))?;
+                    return Ok(Json(format_items(items, &registry_url)).into_response());
+                } else {
+                    todo!("download")
+                }
             }
             let parent = if parent.is_empty() { name } else { parent };
             let items = state

@@ -94,16 +94,20 @@ pub struct BinaryConfig {
 
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct UpstreamConfig {
-    pub upstream_type: UpstreamType,
-    pub repo: String,
-    pub dist_url: String,
+pub enum UpstreamConfig {
+    NpmMirror(NpmMirrorConfig),
+    Github(GithubConfig),
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
-pub enum UpstreamType {
-    NpmMirror,
+pub struct NpmMirrorConfig {}
+
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GithubConfig {
+    pub repo: String,
+    pub owner: String,
 }
 
 pub fn load_config(path: &str) -> Result<Config> {

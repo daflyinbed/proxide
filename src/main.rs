@@ -4,6 +4,7 @@ pub mod repository;
 pub mod routes;
 pub mod state;
 pub mod error;
+pub mod binary;
 use crate::routes::build_router;
 use crate::state::AppState;
 use anyhow::Result;

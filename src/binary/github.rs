@@ -17,8 +17,6 @@ impl GithubProvider {
     }
 }
 
-pub struct ReleaseAssetsIter {}
-
 impl BinarySource for GithubProvider {
     async fn list(&self, dir: &str) -> Result<impl Stream<Item = Result<Vec<BinaryEntry>>>> {
         let releases = self
@@ -49,7 +47,7 @@ impl BinarySource for GithubProvider {
                                 is_dir: true,
                                 url: Some(release.url.to_string()),
                                 size: None,
-                                modified_at: release.published_at,
+                                date: release.published_at,
                             }];
                         }
                         let size = release.assets.len()
@@ -62,7 +60,7 @@ impl BinarySource for GithubProvider {
                                 is_dir: false,
                                 url: Some(asset.browser_download_url.to_string()),
                                 size: Some(asset.size as u64),
-                                modified_at: Some(asset.updated_at),
+                                date: Some(asset.updated_at),
                             })
                         }
                         if release.tarball_url.is_some() {
@@ -74,7 +72,7 @@ impl BinarySource for GithubProvider {
                                     self.config.owner, self.config.repo, release.tag_name
                                 )),
                                 size: None,
-                                modified_at: release.published_at,
+                                date: release.published_at,
                             });
                         }
                         if release.zipball_url.is_some() {
@@ -86,7 +84,7 @@ impl BinarySource for GithubProvider {
                                     self.config.owner, self.config.repo, release.tag_name
                                 )),
                                 size: None,
-                                modified_at: release.published_at,
+                                date: release.published_at,
                             });
                         }
                         result

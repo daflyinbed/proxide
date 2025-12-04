@@ -1,4 +1,6 @@
 mod github;
+mod npm_mirror;
+mod bucket;
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -12,10 +14,15 @@ pub struct BinaryEntry {
     pub url: Option<String>,
     /// 字节大小（未知则 None）
     pub size: Option<u64>,
-    pub modified_at: Option<DateTime<Utc>>,
+    pub date: Option<DateTime<Utc>>,
 }
-
 
 pub trait BinarySource {
     async fn list(&self, dir: &str) -> Result<impl Stream<Item = Result<Vec<BinaryEntry>>>>;
+}
+
+pub enum BinaryProvider {
+    Github(github::GithubProvider),
+    NpmMirror(npm_mirror::NpmMirrorProvider),
+    Bucket(bucket::BucketProvider),
 }

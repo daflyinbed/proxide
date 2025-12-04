@@ -95,13 +95,17 @@ pub struct BinaryConfig {
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum UpstreamConfig {
-    NpmMirror(NpmMirrorConfig),
+    NpmMirror,
     Github(GithubConfig),
+    Bucket(BucketConfig),
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct NpmMirrorConfig {}
+pub struct BucketConfig {
+    pub dist_url: String,
+    pub ignore_dirs: Vec<String>,
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]

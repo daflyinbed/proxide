@@ -1,12 +1,3 @@
-pub mod config;
-pub mod handlers;
-pub mod repository;
-pub mod routes;
-pub mod state;
-pub mod error;
-pub mod binary;
-use crate::routes::build_router;
-use crate::state::AppState;
 use anyhow::Result;
 use fastrace::collector;
 use logforth::append;
@@ -14,6 +5,9 @@ use logforth::record::LevelFilter;
 use tokio::net::TcpListener;
 use tokio::signal;
 use tracing_subscriber::layer::SubscriberExt;
+use proxide::config;
+use proxide::routes::build_router;
+use proxide::state::AppState;
 
 #[tokio::main]
 async fn main() -> Result<()> {

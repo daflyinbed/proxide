@@ -1,6 +1,6 @@
-mod github;
-mod npm_mirror;
-mod bucket;
+pub mod github;
+pub mod npm_mirror;
+pub mod bucket;
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -18,6 +18,7 @@ pub struct BinaryEntry {
 }
 
 pub trait BinarySource {
+    /// dir 开头末尾都有/
     async fn list(&self, dir: &str) -> Result<impl Stream<Item = Result<Vec<BinaryEntry>>>>;
 }
 

@@ -1,7 +1,4 @@
-use crate::{
-    config::Config,
-    repository::mysql::MysqlRepository,
-};
+use crate::{config::Config, repository::mysql::MysqlRepository};
 use anyhow::Result;
 
 #[derive(Debug, Clone)]

@@ -1,5 +1,6 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use utoipa::ToSchema;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -98,6 +99,7 @@ pub enum UpstreamConfig {
     NpmMirror,
     Github(GithubConfig),
     Bucket(BucketConfig),
+    Imagemin(ImageminConfig),
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
@@ -105,6 +107,21 @@ pub enum UpstreamConfig {
 pub struct BucketConfig {
     pub dist_url: String,
     pub ignore_dirs: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageminConfig {
+    pub dist_url: String,
+    pub repo: String,
+    #[serde(default)]
+    pub npm_package_name: Option<String>,
+    #[serde(default)]
+    pub node_platforms: Vec<String>,
+    #[serde(default)]
+    pub node_archs: HashMap<String, Vec<String>>,
+    #[serde(default)]
+    pub bin_files: HashMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]

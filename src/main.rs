@@ -2,12 +2,12 @@ use anyhow::Result;
 use fastrace::collector;
 use logforth::append;
 use logforth::record::LevelFilter;
-use tokio::net::TcpListener;
-use tokio::signal;
-use tracing_subscriber::layer::SubscriberExt;
 use proxide::config;
 use proxide::routes::build_router;
 use proxide::state::AppState;
+use tokio::net::TcpListener;
+use tokio::signal;
+use tracing_subscriber::layer::SubscriberExt;
 
 #[tokio::main]
 async fn main() -> Result<()> {

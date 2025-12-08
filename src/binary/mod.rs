@@ -1,6 +1,7 @@
-pub mod github;
-pub mod npm_mirror;
 pub mod bucket;
+pub mod github;
+pub mod imagemin;
+pub mod npm_mirror;
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -26,4 +27,5 @@ pub enum BinaryProvider {
     Github(github::GithubProvider),
     NpmMirror(npm_mirror::NpmMirrorProvider),
     Bucket(bucket::BucketProvider),
+    Imagemin(imagemin::ImageminProvider),
 }

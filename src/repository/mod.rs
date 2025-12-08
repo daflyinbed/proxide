@@ -25,5 +25,6 @@ pub trait Repository {
 
     async fn list_binaries(&self, category: &str, parent: &str) -> Result<Vec<Binary>>;
 
-    async fn find_binary(&self, category: &str, parent: &str, name: &str) -> Result<Option<Binary>>;
+    async fn find_binary(&self, category: &str, parent: &str, name: &str)
+    -> Result<Option<Binary>>;
 }

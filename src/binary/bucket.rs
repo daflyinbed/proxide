@@ -98,6 +98,6 @@ impl BinarySource for BucketProvider {
             }));
         }
         let result = entries;
-        Ok(stream::iter(vec![Ok(result)]))
+        Ok(stream::once(async { Ok(result) }))
     }
 }

@@ -1,6 +1,4 @@
-use axum::{
-    Json, debug_handler,
-};
+use axum::{Json, debug_handler};
 use serde::Serialize;
 use utoipa::ToSchema;
 

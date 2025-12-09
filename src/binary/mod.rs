@@ -5,7 +5,7 @@ pub mod npm_mirror;
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use futures::Stream;
+use futures::stream::BoxStream;
 
 #[derive(Debug, Clone)]
 pub struct BinaryEntry {
@@ -20,7 +20,7 @@ pub struct BinaryEntry {
 
 pub trait BinarySource {
     /// dir 开头末尾都有/
-    async fn list(&self, dir: &str) -> Result<impl Stream<Item = Result<Vec<BinaryEntry>>>>;
+    async fn list<'a>(&'a self, dir: &'a str) -> Result<BoxStream<'a, Result<BinaryEntry>>>;
 }
 
 pub enum BinaryProvider {

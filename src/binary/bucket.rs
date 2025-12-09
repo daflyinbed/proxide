@@ -4,7 +4,8 @@ use crate::{
 };
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use futures::stream;
+use futures::stream::BoxStream;
+use futures::{StreamExt, stream};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
@@ -41,10 +42,7 @@ struct CommonPrefix {
 }
 
 impl BinarySource for BucketProvider {
-    async fn list(
-        &self,
-        dir: &str,
-    ) -> Result<impl futures::Stream<Item = anyhow::Result<Vec<BinaryEntry>>>> {
+    async fn list<'a>(&'a self, dir: &'a str) -> Result<BoxStream<'a, Result<BinaryEntry>>> {
         let prefix = dir.trim_start_matches('/');
         let resp = self
             .client
@@ -58,24 +56,21 @@ impl BinarySource for BucketProvider {
             contents,
             common_prefixes,
         } = serde_xml_rs::from_str(&resp)?;
-        let mut entries = contents
-            .into_iter()
-            .filter_map(|content| {
-                if content.key.ends_with('/') {
-                    return None;
-                }
-                let name = content.key.rsplit("/").next().unwrap_or(&content.key);
-                Some(BinaryEntry {
-                    name: name.to_string(),
-                    is_dir: false,
-                    url: Some(format!("{}{}", self.config.dist_url, content.key)),
-                    size: content.size,
-                    date: content.last_modified,
-                })
-            })
-            .collect::<Vec<_>>();
-        if let Some(common_prefixes) = common_prefixes {
-            entries.extend(common_prefixes.into_iter().filter_map(|prefix| {
+        let content_entries = contents.into_iter().filter_map(|content| {
+            if content.key.ends_with('/') {
+                return None;
+            }
+            let name = content.key.rsplit("/").next().unwrap_or(&content.key);
+            Some(Ok(BinaryEntry {
+                name: name.to_string(),
+                is_dir: false,
+                url: Some(format!("{}{}", self.config.dist_url, content.key)),
+                size: content.size,
+                date: content.last_modified,
+            }))
+        });
+        if let Some(common) = common_prefixes {
+            let prefix_entries = common.into_iter().filter_map(move |prefix| {
                 let trimmed = prefix.prefix.trim_end_matches('/');
                 let leaf = trimmed.rsplit('/').next().unwrap_or(trimmed);
                 let name = format!("{}/", leaf);
@@ -88,16 +83,17 @@ impl BinarySource for BucketProvider {
                 {
                     return None;
                 }
-                Some(BinaryEntry {
+                Some(Ok(BinaryEntry {
                     name,
                     is_dir: true,
                     url: None,
                     size: None,
                     date: None,
-                })
-            }));
+                }))
+            });
+            return Ok(stream::iter(content_entries.chain(prefix_entries)).boxed());
         }
-        let result = entries;
-        Ok(stream::once(async { Ok(result) }))
+
+        Ok(stream::iter(content_entries).boxed())
     }
 }

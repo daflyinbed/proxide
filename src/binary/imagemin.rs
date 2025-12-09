@@ -4,7 +4,8 @@ use crate::{
 };
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use futures::{Stream, stream};
+use futures::stream::BoxStream;
+use futures::{StreamExt, stream};
 use reqwest::{Client, header::CONTENT_LENGTH};
 use serde::Deserialize;
 use serde_json::Value;
@@ -90,156 +91,218 @@ impl ImageminProvider {
         Ok(size)
     }
 
-    async fn entries_stream(
-        &self,
-        dir: &str,
+    async fn entries_stream<'a>(
+        &'a self,
+        dir: &'a str,
         versions: Vec<VersionInfo>,
-    ) -> Result<impl Stream<Item = Result<Vec<BinaryEntry>>>> {
+    ) -> Result<BoxStream<'a, Result<BinaryEntry>>> {
         let trimmed = dir.trim_matches('/');
-        let segments: Vec<&str> = if trimmed.is_empty() {
+        let segments: Vec<String> = if trimmed.is_empty() {
             Vec::new()
         } else {
-            trimmed.split('/').collect()
+            trimmed.split('/').map(|s| s.to_string()).collect()
+        };
+        let mut iter = segments.into_iter();
+        let first = iter.next();
+        let second = iter.next();
+        let third = iter.next();
+        let fourth = iter.next();
+        let stream: BoxStream<'a, Result<BinaryEntry>> = match (first, second, third, fourth) {
+            (None, None, None, None) => self.root_entries(versions),
+            (Some(version_segment), None, None, None) => {
+                self.version_root_entries(&versions, version_segment.as_str())
+            }
+            (Some(version_segment), Some(vendor), None, None) if vendor == "vendor" => {
+                self.platform_entries(&versions, version_segment.as_str())
+            }
+            (Some(version_segment), Some(vendor), Some(platform), None) if vendor == "vendor" => {
+                self.vendor_platform_entries(
+                    dir,
+                    &versions,
+                    version_segment.as_str(),
+                    platform.as_str(),
+                )
+                .await?
+            }
+            (Some(version_segment), Some(vendor), Some(platform), Some(arch))
+                if vendor == "vendor" =>
+            {
+                let info = Self::find_version(&versions, version_segment.as_str()).cloned();
+                if let Some(info) = info {
+                    self.vendor_platform_arch_entries_stream(dir, info, platform, arch)
+                } else {
+                    stream::empty().boxed()
+                }
+            }
+
+            _ => stream::empty().boxed(),
         };
 
-        let mut entries = match segments.as_slice() {
-            [] => versions
-                .iter()
-                .map(|info| BinaryEntry {
-                    name: format!("v{}/", info.version),
+        Ok(stream)
+    }
+
+    fn root_entries(&self, versions: Vec<VersionInfo>) -> BoxStream<'static, Result<BinaryEntry>> {
+        stream::iter(versions.into_iter().map(|info| {
+            Ok(BinaryEntry {
+                name: format!("v{}/", info.version),
+                is_dir: true,
+                url: None,
+                size: None,
+                date: info.date,
+            })
+        }))
+        .boxed()
+    }
+
+    fn version_root_entries(
+        &self,
+        versions: &[VersionInfo],
+        version_segment: &str,
+    ) -> BoxStream<'static, Result<BinaryEntry>> {
+        Self::find_version(versions, version_segment)
+            .map(|info| {
+                stream::iter([Ok(BinaryEntry {
+                    name: "vendor/".to_string(),
                     is_dir: true,
                     url: None,
                     size: None,
                     date: info.date.clone(),
-                })
-                .collect(),
-            [version_segment] => {
-                let version_segment = *version_segment;
-                if let Some(info) = Self::find_version(&versions, version_segment) {
-                    vec![BinaryEntry {
-                        name: "vendor/".to_string(),
+                })])
+                .boxed()
+            })
+            .unwrap_or_else(|| stream::empty().boxed())
+    }
+
+    fn platform_entries(
+        &self,
+        versions: &[VersionInfo],
+        version_segment: &str,
+    ) -> BoxStream<'static, Result<BinaryEntry>> {
+        let platforms = self.config.node_platforms.clone();
+        Self::find_version(versions, version_segment)
+            .map(|info| {
+                let date = info.date.clone();
+                stream::iter(platforms.into_iter().map(move |platform| {
+                    Ok(BinaryEntry {
+                        name: format!("{platform}/"),
                         is_dir: true,
                         url: None,
                         size: None,
-                        date: info.date.clone(),
-                    }]
-                } else {
-                    Vec::new()
-                }
-            }
-            [version_segment, "vendor"] => {
-                let version_segment = *version_segment;
-                if let Some(info) = Self::find_version(&versions, version_segment) {
-                    self.config
-                        .node_platforms
-                        .iter()
-                        .map(|platform| BinaryEntry {
-                            name: format!("{platform}/"),
-                            is_dir: true,
-                            url: None,
-                            size: None,
-                            date: info.date.clone(),
-                        })
-                        .collect()
-                } else {
-                    Vec::new()
-                }
-            }
-            [version_segment, "vendor", platform] => {
-                let version_segment = *version_segment;
-                let platform = *platform;
+                        date: date.clone(),
+                    })
+                }))
+                .boxed()
+            })
+            .unwrap_or_else(|| stream::empty().boxed())
+    }
 
-                if !self.is_supported_platform(platform) {
-                    Vec::new()
-                } else if let Some(info) = Self::find_version(&versions, version_segment) {
-                    if let Some(archs) = self
-                        .config
-                        .node_archs
-                        .get(platform)
-                        .filter(|list| !list.is_empty())
-                    {
-                        archs
-                            .iter()
-                            .map(|arch| BinaryEntry {
-                                name: format!("{arch}/"),
-                                is_dir: true,
-                                url: None,
-                                size: None,
-                                date: info.date.clone(),
-                            })
-                            .collect()
-                    } else {
-                        self.config
-                            .bin_files
-                            .get(platform)
-                            .map(|files| {
-                                files
-                                    .iter()
-                                    .map(|file| BinaryEntry {
-                                        name: file.clone(),
-                                        is_dir: false,
-                                        url: Some(self.artifact_url(dir, file)),
-                                        size: None,
-                                        date: info.date.clone(),
-                                    })
-                                    .collect()
-                            })
-                            .unwrap_or_default()
-                    }
-                } else {
-                    Vec::new()
-                }
-            }
-            [version_segment, "vendor", platform, arch] => {
-                let version_segment = *version_segment;
-                let platform = *platform;
-                let arch = *arch;
-
-                if !self.is_supported_platform(platform) {
-                    Vec::new()
-                } else if let Some(info) = Self::find_version(&versions, version_segment) {
-                    let arch_exists = self
-                        .config
-                        .node_archs
-                        .get(platform)
-                        .map(|list| list.iter().any(|value| value == arch))
-                        .unwrap_or(false);
-                    if !arch_exists {
-                        Vec::new()
-                    } else {
-                        self.config
-                            .bin_files
-                            .get(platform)
-                            .map(|files| {
-                                files
-                                    .iter()
-                                    .map(|file| BinaryEntry {
-                                        name: file.clone(),
-                                        is_dir: false,
-                                        url: Some(self.artifact_url(dir, file)),
-                                        size: None,
-                                        date: info.date.clone(),
-                                    })
-                                    .collect()
-                            })
-                            .unwrap_or_default()
-                    }
-                } else {
-                    Vec::new()
-                }
-            }
-            _ => Vec::new(),
-        };
-
-        for entry in &mut entries {
-            if !entry.is_dir {
-                if let Some(url) = &entry.url {
-                    entry.size = self.fetch_content_length(url).await?;
-                }
-            }
+    async fn vendor_platform_entries<'a>(
+        &'a self,
+        dir: &'a str,
+        versions: &[VersionInfo],
+        version_segment: &str,
+        platform: &str,
+    ) -> Result<BoxStream<'a, Result<BinaryEntry>>> {
+        if !self.is_supported_platform(platform) {
+            return Ok(stream::empty().boxed());
         }
 
-        Ok(stream::iter(vec![Ok(entries)]))
+        let Some(info) = Self::find_version(versions, version_segment) else {
+            return Ok(stream::empty().boxed());
+        };
+
+        if let Some(archs) = self
+            .config
+            .node_archs
+            .get(platform)
+            .cloned()
+            .filter(|list| !list.is_empty())
+        {
+            let date = info.date.clone();
+            let stream = stream::iter(archs.into_iter().map(move |arch| {
+                Ok(BinaryEntry {
+                    name: format!("{arch}/"),
+                    is_dir: true,
+                    url: None,
+                    size: None,
+                    date: date.clone(),
+                })
+            }))
+            .boxed();
+            Ok(stream)
+        } else {
+            let Some(files) = self.config.bin_files.get(platform).cloned() else {
+                return Ok(stream::empty().boxed());
+            };
+
+            let dir = dir.to_string();
+            let date = info.date.clone();
+            Ok(stream::iter(files.into_iter())
+                .then(move |file| {
+                    let url = self.artifact_url(&dir, &file);
+                    let date = date.clone();
+                    let this = self;
+                    async move {
+                        let size = this.fetch_content_length(&url).await?;
+                        Ok(BinaryEntry {
+                            name: file,
+                            is_dir: false,
+                            url: Some(url),
+                            size,
+                            date,
+                        })
+                    }
+                })
+                .boxed())
+        }
+    }
+
+    fn vendor_platform_arch_entries_stream<'a>(
+        &'a self,
+        dir: &'a str,
+        info: VersionInfo,
+        platform: String,
+        arch: String,
+    ) -> BoxStream<'a, Result<BinaryEntry>> {
+        use futures::stream;
+        if !self.is_supported_platform(&platform) {
+            return stream::empty().boxed();
+        }
+
+        let arch_exists = self
+            .config
+            .node_archs
+            .get(&platform)
+            .map(|list| list.iter().any(|value| value == &arch))
+            .unwrap_or(false);
+
+        if !arch_exists {
+            return stream::empty().boxed();
+        }
+
+        let Some(files) = self.config.bin_files.get(&platform) else {
+            return stream::empty().boxed();
+        };
+
+        let dir = dir.to_string();
+        let info_date = info.date.clone();
+
+        let entries_stream = stream::iter(files.iter().cloned()).then(move |file| {
+            let url = self.artifact_url(&dir, &file);
+            let date = info_date.clone();
+            let this = self;
+            async move {
+                let size = this.fetch_content_length(&url).await?;
+                Ok(BinaryEntry {
+                    name: file,
+                    is_dir: false,
+                    url: Some(url),
+                    size,
+                    date,
+                })
+            }
+        });
+        entries_stream.boxed()
     }
 }
 
@@ -251,7 +314,7 @@ struct NpmPackageResponse {
     time: HashMap<String, String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct VersionInfo {
     /// semver
     version: String,
@@ -259,7 +322,7 @@ struct VersionInfo {
 }
 
 impl BinarySource for ImageminProvider {
-    async fn list(&self, dir: &str) -> Result<impl Stream<Item = Result<Vec<BinaryEntry>>>> {
+    async fn list<'a>(&'a self, dir: &'a str) -> Result<BoxStream<'a, Result<BinaryEntry>>> {
         let pkg_url = format!("https://registry.npmjs.com/{}", self.npm_package_name());
         let pkg = self
             .client

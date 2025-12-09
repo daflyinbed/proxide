@@ -3,7 +3,8 @@ use crate::{
     config::GithubConfig,
 };
 use anyhow::Result;
-use futures::{Stream, StreamExt, future};
+use futures::stream::BoxStream;
+use futures::{StreamExt, future, stream};
 use octocrab::Octocrab;
 
 pub struct GithubProvider {
@@ -18,7 +19,7 @@ impl GithubProvider {
 }
 
 impl BinarySource for GithubProvider {
-    async fn list(&self, dir: &str) -> Result<impl Stream<Item = Result<Vec<BinaryEntry>>>> {
+    async fn list<'a>(&'a self, dir: &'a str) -> Result<BoxStream<'a, Result<BinaryEntry>>> {
         let releases = self
             .api
             .repos(&self.config.owner, &self.config.repo)
@@ -28,7 +29,7 @@ impl BinarySource for GithubProvider {
             .send()
             .await?
             .into_stream(&self.api);
-        let result = releases
+        let stream = releases
             .filter(move |release| {
                 if dir == "/" {
                     return future::ready(true);
@@ -38,18 +39,17 @@ impl BinarySource for GithubProvider {
                     _ => future::ready(true),
                 }
             })
-            .map(move |release| {
-                release
-                    .map(|release| {
-                        if dir == "/" {
-                            return vec![BinaryEntry {
-                                name: format!("{}/", release.tag_name),
-                                is_dir: true,
-                                url: Some(release.url.to_string()),
-                                size: None,
-                                date: release.published_at,
-                            }];
-                        }
+            .flat_map(move |release| match release {
+                Ok(release) => {
+                    let entries = if dir == "/" {
+                        vec![BinaryEntry {
+                            name: format!("{}/", release.tag_name),
+                            is_dir: true,
+                            url: Some(release.url.to_string()),
+                            size: None,
+                            date: release.published_at,
+                        }]
+                    } else {
                         let size = release.assets.len()
                             + if release.tarball_url.is_some() { 1 } else { 0 }
                             + if release.zipball_url.is_some() { 1 } else { 0 };
@@ -77,10 +77,10 @@ impl BinarySource for GithubProvider {
                         }
                         if release.zipball_url.is_some() {
                             result.push(BinaryEntry {
-                                name: format!("{}.tar.gz", release.tag_name),
+                                name: format!("{}.zip", release.tag_name),
                                 is_dir: false,
                                 url: Some(format!(
-                                    "https://github.com/{}/{}/archive/{}.tar.gz",
+                                    "https://github.com/{}/{}/archive/{}.zip",
                                     self.config.owner, self.config.repo, release.tag_name
                                 )),
                                 size: None,
@@ -88,9 +88,13 @@ impl BinarySource for GithubProvider {
                             });
                         }
                         result
-                    })
-                    .map_err(|e| e.into())
+                    };
+
+                    stream::iter(entries.into_iter().map(Ok)).boxed()
+                }
+                Err(err) => stream::once(async { Err(err.into()) }).boxed(),
             });
-        Ok(result)
+
+        Ok(stream.boxed())
     }
 }

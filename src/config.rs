@@ -112,6 +112,7 @@ pub struct BucketConfig {
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ImageminConfig {
+    pub npm_registry_url: String,
     pub dist_url: String,
     pub repo: String,
     #[serde(default)]

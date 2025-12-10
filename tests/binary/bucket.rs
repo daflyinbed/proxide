@@ -47,10 +47,7 @@ async fn test_bucket_provider() {
         .unwrap()
         .map(|v| v.unwrap())
         .collect::<Vec<_>>()
-        .await
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>();
+        .await;
     assert_eq!(root.len(), 240);
     let inner = provider
         .list("/96.0.4664.45/")
@@ -58,9 +55,6 @@ async fn test_bucket_provider() {
         .unwrap()
         .map(|v| v.unwrap())
         .collect::<Vec<_>>()
-        .await
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>();
+        .await;
     assert_eq!(inner.len(), 5);
 }

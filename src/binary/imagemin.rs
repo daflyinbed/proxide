@@ -323,7 +323,7 @@ struct VersionInfo {
 
 impl BinarySource for ImageminProvider {
     async fn list<'a>(&'a self, dir: &'a str) -> Result<BoxStream<'a, Result<BinaryEntry>>> {
-        let pkg_url = format!("https://registry.npmjs.com/{}", self.npm_package_name());
+        let pkg_url = format!("{}/{}", self.config.npm_registry_url, self.npm_package_name());
         let pkg = self
             .client
             .get(&pkg_url)

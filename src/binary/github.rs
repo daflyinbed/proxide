@@ -12,8 +12,7 @@ pub struct GithubProvider {
     api: Octocrab,
 }
 impl GithubProvider {
-    pub fn new(config: GithubConfig) -> Result<Self> {
-        let api = octocrab::OctocrabBuilder::default().build()?;
+    pub fn new(config: GithubConfig, api: Octocrab) -> Result<Self> {
         Ok(Self { config, api })
     }
 }

@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO change_stream_cursors (id, since) VALUES (1, ?) ON DUPLICATE KEY UPDATE since = VALUES(since)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "2dafb1841378e9e5f5a20172bbde8b66bb25a4bf22bc0fa5d371e7da5068ed80"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "UPDATE package_tags SET version = ? WHERE package_id = ? AND tag = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "fd8ba82b3ee58820bb251a945dd67346056874e4955871b86b631c9e91d1988a"
+}

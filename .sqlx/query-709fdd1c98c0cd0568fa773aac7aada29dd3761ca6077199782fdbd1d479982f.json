@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "UPDATE packages SET abbreviated_dist_id = ?, full_dist_id = ? WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "709fdd1c98c0cd0568fa773aac7aada29dd3761ca6077199782fdbd1d479982f"
+}

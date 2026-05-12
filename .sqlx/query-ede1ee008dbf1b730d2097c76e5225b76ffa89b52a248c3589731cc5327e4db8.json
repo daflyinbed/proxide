@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO dists (name, path, size, shasum, integrity) VALUES (?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "ede1ee008dbf1b730d2097c76e5225b76ffa89b52a248c3589731cc5327e4db8"
+}

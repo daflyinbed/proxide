@@ -1,31 +1,28 @@
-use axum::{Json, response::IntoResponse};
+use axum::{response::IntoResponse, Json};
 use reqwest::StatusCode;
 use serde::Serialize;
 
 #[derive(thiserror::Error, Debug)]
 pub enum WebError {
-    /// 501 Internal Server Error
-    #[error("Internal Server Error:\n{0}")]
+    #[error("[INTERNAL_SERVER_ERROR] {0}")]
     CustomApiError(anyhow::Error),
 
-    /// 404 Not Found
-    #[error("Not found")]
-    NotFound,
+    #[error("[NOT_FOUND] {0}")]
+    NotFound(String),
 
-    /// 400 Bad Request
-    #[error("Bad Request: {0}")]
+    #[error("[BAD_REQUEST] {0}")]
     BadRequest(String),
 }
 
 #[derive(Debug, Serialize)]
 pub struct ApiErrorDetail {
-    detail: String,
+    error: String,
 }
 
 impl From<WebError> for ApiErrorDetail {
     fn from(value: WebError) -> Self {
         Self {
-            detail: value.to_string(),
+            error: value.to_string(),
         }
     }
 }
@@ -39,7 +36,7 @@ impl IntoResponse for WebError {
                 Json(ApiErrorDetail::from(err)),
             )
                 .into_response(),
-            err @ Self::NotFound => {
+            err @ Self::NotFound(..) => {
                 (StatusCode::NOT_FOUND, Json(ApiErrorDetail::from(err))).into_response()
             }
             err @ Self::BadRequest(..) => {

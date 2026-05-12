@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "UPDATE package_versions SET abbrev_dist_id = ?, manifest_dist_id = ?, tar_dist_id = ?, readme_dist_id = ? WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "c9f3812a473efae416f6e974f6a61b30b183d837638b2a99c52af7a1af606586"
+}

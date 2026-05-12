@@ -1,6 +1,9 @@
 pub mod config;
 pub mod error;
 pub mod handlers;
+pub mod npm;
 pub mod repository;
 pub mod routes;
 pub mod state;
+pub mod storage;
+pub mod worker;

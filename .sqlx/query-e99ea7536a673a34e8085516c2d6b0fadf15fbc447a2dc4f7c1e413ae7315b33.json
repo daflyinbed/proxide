@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO package_versions (package_id, version, publish_time, is_pre_release, padding_version, abbrev_dist_id, manifest_dist_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "e99ea7536a673a34e8085516c2d6b0fadf15fbc447a2dc4f7c1e413ae7315b33"
+}

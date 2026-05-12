@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "DELETE FROM package_tags WHERE package_id = ? AND tag = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "e3cc8d2f41dff5d34dec0f753c536c516e2d879da0b9bd9c447ea70ce1165758"
+}

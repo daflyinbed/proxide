@@ -152,19 +152,19 @@ pub async fn sync_package(
         let is_pre_release = is_prerelease(ver_str);
         let padding_version = Some(pad_version(ver_str));
 
-        let abbrev_s3 = format!("packages/{fullname}/{ver_str}/abbreviated.json");
-        let manifest_s3 = format!("packages/{fullname}/{ver_str}/package.json");
+        let abbrev_storage_key = format!("packages/{fullname}/{ver_str}/abbreviated.json");
+        let manifest_storage_key = format!("packages/{fullname}/{ver_str}/package.json");
 
         let abbrev_data = build_abbreviated_version(&ver_data.name, ver_data);
         let manifest_data = serde_json::to_vec(&ver_data).unwrap_or_default();
 
-        if let Err(e) = repo.put_s3(&abbrev_s3, abbrev_data.clone()).await {
-            error!("S3 upload failed for {fullname}@{ver_str} abbreviated: {e:#}");
+        if let Err(e) = repo.put_storage(&abbrev_storage_key, abbrev_data.clone()).await {
+            error!("Storage upload failed for {fullname}@{ver_str} abbreviated: {e:#}");
             continue;
         }
 
-        if let Err(e) = repo.put_s3(&manifest_s3, manifest_data.clone()).await {
-            error!("S3 upload failed for {fullname}@{ver_str} manifest: {e:#}");
+        if let Err(e) = repo.put_storage(&manifest_storage_key, manifest_data.clone()).await {
+            error!("Storage upload failed for {fullname}@{ver_str} manifest: {e:#}");
             continue;
         }
 
@@ -176,14 +176,14 @@ pub async fn sync_package(
             padding_version,
             abbrev_dist: PendingDist {
                 name: format!("{fullname}@{ver_str}-abbrev"),
-                path: abbrev_s3.clone(),
+                path: abbrev_storage_key.clone(),
                 size: abbrev_data.len() as i64,
                 shasum: None,
                 integrity: None,
             },
             manifest_dist: PendingDist {
                 name: format!("{fullname}@{ver_str}-manifest"),
-                path: manifest_s3.clone(),
+                path: manifest_storage_key.clone(),
                 size: manifest_data.len() as i64,
                 shasum: None,
                 integrity: None,
@@ -207,32 +207,32 @@ pub async fn sync_package(
     let old_full_dist_id = old_pkg.as_ref().and_then(|p| p.full_dist_id);
 
     let abbreviated_manifest = build_abbreviated_manifest(&packument);
-    let abbrev_s3_key = format!("packages/{fullname}/abbreviated_manifests.json");
-    let full_s3_key = format!("packages/{fullname}/full_manifests.json");
+    let abbrev_storage_key = format!("packages/{fullname}/abbreviated_manifests.json");
+    let full_storage_key = format!("packages/{fullname}/full_manifests.json");
 
     let abbrev_bytes = serde_json::to_vec(&abbreviated_manifest).unwrap_or_default();
     let full_bytes: Vec<u8> = raw_bytes.to_vec();
 
-    repo.put_s3(&abbrev_s3_key, abbrev_bytes.clone())
+    repo.put_storage(&abbrev_storage_key, abbrev_bytes.clone())
         .await
-        .context("failed to upload abbreviated manifest to S3")?;
-    repo.put_s3(&full_s3_key, full_bytes.clone())
+        .context("failed to upload abbreviated manifest to storage")?;
+    repo.put_storage(&full_storage_key, full_bytes.clone())
         .await
-        .context("failed to upload full manifest to S3")?;
+        .context("failed to upload full manifest to storage")?;
 
     let params = SyncManifestParams {
         package_id,
         tags: packument.dist_tags.clone(),
         abbrev_manifest: PendingDist {
             name: format!("{fullname}-abbrev-manifests"),
-            path: abbrev_s3_key.clone(),
+            path: abbrev_storage_key.clone(),
             size: abbrev_bytes.len() as i64,
             shasum: None,
             integrity: None,
         },
         full_manifest: PendingDist {
             name: format!("{fullname}-full-manifests"),
-            path: full_s3_key.clone(),
+            path: full_storage_key.clone(),
             size: full_bytes.len() as i64,
             shasum: None,
             integrity: None,

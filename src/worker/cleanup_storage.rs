@@ -2,11 +2,11 @@ use crate::repository::Repository;
 use std::sync::Arc;
 use tracing::error;
 
-pub async fn cleanup_orphan_s3(repo: &Arc<dyn Repository>) -> anyhow::Result<()> {
+pub async fn cleanup_orphan_storage(repo: &Arc<dyn Repository>) -> anyhow::Result<()> {
     let orphans = repo.list_orphan_dists().await?;
 
     if orphans.is_empty() {
-        println!("No orphan S3 objects found.");
+        println!("No orphan storage objects found.");
         return Ok(());
     }
 
@@ -15,18 +15,18 @@ pub async fn cleanup_orphan_s3(repo: &Arc<dyn Repository>) -> anyhow::Result<()>
         println!("  id={} path={}", d.id, d.path);
     }
 
-    let mut s3_deleted = 0u32;
-    let mut s3_failed = 0u32;
+    let mut deleted = 0u32;
+    let mut failed = 0u32;
     let mut ids_to_delete: Vec<i64> = Vec::new();
 
     for d in &orphans {
         match repo.delete_content(d.id).await {
             Ok(()) => {
-                s3_deleted += 1;
+                deleted += 1;
             }
             Err(e) => {
                 error!("failed to delete orphan dist id={} path={}: {e:#}", d.id, d.path);
-                s3_failed += 1;
+                failed += 1;
                 ids_to_delete.push(d.id);
             }
         }
@@ -34,9 +34,9 @@ pub async fn cleanup_orphan_s3(repo: &Arc<dyn Repository>) -> anyhow::Result<()>
 
     if !ids_to_delete.is_empty() {
         let db_deleted = repo.delete_dists_by_ids(&ids_to_delete).await?;
-        println!("Force-deleted {db_deleted} dist row(s) from DB (S3 objects may still exist).");
+        println!("Force-deleted {db_deleted} dist row(s) from DB (storage objects may still exist).");
     }
 
-    println!("Done: {s3_deleted} S3 object(s) deleted, {s3_failed} S3 deletion(s) failed.");
+    println!("Done: {deleted} object(s) deleted, {failed} deletion(s) failed.");
     Ok(())
 }

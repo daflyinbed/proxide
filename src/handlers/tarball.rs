@@ -85,10 +85,10 @@ pub async fn download_tarball(
 
     let data = bytes.to_vec();
 
-    let s3_key = format!("packages/{fullname}/{version_name}/{filename}");
+    let storage_key = format!("packages/{fullname}/{version_name}/{filename}");
     let dist_id = state
         .repo
-        .put_content(&filename, &s3_key, data.clone(), None, None)
+        .put_content(&filename, &storage_key, data.clone(), None, None)
         .await
         .map_err(WebError::CustomApiError)?;
 

@@ -2,18 +2,19 @@ use crate::config::StorageConfig;
 use anyhow::{Context, Result};
 use futures::StreamExt;
 use object_store::aws::AmazonS3Builder;
+use object_store::local::LocalFileSystem;
 use object_store::path::Path;
 use object_store::ObjectStore;
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]
-pub struct S3Storage {
+pub struct Storage {
     inner: Arc<dyn ObjectStore>,
 }
 
-impl S3Storage {
+impl Storage {
     pub fn new(config: &StorageConfig) -> Result<Self> {
-        match config {
+        let store: Arc<dyn ObjectStore> = match config {
             StorageConfig::S3(s3_cfg) => {
                 let mut builder = AmazonS3Builder::new()
                     .with_endpoint(&s3_cfg.endpoint)
@@ -30,12 +31,15 @@ impl S3Storage {
                 }
 
                 let store = builder.build().context("failed to build S3 client")?;
-                Ok(Self {
-                    inner: Arc::new(store),
-                })
+                Arc::new(store)
             }
-            StorageConfig::Local(_) => anyhow::bail!("local storage not yet implemented as S3Storage; use a real S3 config"),
-        }
+            StorageConfig::Local(local_cfg) => {
+                let store = LocalFileSystem::new_with_prefix(&local_cfg.directory)
+                    .context("failed to create local storage")?;
+                Arc::new(store)
+            }
+        };
+        Ok(Self { inner: store })
     }
 
     pub async fn get(&self, key: &str) -> Result<Vec<u8>> {

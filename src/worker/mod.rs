@@ -1,6 +1,6 @@
 pub mod changes_poller;
 pub mod cleanup;
-pub mod cleanup_s3;
+pub mod cleanup_storage;
 pub mod sync_package;
 pub mod task_consumer;
 

@@ -137,13 +137,13 @@ pub trait Repository: Send + Sync + 'static {
     async fn put_content(
         &self,
         name: &str,
-        s3_key: &str,
+        storage_key: &str,
         data: Vec<u8>,
         shasum: Option<&str>,
         integrity: Option<&str>,
     ) -> Result<i64>;
     async fn delete_content(&self, dist_id: i64) -> Result<()>;
-    async fn put_s3(&self, s3_key: &str, data: Vec<u8>) -> Result<()>;
+    async fn put_storage(&self, storage_key: &str, data: Vec<u8>) -> Result<()>;
 
     // ── packages ──
 

@@ -47,14 +47,12 @@ pub enum StorageConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LocalConfig {
-    pub max_size: u64,
     pub directory: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct S3Config {
-    pub max_size: u64,
     pub endpoint: String,
     pub access_key_id: String,
     pub secret_access_key: String,

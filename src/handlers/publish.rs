@@ -310,10 +310,10 @@ pub async fn publish_package(
     let padding_version = Some(pad_version(version_str));
     let publish_time = chrono::Utc::now().naive_utc();
 
-    let tar_s3_key = format!("packages/{fullname}/{version_str}/{attachment_filename}");
+    let tar_storage_key = format!("packages/{fullname}/{version_str}/{attachment_filename}");
     state
         .repo
-        .put_s3(&tar_s3_key, tarball_bytes.clone())
+        .put_storage(&tar_storage_key, tarball_bytes.clone())
         .await
         .map_err(WebError::CustomApiError)?;
 
@@ -345,7 +345,7 @@ pub async fn publish_package(
     }
 
     let manifest_data = serde_json::to_vec(&version_json).unwrap_or_default();
-    let manifest_s3 = format!("packages/{fullname}/{version_str}/package.json");
+    let manifest_storage_key = format!("packages/{fullname}/{version_str}/package.json");
 
     let abbrev_ver = PackageVersion {
         id: None,
@@ -485,25 +485,25 @@ pub async fn publish_package(
     let mut abbrev_val = serde_json::to_value(&abbrev_entry).unwrap_or_default();
     abbrev_val["name"] = serde_json::Value::String(fullname.clone());
     let abbrev_data = serde_json::to_vec(&abbrev_val).unwrap_or_default();
-    let abbrev_s3 = format!("packages/{fullname}/{version_str}/abbreviated.json");
+    let abbrev_storage_key = format!("packages/{fullname}/{version_str}/abbreviated.json");
 
     let readme_content = payload.readme.as_deref().unwrap_or("");
     let readme_data = readme_content.as_bytes().to_vec();
-    let readme_s3 = format!("packages/{fullname}/{version_str}/readme.md");
+    let readme_storage_key = format!("packages/{fullname}/{version_str}/readme.md");
 
     state
         .repo
-        .put_s3(&manifest_s3, manifest_data.clone())
+        .put_storage(&manifest_storage_key, manifest_data.clone())
         .await
         .map_err(WebError::CustomApiError)?;
     state
         .repo
-        .put_s3(&abbrev_s3, abbrev_data.clone())
+        .put_storage(&abbrev_storage_key, abbrev_data.clone())
         .await
         .map_err(WebError::CustomApiError)?;
     state
         .repo
-        .put_s3(&readme_s3, readme_data.clone())
+        .put_storage(&readme_storage_key, readme_data.clone())
         .await
         .map_err(WebError::CustomApiError)?;
 
@@ -515,28 +515,28 @@ pub async fn publish_package(
         padding_version,
         abbrev_dist: PendingDist {
             name: format!("{fullname}@{version_str}-abbrev"),
-            path: abbrev_s3,
+            path: abbrev_storage_key,
             size: abbrev_data.len() as i64,
             shasum: None,
             integrity: None,
         },
         manifest_dist: PendingDist {
             name: format!("{fullname}@{version_str}-manifest"),
-            path: manifest_s3,
+            path: manifest_storage_key,
             size: manifest_data.len() as i64,
             shasum: None,
             integrity: None,
         },
         tar_dist: PendingDist {
             name: format!("{fullname}@{version_str}-tar"),
-            path: tar_s3_key,
+            path: tar_storage_key,
             size: tarball_bytes.len() as i64,
             shasum: Some(shasum),
             integrity: Some(integrity),
         },
         readme_dist: PendingDist {
             name: format!("{fullname}@{version_str}-readme"),
-            path: readme_s3,
+            path: readme_storage_key,
             size: readme_data.len() as i64,
             shasum: None,
             integrity: None,
@@ -645,7 +645,7 @@ async fn refresh_manifests(
         },
     };
     let abbrev_manifest_bytes = serde_json::to_vec(&abbrev_manifest).unwrap_or_default();
-    let abbrev_manifest_s3 = format!("packages/{fullname}/abbreviated_manifests.json");
+    let abbrev_manifest_storage_key = format!("packages/{fullname}/abbreviated_manifests.json");
 
     let full_manifest = serde_json::json!({
         "name": fullname,
@@ -656,16 +656,16 @@ async fn refresh_manifests(
         "readme": readme,
     });
     let full_manifest_bytes = serde_json::to_vec(&full_manifest).unwrap_or_default();
-    let full_manifest_s3 = format!("packages/{fullname}/full_manifests.json");
+    let full_manifest_storage_key = format!("packages/{fullname}/full_manifests.json");
 
     state
         .repo
-        .put_s3(&abbrev_manifest_s3, abbrev_manifest_bytes.clone())
+        .put_storage(&abbrev_manifest_storage_key, abbrev_manifest_bytes.clone())
         .await
         .map_err(WebError::CustomApiError)?;
     state
         .repo
-        .put_s3(&full_manifest_s3, full_manifest_bytes.clone())
+        .put_storage(&full_manifest_storage_key, full_manifest_bytes.clone())
         .await
         .map_err(WebError::CustomApiError)?;
 
@@ -674,14 +674,14 @@ async fn refresh_manifests(
         tags: dist_tags.clone(),
         abbrev_manifest: PendingDist {
             name: format!("{fullname}-abbrev-manifests"),
-            path: abbrev_manifest_s3,
+            path: abbrev_manifest_storage_key,
             size: abbrev_manifest_bytes.len() as i64,
             shasum: None,
             integrity: None,
         },
         full_manifest: PendingDist {
             name: format!("{fullname}-full-manifests"),
-            path: full_manifest_s3,
+            path: full_manifest_storage_key,
             size: full_manifest_bytes.len() as i64,
             shasum: None,
             integrity: None,

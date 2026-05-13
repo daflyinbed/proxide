@@ -1,1 +1,3 @@
-pub mod s3;
+pub mod backend;
+
+pub use backend::Storage;

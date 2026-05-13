@@ -22,7 +22,7 @@ struct Cli {
 enum Commands {
     Server,
     Worker,
-    CleanupS3,
+    CleanupStorage,
 }
 
 #[tokio::main]
@@ -46,7 +46,7 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Server => run_server(cfg).await,
         Commands::Worker => run_worker(cfg).await,
-        Commands::CleanupS3 => run_cleanup_s3(cfg).await,
+        Commands::CleanupStorage => run_cleanup_storage(cfg).await,
     }
 }
 
@@ -69,9 +69,9 @@ async fn run_worker(config: config::Config) -> Result<()> {
     worker::run_worker(state.repo, state.config, state.http, state.package_lock).await
 }
 
-async fn run_cleanup_s3(config: config::Config) -> Result<()> {
+async fn run_cleanup_storage(config: config::Config) -> Result<()> {
     let state = AppState::new(config).await?;
-    worker::cleanup_s3::cleanup_orphan_s3(&state.repo).await
+    worker::cleanup_storage::cleanup_orphan_storage(&state.repo).await
 }
 
 async fn shutdown_signal() {

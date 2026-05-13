@@ -4,7 +4,7 @@ use crate::repository::{
     PublishVersionParams, Repository, SyncManifestParams, SyncTaskRow, TokenRow, UserRow,
     VersionCommitParams,
 };
-use crate::storage::s3::S3Storage;
+use crate::storage::Storage;
 use anyhow::Result;
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -14,7 +14,7 @@ use sqlx::{MySql, Pool, Row};
 #[derive(Debug, Clone)]
 pub struct MysqlRepository {
     pool: Pool<MySql>,
-    storage: S3Storage,
+    storage: Storage,
 }
 
 impl MysqlRepository {
@@ -23,7 +23,7 @@ impl MysqlRepository {
             .max_connections(20)
             .connect(&db_config.uri)
             .await?;
-        let storage = S3Storage::new(storage_config)?;
+        let storage = Storage::new(storage_config)?;
         Ok(Self { pool, storage })
     }
 
@@ -84,15 +84,15 @@ impl Repository for MysqlRepository {
     async fn put_content(
         &self,
         name: &str,
-        s3_key: &str,
+        storage_key: &str,
         data: Vec<u8>,
         shasum: Option<&str>,
         integrity: Option<&str>,
     ) -> Result<i64> {
         let len = data.len() as i64;
-        self.storage.put(s3_key, data).await?;
+        self.storage.put(storage_key, data).await?;
         let dist_id = self
-            .insert_dist(name, s3_key, len, shasum, integrity)
+            .insert_dist(name, storage_key, len, shasum, integrity)
             .await?;
         Ok(dist_id)
     }
@@ -102,14 +102,14 @@ impl Repository for MysqlRepository {
         self.delete_dist(dist_id).await?;
         if let Some(path) = dist_path {
             if let Err(e) = self.storage.delete(&path).await {
-                error!("failed to delete S3 object for dist {dist_id} path {path}: {e:#}");
+                error!("failed to delete storage object for dist {dist_id} path {path}: {e:#}");
             }
         }
         Ok(())
     }
 
-    async fn put_s3(&self, s3_key: &str, data: Vec<u8>) -> Result<()> {
-        self.storage.put(s3_key, data).await
+    async fn put_storage(&self, storage_key: &str, data: Vec<u8>) -> Result<()> {
+        self.storage.put(storage_key, data).await
     }
 
     // ── packages ──

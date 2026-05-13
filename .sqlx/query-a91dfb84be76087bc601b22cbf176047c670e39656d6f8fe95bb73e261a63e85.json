@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO packages (name, scope, description, source) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE description = IF(VALUES(description) IS NULL, description, VALUES(description)), source = IF(source IS NULL, VALUES(source), source)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "a91dfb84be76087bc601b22cbf176047c670e39656d6f8fe95bb73e261a63e85"
+}

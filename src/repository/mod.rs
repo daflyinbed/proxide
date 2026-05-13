@@ -10,6 +10,7 @@ pub struct PackageRow {
     pub name: String,
     pub scope: Option<String>,
     pub description: Option<String>,
+    pub source: Option<String>,
     pub abbreviated_dist_id: Option<i64>,
     pub full_dist_id: Option<i64>,
 }
@@ -24,7 +25,7 @@ pub struct PackageVersionRow {
     pub tar_dist_id: Option<i64>,
     pub readme_dist_id: Option<i64>,
     pub publish_time: chrono::NaiveDateTime,
-    pub is_pre_release: i8,
+    pub is_pre_release: bool,
     pub padding_version: Option<String>,
 }
 
@@ -36,11 +37,6 @@ pub struct PackageTagRow {
     pub version: String,
 }
 
-/// Dist row stored in the `dists` table.
-///
-/// `shasum` / `integrity` are only populated for tarball dists (values from the upstream
-/// registry `dist.shasum` / `dist.integrity`). For all other content types (abbreviated
-/// manifests, full manifests, etc.) both fields are `None`.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct DistRow {
     pub id: i64,
@@ -51,8 +47,27 @@ pub struct DistRow {
     pub integrity: Option<String>,
 }
 
-/// Same semantics as [`DistRow`] for `shasum` / `integrity` (tarball → upstream values,
-/// non-tarball → `None`).
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct UserRow {
+    pub id: i64,
+    pub name: String,
+    pub email: Option<String>,
+    pub upstream_name: String,
+    pub password_salt: Option<String>,
+    pub password_integrity: Option<String>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct TokenRow {
+    pub id: i64,
+    pub token_key: String,
+    pub name: String,
+    pub user_id: i64,
+    pub is_readonly: bool,
+    pub allowed_scopes: Option<String>,
+    pub expired_at: Option<chrono::NaiveDateTime>,
+}
+
 #[derive(Debug, Clone)]
 pub struct PendingDist {
     pub name: String,
@@ -67,10 +82,23 @@ pub struct VersionCommitParams {
     pub package_id: i64,
     pub version: String,
     pub publish_time: chrono::NaiveDateTime,
-    pub is_pre_release: i8,
+    pub is_pre_release: bool,
     pub padding_version: Option<String>,
     pub abbrev_dist: PendingDist,
     pub manifest_dist: PendingDist,
+}
+
+#[derive(Debug, Clone)]
+pub struct PublishVersionParams {
+    pub package_id: i64,
+    pub version: String,
+    pub publish_time: chrono::NaiveDateTime,
+    pub is_pre_release: bool,
+    pub padding_version: Option<String>,
+    pub abbrev_dist: PendingDist,
+    pub manifest_dist: PendingDist,
+    pub tar_dist: PendingDist,
+    pub readme_dist: PendingDist,
 }
 
 #[derive(Debug, Clone)]
@@ -125,7 +153,8 @@ pub trait Repository: Send + Sync + 'static {
         name: &str,
         scope: Option<&str>,
         description: Option<&str>,
-    ) -> Result<i64>;
+        source: Option<&str>,
+    ) -> Result<(i64, Option<String>)>;
     async fn update_package_dists(
         &self,
         package_id: i64,
@@ -143,7 +172,7 @@ pub trait Repository: Send + Sync + 'static {
         package_id: i64,
         version: &str,
         publish_time: chrono::NaiveDateTime,
-        is_pre_release: i8,
+        is_pre_release: bool,
         padding_version: Option<&str>,
     ) -> Result<i64>;
     async fn update_version_dists(
@@ -185,7 +214,7 @@ pub trait Repository: Send + Sync + 'static {
     // ── sync ──
 
     async fn commit_version(&self, params: VersionCommitParams) -> Result<()>;
-    async fn sync_manifest_commit(&self, params: SyncManifestParams) -> Result<()> ;
+    async fn sync_manifest_commit(&self, params: SyncManifestParams) -> Result<()>;
 
     // ── sync_tasks ──
 
@@ -195,4 +224,50 @@ pub trait Repository: Send + Sync + 'static {
     async fn requeue_stale_tasks(&self, timeout_secs: u64) -> Result<u64>;
     async fn count_tasks_by_status(&self) -> Result<HashMap<String, i64>>;
     async fn cleanup_old_tasks(&self, retention_days: u32) -> Result<u64>;
+
+    // ── users ──
+
+    async fn get_user_by_name(&self, name: &str) -> Result<Option<UserRow>>;
+    async fn get_user_by_id(&self, id: i64) -> Result<Option<UserRow>>;
+    async fn create_user(
+        &self,
+        name: &str,
+        email: Option<&str>,
+        password_salt: Option<&str>,
+        password_integrity: Option<&str>,
+    ) -> Result<i64>;
+    async fn upsert_user(
+        &self,
+        name: &str,
+        email: Option<&str>,
+        upstream_name: &str,
+    ) -> Result<i64>;
+
+    // ── tokens ──
+
+    async fn find_token_by_key(&self, token_key: &str) -> Result<Option<TokenRow>>;
+    async fn create_token(
+        &self,
+        token_key: &str,
+        name: &str,
+        user_id: i64,
+        is_readonly: bool,
+        allowed_scopes: Option<&str>,
+        expired_at: Option<chrono::NaiveDateTime>,
+    ) -> Result<i64>;
+    async fn touch_token(&self, id: i64) -> Result<()>;
+
+    // ── maintainers ──
+
+    async fn save_maintainer(&self, package_id: i64, user_id: i64) -> Result<()>;
+    async fn is_maintainer(&self, package_id: i64, user_id: i64) -> Result<bool>;
+    async fn sync_maintainers(&self, package_id: i64, user_ids: &[i64]) -> Result<()>;
+
+    // ── publish ──
+
+    async fn commit_published_version(&self, params: PublishVersionParams) -> Result<()>;
+
+    // ── sync_tasks ──
+
+    async fn fail_task_no_retry(&self, id: i64, error: &str) -> Result<()>;
 }

@@ -11,6 +11,7 @@ pub use task_consumer::run_task_consumer;
 
 use crate::config::Config;
 use crate::repository::Repository;
+use crate::state::PackageLock;
 use anyhow::Result;
 use std::sync::Arc;
 
@@ -18,6 +19,7 @@ pub async fn run_worker(
     repo: Arc<dyn Repository>,
     config: Config,
     client: reqwest::Client,
+    package_lock: PackageLock,
 ) -> Result<()> {
     log::info!(
         consumer_count = config.worker.consumer_count,
@@ -35,9 +37,10 @@ pub async fn run_worker(
         let repo = repo.clone();
         let config = config.clone();
         let client = client.clone();
+        let package_lock = package_lock.clone();
         consumer_handles.push(tokio::spawn(async move {
             log::info!(consumer = i; "consumer starting");
-            task_consumer::run_task_consumer(repo, config, client).await
+            task_consumer::run_task_consumer(repo, config, client, package_lock).await
         }));
     }
 

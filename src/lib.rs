@@ -1,6 +1,7 @@
 pub mod config;
 pub mod error;
 pub mod handlers;
+pub mod middleware;
 pub mod npm;
 pub mod repository;
 pub mod routes;

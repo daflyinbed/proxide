@@ -1,6 +1,6 @@
 {
   "db_name": "MySQL",
-  "query": "SELECT id FROM packages WHERE name = ?",
+  "query": "SELECT id, source FROM packages WHERE name = ?",
   "describe": {
     "columns": [
       {
@@ -11,14 +11,24 @@
           "flags": "NOT_NULL | PRIMARY_KEY | AUTO_INCREMENT",
           "max_size": 20
         }
+      },
+      {
+        "ordinal": 1,
+        "name": "source",
+        "type_info": {
+          "type": "VarString",
+          "flags": "",
+          "max_size": 256
+        }
       }
     ],
     "parameters": {
       "Right": 1
     },
     "nullable": [
-      false
+      false,
+      true
     ]
   },
-  "hash": "1911f5ebc946eb3c4fa97b8ec638bc2151c5c0d7369c1a2e9a74f400cd2153ab"
+  "hash": "30ddfd898301b49147ca3c260ee1de6ce6195e0885c508186448c9272dbee8b7"
 }

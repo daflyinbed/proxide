@@ -1,6 +1,7 @@
 use crate::config::Config;
 use crate::repository::Repository;
-use crate::worker::sync_package;
+use crate::state::PackageLock;
+use crate::worker::sync_package::{self, SyncPackageError};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -8,6 +9,7 @@ pub async fn run_task_consumer(
     repo: Arc<dyn Repository>,
     config: Config,
     client: reqwest::Client,
+    package_lock: PackageLock,
 ) -> anyhow::Result<()> {
     let poll_interval = Duration::from_millis(config.worker.consumer_poll_interval_ms);
 
@@ -21,19 +23,27 @@ pub async fn run_task_consumer(
                 );
 
                 let start = std::time::Instant::now();
-                let result = sync_package(&repo, &config, &task.name, &client).await;
+                let result = sync_package::sync_package(&repo, &config, &task.name, &client, &package_lock).await;
                 let elapsed = start.elapsed().as_millis() as u64;
 
                 match result {
-                    Ok(msg) => {
+                    Ok(()) => {
                         log::info!(
                             action = "sync_done";
-                            "task_id={} name={} elapsed_ms={elapsed} {msg}",
+                            "task_id={} name={} elapsed_ms={elapsed}",
                             task.id, task.name,
                         );
                         repo.complete_sync_task(task.id, None).await?;
                     }
-                    Err(e) => {
+                    Err(SyncPackageError::Conflict(msg)) => {
+                        log::warn!(
+                            action = "sync_conflict";
+                            "task_id={} name={} conflict: {msg}",
+                            task.id, task.name,
+                        );
+                        repo.fail_task_no_retry(task.id, &msg).await?;
+                    }
+                    Err(SyncPackageError::Other(e)) => {
                         let err_str = format!("{e:#}");
                         log::warn!(
                             action = "sync_failed";

@@ -1,6 +1,6 @@
 {
   "db_name": "MySQL",
-  "query": "SELECT id, package_id, version, abbrev_dist_id, manifest_dist_id, tar_dist_id, readme_dist_id, publish_time, is_pre_release, padding_version FROM package_versions WHERE package_id = ? ORDER BY publish_time DESC",
+  "query": "SELECT id, package_id, version, abbrev_dist_id, manifest_dist_id, tar_dist_id, readme_dist_id, publish_time, is_pre_release as \"is_pre_release: bool\", padding_version FROM package_versions WHERE package_id = ?",
   "describe": {
     "columns": [
       {
@@ -77,7 +77,7 @@
       },
       {
         "ordinal": 8,
-        "name": "is_pre_release",
+        "name": "is_pre_release: bool",
         "type_info": {
           "type": "Tiny",
           "flags": "NOT_NULL",
@@ -110,5 +110,5 @@
       true
     ]
   },
-  "hash": "98b03b1120dffd903a3182d8818732e44080ccd3c234f6a8c0bcd989019cbdeb"
+  "hash": "8f50987c5df0e60c74aa0e03bcc0e69f1b71f6f46f96c6f421c34b17cb4b8d36"
 }

@@ -1,13 +1,16 @@
 use crate::config::Config;
-use crate::npm::{split_scope_name, types::*};
+use crate::npm::types::*;
+use crate::npm::{build_abbreviated_version_entry, is_prerelease, pad_version, split_scope_name};
 use crate::repository::{
     PendingDist, PackageVersionRow, Repository, SyncManifestParams, VersionCommitParams,
 };
+use crate::state::{LockOwner, PackageLock, UnlockGuard};
 use anyhow::{Context, Result};
 use chrono::NaiveDateTime;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::error;
+
 fn build_abbreviated_manifest(packument: &Packument) -> AbbreviatedPackument {
     let mut versions = HashMap::new();
     for (ver, data) in &packument.versions {
@@ -34,76 +37,23 @@ fn build_abbreviated_version(name: &str, ver: &PackageVersion) -> Vec<u8> {
     serde_json::to_vec(&map).unwrap_or_default()
 }
 
-fn build_abbreviated_version_entry(ver: &PackageVersion, publish_time_str: Option<&String>) -> AbbreviatedVersion {
-    let has_install_script = if ver.has_install_script.unwrap_or(false) {
-        Some(true)
-    } else {
-        detect_install_script(ver)
-    };
+pub enum SyncPackageError {
+    Conflict(String),
+    Other(anyhow::Error),
+}
 
-    let publish_time = publish_time_str.and_then(|t| {
-        NaiveDateTime::parse_from_str(t, "%Y-%m-%dT%H:%M:%S%.f")
-            .ok()
-            .map(|dt| dt.and_utc().timestamp_millis() / 1000)
-    });
-
-    let libc = ver.other.get("libc").and_then(|v| serde_json::from_value(v.clone()).ok());
-    let workspaces = ver.other.get("workspaces").cloned();
-    let accept_dependencies = ver.other.get("acceptDependencies").and_then(|v| serde_json::from_value(v.clone()).ok());
-
-    AbbreviatedVersion {
-        name: ver.name.clone(),
-        version: ver.version.clone(),
-        deprecated: ver.deprecated.clone(),
-        dependencies: ver.dependencies.clone(),
-        optional_dependencies: ver.optional_dependencies.clone(),
-        dev_dependencies: ver.dev_dependencies.clone(),
-        bundle_dependencies: ver.bundle_dependencies.clone(),
-        peer_dependencies: ver.peer_dependencies.clone(),
-        peer_dependencies_meta: ver.peer_dependencies_meta.clone(),
-        bin: ver.bin.clone(),
-        directories: ver.directories.clone(),
-        dist: ver.dist.clone(),
-        engines: ver.engines.clone(),
-        _has_shrinkwrap: ver._has_shrinkwrap,
-        has_install_script,
-        funding: ver.funding.clone(),
-        cpu: ver.cpu.clone(),
-        os: ver.os.clone(),
-        libc,
-        workspaces,
-        accept_dependencies,
-        publish_time,
+impl std::fmt::Display for SyncPackageError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SyncPackageError::Conflict(msg) => write!(f, "{msg}"),
+            SyncPackageError::Other(err) => write!(f, "{err:#}"),
+        }
     }
 }
 
-fn detect_install_script(ver: &PackageVersion) -> Option<bool> {
-    if let Some(scripts) = &ver.scripts
-        && (scripts.contains_key("install")
-            || scripts.contains_key("preinstall")
-            || scripts.contains_key("postinstall"))
-    {
-        return Some(true);
-    }
-    None
-}
-
-fn is_prerelease(version: &str) -> bool {
-    let v = version.trim_start_matches('v');
-    match semver::Version::parse(v) {
-        Ok(sv) => !sv.pre.is_empty(),
-        Err(_) => true,
-    }
-}
-
-fn pad_version(version: &str) -> String {
-    let v = version.trim_start_matches('v');
-    match semver::Version::parse(v) {
-        Ok(sv) => format!(
-            "{:016}{:016}{:016}",
-            sv.major, sv.minor, sv.patch
-        ),
-        Err(_) => "0".repeat(48),
+impl From<anyhow::Error> for SyncPackageError {
+    fn from(err: anyhow::Error) -> Self {
+        SyncPackageError::Other(err)
     }
 }
 
@@ -112,7 +62,16 @@ pub async fn sync_package(
     config: &Config,
     fullname: &str,
     client: &reqwest::Client,
-) -> Result<String> {
+    package_lock: &PackageLock,
+) -> Result<(), SyncPackageError> {
+    if !package_lock.try_lock(fullname, LockOwner::Sync) {
+        return Err(SyncPackageError::Conflict(format!(
+            "package {fullname} is locked by {}",
+            package_lock.get_owner(fullname).map(|o| o.to_string()).unwrap_or_default()
+        )));
+    }
+    let _guard = UnlockGuard::new(package_lock, fullname.to_string());
+
     let mut request = client
         .get(format!("{}/{fullname}", config.worker.upstream_registry))
         .header("accept", "application/json");
@@ -124,10 +83,15 @@ pub async fn sync_package(
     let resp = request.send().await.context("failed to fetch upstream")?;
 
     if resp.status() == reqwest::StatusCode::NOT_FOUND {
-        anyhow::bail!("package {fullname} not found upstream");
+        return Err(SyncPackageError::Other(anyhow::anyhow!(
+            "package {fullname} not found upstream"
+        )));
     }
     if !resp.status().is_success() {
-        anyhow::bail!("upstream returned status {}", resp.status());
+        return Err(SyncPackageError::Other(anyhow::anyhow!(
+            "upstream returned status {}",
+            resp.status()
+        )));
     }
 
     let raw_bytes = resp
@@ -140,9 +104,26 @@ pub async fn sync_package(
 
     let (scope, _name) = split_scope_name(fullname);
 
-    let package_id = repo
-        .upsert_package(fullname, scope, packument.description.as_deref())
+    let (package_id, existing_source) = repo
+        .upsert_package(fullname, scope, packument.description.as_deref(), Some(&config.worker.upstream_name))
         .await?;
+
+    if existing_source.as_deref() != Some(&config.worker.upstream_name) && existing_source.is_some() {
+        return Err(SyncPackageError::Conflict(format!(
+            "package {fullname} is a locally published package, sync is not allowed"
+        )));
+    }
+
+    if let Some(upstream_maintainers) = &packument.maintainers {
+        let mut user_ids: Vec<i64> = Vec::with_capacity(upstream_maintainers.len());
+        for m in upstream_maintainers {
+            let uid = repo
+                .upsert_user(&m.name, m.email.as_deref(), &config.worker.upstream_name)
+                .await?;
+            user_ids.push(uid);
+        }
+        repo.sync_maintainers(package_id, &user_ids).await?;
+    }
 
     let existing_versions = repo.list_versions(package_id).await?;
     let existing_map: HashMap<String, &PackageVersionRow> = existing_versions
@@ -168,7 +149,7 @@ pub async fn sync_package(
             .and_then(|t| NaiveDateTime::parse_from_str(t, "%Y-%m-%dT%H:%M:%S%.f").ok())
             .unwrap_or_else(|| chrono::Utc::now().naive_utc());
 
-        let is_pre_release = is_prerelease(ver_str) as i8;
+        let is_pre_release = is_prerelease(ver_str);
         let padding_version = Some(pad_version(ver_str));
 
         let abbrev_s3 = format!("packages/{fullname}/{ver_str}/abbreviated.json");
@@ -259,7 +240,9 @@ pub async fn sync_package(
     };
 
     if let Err(db_err) = repo.sync_manifest_commit(params).await {
-        return Err(db_err.context("DB transaction failed for manifest commit"));
+        return Err(SyncPackageError::Other(
+            db_err.context("DB transaction failed for manifest commit"),
+        ));
     }
 
     // ── Phase 3: Clean up old data (best-effort) ──
@@ -311,7 +294,10 @@ pub async fn sync_package(
         }
     }
 
-    Ok(format!(
+    log::info!(
+        action = "sync_done";
         "synced {fullname}: {new_count} new versions"
-    ))
+    );
+
+    Ok(())
 }

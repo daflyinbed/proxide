@@ -18,11 +18,13 @@ pub async fn run_changes_poller(
         config.worker.changes_stream_url,
     );
 
+    let mut ticker = tokio::time::interval(interval);
+
     loop {
+        ticker.tick().await;
         if let Err(e) = poll_once(&repo, &config, &client).await {
             log::error!(action = "poll_error"; "{e:#}");
         }
-        tokio::time::sleep(interval).await;
     }
 }
 

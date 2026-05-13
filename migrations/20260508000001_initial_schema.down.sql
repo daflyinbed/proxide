@@ -1,3 +1,7 @@
+DROP TABLE IF EXISTS maintainers;
+DROP TABLE IF EXISTS tokens;
+DROP TABLE IF EXISTS users;
+DROP TABLE IF EXISTS sync_tasks;
 DROP TABLE IF EXISTS change_stream_cursors;
 DROP TABLE IF EXISTS package_tags;
 DROP TABLE IF EXISTS package_versions;

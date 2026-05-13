@@ -66,7 +66,7 @@ async fn run_worker(config: config::Config) -> Result<()> {
     log::info!("Proxide worker starting up...");
 
     let state = AppState::new(config).await?;
-    worker::run_worker(state.repo, state.config, state.http).await
+    worker::run_worker(state.repo, state.config, state.http, state.package_lock).await
 }
 
 async fn run_cleanup_s3(config: config::Config) -> Result<()> {

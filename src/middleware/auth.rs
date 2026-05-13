@@ -1,0 +1,124 @@
+use crate::error::{WebError, WebResult};
+use crate::repository::{TokenRow, UserRow};
+use crate::state::AppState;
+use axum::extract::{Request, State};
+use axum::http::HeaderMap;
+use axum::middleware::Next;
+use axum::response::Response;
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine;
+use sha2::{Digest, Sha256};
+
+fn extract_bearer_token(headers: &HeaderMap) -> Option<String> {
+    let auth = headers.get("authorization")?.to_str().ok()?;
+    let token = auth.strip_prefix("Bearer ")?;
+    let trimmed = token.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(trimmed.to_string())
+}
+
+pub fn hash_token(raw: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(raw.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+pub async fn require_auth(
+    State(state): State<AppState>,
+    mut request: Request,
+    next: Next,
+) -> WebResult<Response> {
+    let raw_token = extract_bearer_token(request.headers())
+        .ok_or_else(|| WebError::Unauthorized("Login first".to_string()))?;
+
+    let token_key = hash_token(&raw_token);
+
+    let token_row = state
+        .repo
+        .find_token_by_key(&token_key)
+        .await
+        .map_err(WebError::CustomApiError)?
+        .ok_or_else(|| WebError::Unauthorized("Invalid token".to_string()))?;
+
+    if token_row.is_readonly {
+        return Err(WebError::Forbidden(
+            "Read-only token cannot publish".to_string(),
+        ));
+    }
+
+    if let Some(expired) = token_row.expired_at {
+        if expired < chrono::Utc::now().naive_utc() {
+            return Err(WebError::Unauthorized("Token expired".to_string()));
+        }
+    }
+
+    let user = state
+        .repo
+        .get_user_by_id(token_row.user_id)
+        .await
+        .map_err(WebError::CustomApiError)?
+        .ok_or_else(|| WebError::Unauthorized("User not found".to_string()))?;
+
+    if let Err(e) = state.repo.touch_token(token_row.id).await {
+        tracing::warn!("failed to update token last_used_at: {e:#}");
+    }
+
+    request.extensions_mut().insert(AuthContext { user, token: token_row });
+    Ok(next.run(request).await)
+}
+
+#[derive(Debug, Clone)]
+pub struct AuthContext {
+    pub user: UserRow,
+    pub token: TokenRow,
+}
+
+pub fn is_admin(user: &UserRow, admins: &[String]) -> bool {
+    admins.contains(&user.name)
+}
+
+pub fn check_scope_access(
+    scope: Option<&str>,
+    allow_scopes: &[String],
+    allow_publish_non_scope: bool,
+) -> WebResult<()> {
+    if allow_publish_non_scope {
+        return Ok(());
+    }
+    let Some(scope) = scope else {
+        return Err(WebError::Forbidden(format!(
+            "Package scope required, legal scopes: \"{}\"",
+            allow_scopes.join(", ")
+        )));
+    };
+    if !allow_scopes.iter().any(|s| s == scope) {
+        return Err(WebError::Forbidden(format!(
+            "Scope \"{}\" not match legal scopes: \"{}\"",
+            scope,
+            allow_scopes.join(", ")
+        )));
+    }
+    Ok(())
+}
+
+pub fn generate_salt() -> String {
+    let mut buf = [0u8; 30];
+    getrandom::fill(&mut buf).expect("failed to generate random salt");
+    hex::encode(buf)
+}
+
+pub fn compute_password_integrity(salt: &str, password: &str) -> String {
+    let mut hasher = sha2::Sha512::new();
+    hasher.update(salt.as_bytes());
+    hasher.update(password.as_bytes());
+    let hash = hasher.finalize();
+    format!("sha512-{}", BASE64.encode(hash))
+}
+
+pub fn verify_password(salt: &str, integrity: &str, password: &str) -> bool {
+    compute_password_integrity(salt, password) == integrity
+}
+
+

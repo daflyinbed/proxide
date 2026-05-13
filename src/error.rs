@@ -12,6 +12,15 @@ pub enum WebError {
 
     #[error("[BAD_REQUEST] {0}")]
     BadRequest(String),
+
+    #[error("[UNAUTHORIZED] {0}")]
+    Unauthorized(String),
+
+    #[error("[FORBIDDEN] {0}")]
+    Forbidden(String),
+
+    #[error("[CONFLICT] {0}")]
+    Conflict(String),
 }
 
 #[derive(Debug, Serialize)]
@@ -41,6 +50,15 @@ impl IntoResponse for WebError {
             }
             err @ Self::BadRequest(..) => {
                 (StatusCode::BAD_REQUEST, Json(ApiErrorDetail::from(err))).into_response()
+            }
+            err @ Self::Unauthorized(..) => {
+                (StatusCode::UNAUTHORIZED, Json(ApiErrorDetail::from(err))).into_response()
+            }
+            err @ Self::Forbidden(..) => {
+                (StatusCode::FORBIDDEN, Json(ApiErrorDetail::from(err))).into_response()
+            }
+            err @ Self::Conflict(..) => {
+                (StatusCode::CONFLICT, Json(ApiErrorDetail::from(err))).into_response()
             }
         }
     }

@@ -286,3 +286,79 @@ pub struct VersionMeta {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provenance: Option<serde_json::Value>,
 }
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PublishPayload {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    pub versions: HashMap<String, PublishVersion>,
+    #[serde(rename = "dist-tags", default)]
+    pub dist_tags: HashMap<String, String>,
+    #[serde(rename = "_attachments", default)]
+    pub attachments: HashMap<String, PublishAttachment>,
+    #[serde(default)]
+    pub readme: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PublishVersion {
+    pub name: String,
+    pub version: String,
+    #[serde(default)]
+    pub dist: PublishDist,
+    #[serde(default)]
+    pub deprecated: Option<String>,
+    #[serde(rename = "_id", default)]
+    pub id: Option<String>,
+    #[serde(flatten)]
+    pub other: serde_json::Map<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct PublishDist {
+    #[serde(default)]
+    pub shasum: Option<String>,
+    #[serde(default)]
+    pub integrity: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PublishAttachment {
+    #[serde(rename = "content_type", default)]
+    pub content_type: Option<String>,
+    #[serde(default)]
+    pub data: String,
+    #[serde(default)]
+    pub length: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PublishResponse {
+    pub ok: bool,
+    pub rev: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct LoginPayload {
+    pub name: String,
+    pub password: String,
+    #[serde(default)]
+    pub email: Option<String>,
+    #[serde(default, rename = "_id")]
+    pub id: Option<String>,
+    #[serde(default, rename = "type")]
+    pub typ: Option<String>,
+    #[serde(default)]
+    pub roles: Option<Vec<String>>,
+    #[serde(default)]
+    pub date: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LoginResponse {
+    pub ok: bool,
+    pub id: String,
+    pub rev: String,
+    pub token: String,
+}

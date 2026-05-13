@@ -1,6 +1,6 @@
 {
   "db_name": "MySQL",
-  "query": "SELECT id, package_id, version, abbrev_dist_id, manifest_dist_id, tar_dist_id, readme_dist_id, publish_time, is_pre_release, padding_version FROM package_versions WHERE package_id = ?",
+  "query": "SELECT pv.id, pv.package_id, pv.version, pv.abbrev_dist_id, pv.manifest_dist_id, pv.tar_dist_id, pv.readme_dist_id, pv.publish_time, pv.is_pre_release as \"is_pre_release: bool\", pv.padding_version FROM package_versions pv JOIN dists d ON pv.tar_dist_id = d.id WHERE pv.package_id = ? AND d.name = ?",
   "describe": {
     "columns": [
       {
@@ -77,7 +77,7 @@
       },
       {
         "ordinal": 8,
-        "name": "is_pre_release",
+        "name": "is_pre_release: bool",
         "type_info": {
           "type": "Tiny",
           "flags": "NOT_NULL",
@@ -95,7 +95,7 @@
       }
     ],
     "parameters": {
-      "Right": 1
+      "Right": 2
     },
     "nullable": [
       false,
@@ -110,5 +110,5 @@
       true
     ]
   },
-  "hash": "11e0188882e2df7514e6e3e466ee4ba839245d171f751d966501f0a9c7f2a806"
+  "hash": "875ec33f149dcb914daf4a0fe4e6cdcd103b88aea6117ef189cfc0b3139d5038"
 }

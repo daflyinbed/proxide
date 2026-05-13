@@ -8,11 +8,13 @@ pub async fn run_cleanup_scheduler(
 ) -> anyhow::Result<()> {
     let interval = std::time::Duration::from_secs(24 * 3600);
 
+    let mut ticker = tokio::time::interval(interval);
+
     loop {
+        ticker.tick().await;
         if let Err(e) = cleanup_once(&repo, &config).await {
             log::error!(action = "cleanup_error"; "cleanup failed: {e:#}");
         }
-        tokio::time::sleep(interval).await;
     }
 }
 

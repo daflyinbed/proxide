@@ -13,6 +13,7 @@ CREATE TABLE packages (
     name               VARCHAR(512) NOT NULL,
     scope              VARCHAR(256) DEFAULT NULL,
     description        TEXT         DEFAULT NULL,
+    source             VARCHAR(64)  DEFAULT NULL,
     abbreviated_dist_id BIGINT      DEFAULT NULL,
     full_dist_id       BIGINT       DEFAULT NULL,
     created_at         DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -55,4 +56,54 @@ CREATE TABLE change_stream_cursors (
     id         BIGINT PRIMARY KEY,
     since      VARCHAR(256) NOT NULL,
     updated_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE sync_tasks (
+    id           BIGINT AUTO_INCREMENT PRIMARY KEY,
+    name         VARCHAR(512) NOT NULL,
+    source       VARCHAR(32)  NOT NULL,
+    status       VARCHAR(16)  NOT NULL DEFAULT 'pending',
+    attempts     INT          NOT NULL DEFAULT 0,
+    max_attempts INT          NOT NULL DEFAULT 3,
+    error        TEXT         DEFAULT NULL,
+    created_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    started_at   DATETIME     DEFAULT NULL,
+    finished_at  DATETIME     DEFAULT NULL,
+    KEY idx_status_created (status, created_at),
+    KEY idx_name_status (name, status)
+);
+
+CREATE TABLE users (
+    id                  BIGINT AUTO_INCREMENT PRIMARY KEY,
+    name                VARCHAR(256) NOT NULL,
+    email               VARCHAR(256) DEFAULT NULL,
+    upstream_name       VARCHAR(64)  NOT NULL DEFAULT '',
+    password_salt       VARCHAR(100) DEFAULT NULL,
+    password_integrity  VARCHAR(512) DEFAULT NULL,
+    created_at          DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_name_upstream (name, upstream_name)
+);
+
+CREATE TABLE tokens (
+    id              BIGINT AUTO_INCREMENT PRIMARY KEY,
+    token_key       VARCHAR(128) NOT NULL UNIQUE,
+    name            VARCHAR(256) NOT NULL,
+    user_id         BIGINT       NOT NULL,
+    is_readonly     BOOLEAN      NOT NULL DEFAULT FALSE,
+    allowed_scopes  TEXT         DEFAULT NULL,
+    expired_at      DATETIME     DEFAULT NULL,
+    created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_used_at    DATETIME     DEFAULT NULL,
+    KEY idx_user_id (user_id),
+    CONSTRAINT fk_token_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE maintainers (
+    id         BIGINT AUTO_INCREMENT PRIMARY KEY,
+    package_id BIGINT   NOT NULL,
+    user_id    BIGINT   NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_package_user (package_id, user_id),
+    CONSTRAINT fk_maintainer_package FOREIGN KEY (package_id) REFERENCES packages(id) ON DELETE CASCADE,
+    CONSTRAINT fk_maintainer_user FOREIGN KEY (user_id) REFERENCES users(id)
 );

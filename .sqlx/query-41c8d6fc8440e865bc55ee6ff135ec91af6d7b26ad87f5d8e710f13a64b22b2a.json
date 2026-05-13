@@ -1,6 +1,6 @@
 {
   "db_name": "MySQL",
-  "query": "SELECT id, name, scope, description, abbreviated_dist_id, full_dist_id FROM packages WHERE name = ?",
+  "query": "SELECT id, name, email, upstream_name, password_salt, password_integrity FROM users WHERE id = ?",
   "describe": {
     "columns": [
       {
@@ -17,44 +17,44 @@
         "name": "name",
         "type_info": {
           "type": "VarString",
-          "flags": "NOT_NULL | UNIQUE_KEY | NO_DEFAULT_VALUE",
-          "max_size": 2048
+          "flags": "NOT_NULL | MULTIPLE_KEY | NO_DEFAULT_VALUE",
+          "max_size": 1024
         }
       },
       {
         "ordinal": 2,
-        "name": "scope",
+        "name": "email",
         "type_info": {
           "type": "VarString",
-          "flags": "MULTIPLE_KEY",
+          "flags": "",
           "max_size": 1024
         }
       },
       {
         "ordinal": 3,
-        "name": "description",
+        "name": "upstream_name",
         "type_info": {
-          "type": "Blob",
-          "flags": "BLOB",
-          "max_size": 262140
+          "type": "VarString",
+          "flags": "NOT_NULL",
+          "max_size": 256
         }
       },
       {
         "ordinal": 4,
-        "name": "abbreviated_dist_id",
+        "name": "password_salt",
         "type_info": {
-          "type": "LongLong",
+          "type": "VarString",
           "flags": "",
-          "max_size": 20
+          "max_size": 400
         }
       },
       {
         "ordinal": 5,
-        "name": "full_dist_id",
+        "name": "password_integrity",
         "type_info": {
-          "type": "LongLong",
+          "type": "VarString",
           "flags": "",
-          "max_size": 20
+          "max_size": 2048
         }
       }
     ],
@@ -65,10 +65,10 @@
       false,
       false,
       true,
-      true,
+      false,
       true,
       true
     ]
   },
-  "hash": "0058f6254712e858ce1266157697ee49b3d38bc2a3a95d87957c0f4c53ccf1c4"
+  "hash": "41c8d6fc8440e865bc55ee6ff135ec91af6d7b26ad87f5d8e710f13a64b22b2a"
 }

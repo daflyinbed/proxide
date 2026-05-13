@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO users (name, email, upstream_name) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE email = COALESCE(VALUES(email), email)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "0ac1e7f32efaf165c28d0addfef16f75e98b6f4e3e7c302ea7319b7e9f5bedc9"
+}

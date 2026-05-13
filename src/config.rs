@@ -9,6 +9,8 @@ pub struct Config {
     pub storage: StorageConfig,
     pub log: LogConfig,
     pub worker: WorkerConfig,
+    #[serde(default)]
+    pub auth: AuthConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -112,6 +114,8 @@ pub struct WorkerConfig {
     pub task_timeout_secs: u64,
     #[serde(default = "default_task_retention_days")]
     pub task_retention_days: u32,
+    #[serde(default = "default_upstream_name")]
+    pub upstream_name: String,
 }
 
 fn default_upstream_registry() -> String {
@@ -146,8 +150,42 @@ fn default_task_retention_days() -> u32 {
     7
 }
 
+fn default_upstream_name() -> String {
+    "npmjs".to_string()
+}
+
 pub fn load_config(path: &str) -> Result<Config> {
     let content = std::fs::read_to_string(path)?;
     let config: Config = toml::from_str(&content)?;
     Ok(config)
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthConfig {
+    #[serde(default)]
+    pub cas_url: String,
+    #[serde(default)]
+    pub allow_scopes: Vec<String>,
+    #[serde(default)]
+    pub allow_publish_non_scope_package: bool,
+    #[serde(default)]
+    pub admins: Vec<String>,
+}
+
+impl Default for AuthConfig {
+    fn default() -> Self {
+        Self {
+            cas_url: String::new(),
+            allow_scopes: Vec::new(),
+            allow_publish_non_scope_package: false,
+            admins: Vec::new(),
+        }
+    }
+}
+
+impl AuthConfig {
+    pub fn is_cas_enabled(&self) -> bool {
+        !self.cas_url.is_empty()
+    }
 }

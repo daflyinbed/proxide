@@ -61,11 +61,7 @@ pub async fn resolve_version(
     let resolved_version = resolve_specifier(&specifier, &dist_tags, &versions)
         .ok_or_else(|| WebError::NotFound(format!("{fullname}@{specifier} not resolved")))?;
 
-    let published_at = packument
-        .get("time")
-        .and_then(|t| t.get(&resolved_version))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+    let published_at = get_time_field(packument.get("time"), &resolved_version);
 
     Ok(Json(FastMetaResolved {
         name: fullname,
@@ -110,16 +106,9 @@ pub async fn get_full(
 
     let dist_tags = extract_dist_tags(&packument);
     let versions_meta = extract_versions_meta(&packument);
-    let time_created = packument
-        .get("time")
-        .and_then(|t| t.get("created"))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    let time_modified = packument
-        .get("time")
-        .and_then(|t| t.get("modified"))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+    let time_obj = packument.get("time");
+    let time_created = get_time_field(time_obj, "created");
+    let time_modified = get_time_field(time_obj, "modified");
 
     Ok(Json(FastMetaFull {
         name: fullname,
@@ -152,43 +141,40 @@ fn extract_version_list(packument: &Value) -> Vec<String> {
 }
 
 fn extract_versions_meta(packument: &Value) -> HashMap<String, VersionMeta> {
-    packument
-        .get("versions")
-        .and_then(|v| v.as_object())
-        .map(|obj| {
-            obj.iter()
-                .filter_map(|(ver, data)| {
-                    let time = packument
-                        .get("time")
-                        .and_then(|t| t.get(ver))
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-                    let engines = data
-                        .get("engines")
-                        .and_then(|e| serde_json::from_value(e.clone()).ok());
-                    let deprecated = data
-                        .get("deprecated")
-                        .and_then(|d| d.as_str())
-                        .map(|s| s.to_string());
-                    let integrity = data
-                        .get("dist")
-                        .and_then(|d| d.get("integrity"))
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-                    Some((
-                        ver.clone(),
-                        VersionMeta {
-                            time,
-                            engines,
-                            deprecated,
-                            integrity,
-                            provenance: None,
-                        },
-                    ))
-                })
-                .collect()
-        })
-        .unwrap_or_default()
+    let Some(versions) = packument.get("versions").and_then(|v| v.as_object()) else {
+        return HashMap::new();
+    };
+    versions
+        .iter()
+        .filter_map(|(ver, data)| Some((ver.clone(), build_version_meta(packument, ver, data)?)))
+        .collect()
+}
+
+fn build_version_meta(packument: &Value, ver: &str, data: &Value) -> Option<VersionMeta> {
+    let time = packument
+        .get("time")
+        .and_then(|t| t.get(ver))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let engines = data
+        .get("engines")
+        .and_then(|e| serde_json::from_value(e.clone()).ok());
+    let deprecated = data
+        .get("deprecated")
+        .and_then(|d| d.as_str())
+        .map(|s| s.to_string());
+    let integrity = data
+        .get("dist")
+        .and_then(|d| d.get("integrity"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    Some(VersionMeta {
+        time,
+        engines,
+        deprecated,
+        integrity,
+        provenance: None,
+    })
 }
 
 fn resolve_specifier(
@@ -235,4 +221,11 @@ fn filter_versions_by_range(range: &str, versions: &[String]) -> Vec<String> {
     } else {
         versions.to_vec()
     }
+}
+
+fn get_time_field(time_obj: Option<&Value>, key: &str) -> Option<String> {
+    time_obj
+        .and_then(|t| t.get(key))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
 }

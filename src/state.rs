@@ -1,5 +1,6 @@
 use crate::{config::Config, repository::mysql::MysqlRepository, repository::Repository};
 use anyhow::Result;
+use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
@@ -32,7 +33,6 @@ impl PackageLock {
     }
 
     pub fn try_lock(&self, name: &str, owner: LockOwner) -> bool {
-        use dashmap::mapref::entry::Entry;
         match self.inner.entry(name.to_string()) {
             Entry::Vacant(e) => {
                 e.insert(owner);

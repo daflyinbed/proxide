@@ -114,19 +114,17 @@ pub async fn get_package_version(
 }
 
 fn rewrite_tarball_urls(json: &mut serde_json::Value, root_url: &str, fullname: &str) {
-    if let Some(versions) = json.get_mut("versions").and_then(|v| v.as_object_mut()) {
-        for obj in versions.values_mut() {
-            if let Some(dist) = obj.get_mut("dist") {
-                if let Some(tarball) = dist.get_mut("tarball") {
-                    if let Some(url) = tarball.as_str() {
-                        if let Some(filename) = extract_tarball_filename(url) {
-                            *tarball = serde_json::Value::String(format!(
-                                "{root_url}/npm/{fullname}/-/{filename}"
-                            ));
-                        }
-                    }
-                }
-            }
+    let Some(versions) = json.get_mut("versions").and_then(|v| v.as_object_mut()) else {
+        return;
+    };
+    for obj in versions.values_mut() {
+        let Some(dist) = obj.get_mut("dist") else { continue };
+        let Some(tarball) = dist.get_mut("tarball") else { continue };
+        let Some(url) = tarball.as_str() else { continue };
+        if let Some(filename) = extract_tarball_filename(url) {
+            *tarball = serde_json::Value::String(format!(
+                "{root_url}/npm/{fullname}/-/{filename}"
+            ));
         }
     }
 }

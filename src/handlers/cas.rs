@@ -173,8 +173,8 @@ fn parse_cas_response(xml: &str) -> WebResult<String> {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
                 let local = e.local_name();
-                let name_str = String::from_utf8_lossy(&local.into_inner());
-                match name_str.as_ref() {
+                let name = String::from_utf8_lossy(local.as_ref());
+                match name.as_ref() {
                     "authenticationSuccess" => in_success = true,
                     "user" if in_success => in_user = true,
                     "loginid" if in_success => in_loginid = true,
@@ -187,20 +187,19 @@ fn parse_cas_response(xml: &str) -> WebResult<String> {
                 }
             }
             Ok(Event::Text(e)) => {
+                let text = e.unescape().map_err(|_| {
+                    WebError::CustomApiError(anyhow::anyhow!("Failed to decode CAS response text"))
+                })?;
                 if in_user {
-                    username = Some(e.unescape().map_err(|_| {
-                        WebError::CustomApiError(anyhow::anyhow!("Failed to decode CAS user"))
-                    })?.into_owned());
+                    username = Some(text.into_owned());
                 } else if in_loginid {
-                    loginid = Some(e.unescape().map_err(|_| {
-                        WebError::CustomApiError(anyhow::anyhow!("Failed to decode CAS loginid"))
-                    })?.into_owned());
+                    loginid = Some(text.into_owned());
                 }
             }
             Ok(Event::End(e)) => {
                 let local = e.local_name();
-                let name_str = String::from_utf8_lossy(&local.into_inner());
-                match name_str.as_ref() {
+                let name = String::from_utf8_lossy(local.as_ref());
+                match name.as_ref() {
                     "authenticationSuccess" => in_success = false,
                     "user" => in_user = false,
                     "loginid" => in_loginid = false,

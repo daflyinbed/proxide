@@ -36,31 +36,23 @@ impl From<WebError> for ApiErrorDetail {
     }
 }
 
+impl WebError {
+    fn status_code(&self) -> StatusCode {
+        match self {
+            Self::CustomApiError(..) => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::NotFound(..) => StatusCode::NOT_FOUND,
+            Self::BadRequest(..) => StatusCode::BAD_REQUEST,
+            Self::Unauthorized(..) => StatusCode::UNAUTHORIZED,
+            Self::Forbidden(..) => StatusCode::FORBIDDEN,
+            Self::Conflict(..) => StatusCode::CONFLICT,
+        }
+    }
+}
+
 impl IntoResponse for WebError {
     fn into_response(self) -> axum::response::Response {
         tracing::error!(error.msg = %self,error.details = ?self,"controller_error");
-        match self {
-            err @ Self::CustomApiError(..) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorDetail::from(err)),
-            )
-                .into_response(),
-            err @ Self::NotFound(..) => {
-                (StatusCode::NOT_FOUND, Json(ApiErrorDetail::from(err))).into_response()
-            }
-            err @ Self::BadRequest(..) => {
-                (StatusCode::BAD_REQUEST, Json(ApiErrorDetail::from(err))).into_response()
-            }
-            err @ Self::Unauthorized(..) => {
-                (StatusCode::UNAUTHORIZED, Json(ApiErrorDetail::from(err))).into_response()
-            }
-            err @ Self::Forbidden(..) => {
-                (StatusCode::FORBIDDEN, Json(ApiErrorDetail::from(err))).into_response()
-            }
-            err @ Self::Conflict(..) => {
-                (StatusCode::CONFLICT, Json(ApiErrorDetail::from(err))).into_response()
-            }
-        }
+        (self.status_code(), Json(ApiErrorDetail::from(self))).into_response()
     }
 }
 

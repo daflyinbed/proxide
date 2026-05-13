@@ -36,13 +36,10 @@ pub async fn login(
         .map_err(WebError::CustomApiError)?;
 
     let user_id = if let Some(u) = user {
-        let salt = u
+        let (salt, integrity) = u
             .password_salt
             .as_deref()
-            .ok_or_else(|| WebError::Unauthorized("Please use CAS login".to_string()))?;
-        let integrity = u
-            .password_integrity
-            .as_deref()
+            .zip(u.password_integrity.as_deref())
             .ok_or_else(|| WebError::Unauthorized("Please use CAS login".to_string()))?;
 
         if !verify_password(salt, integrity, &payload.password) {

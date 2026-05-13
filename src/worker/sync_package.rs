@@ -255,21 +255,14 @@ pub async fn sync_package(
         .await?;
 
     if !versions_to_delete.is_empty() {
-        let mut orphan_dist_ids: Vec<i64> = Vec::new();
-        for v in &versions_to_delete {
-            if let Some(id) = v.abbrev_dist_id {
-                orphan_dist_ids.push(id);
-            }
-            if let Some(id) = v.manifest_dist_id {
-                orphan_dist_ids.push(id);
-            }
-            if let Some(id) = v.tar_dist_id {
-                orphan_dist_ids.push(id);
-            }
-            if let Some(id) = v.readme_dist_id {
-                orphan_dist_ids.push(id);
-            }
-        }
+        let orphan_dist_ids: Vec<i64> = versions_to_delete
+            .iter()
+            .flat_map(|v| {
+                [&v.abbrev_dist_id, &v.manifest_dist_id, &v.tar_dist_id, &v.readme_dist_id]
+                    .into_iter()
+                    .filter_map(|id| *id)
+            })
+            .collect();
 
         let version_ids: Vec<i64> = versions_to_delete.iter().map(|v| v.id).collect();
         repo.delete_versions_by_ids(&version_ids).await?;
@@ -281,15 +274,10 @@ pub async fn sync_package(
         }
     }
 
-    let mut old_manifest_dist_ids: Vec<i64> = Vec::new();
-    if let Some(id) = old_abbrev_dist_id {
-        old_manifest_dist_ids.push(id);
-    }
-    if let Some(id) = old_full_dist_id {
-        old_manifest_dist_ids.push(id);
-    }
-    for &dist_id in &old_manifest_dist_ids {
-        if let Err(e) = repo.delete_content(dist_id).await {
+    let old_manifest_dist_ids: Vec<i64> =
+        [old_abbrev_dist_id, old_full_dist_id].into_iter().flatten().collect();
+    for dist_id in &old_manifest_dist_ids {
+        if let Err(e) = repo.delete_content(*dist_id).await {
             error!("failed to delete old manifest dist {dist_id}: {e:#}");
         }
     }

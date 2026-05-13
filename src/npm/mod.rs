@@ -31,22 +31,22 @@ pub fn pad_version(version: &str) -> String {
 }
 
 pub fn detect_install_script(ver: &PackageVersion) -> Option<bool> {
-    if let Some(scripts) = &ver.scripts
-        && (scripts.contains_key("install")
-            || scripts.contains_key("preinstall")
-            || scripts.contains_key("postinstall"))
-    {
-        return Some(true);
-    }
-    None
+    let scripts = ver.scripts.as_ref()?;
+    let has_install = scripts.contains_key("install")
+        || scripts.contains_key("preinstall")
+        || scripts.contains_key("postinstall");
+    has_install.then_some(true)
 }
 
-pub fn build_abbreviated_version_entry(ver: &PackageVersion, publish_time_str: Option<&String>) -> AbbreviatedVersion {
-    let has_install_script = if ver.has_install_script.unwrap_or(false) {
-        Some(true)
-    } else {
-        detect_install_script(ver)
-    };
+pub fn build_abbreviated_version_entry(
+    ver: &PackageVersion,
+    publish_time_str: Option<&String>,
+) -> AbbreviatedVersion {
+    let has_install_script = ver
+        .has_install_script
+        .unwrap_or(false)
+        .then_some(true)
+        .or_else(|| detect_install_script(ver));
 
     let libc = ver
         .other

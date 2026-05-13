@@ -158,7 +158,7 @@ pub fn load_config(path: &str) -> Result<Config> {
     Ok(config)
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthConfig {
     #[serde(default)]
@@ -169,17 +169,6 @@ pub struct AuthConfig {
     pub allow_publish_non_scope_package: bool,
     #[serde(default)]
     pub admins: Vec<String>,
-}
-
-impl Default for AuthConfig {
-    fn default() -> Self {
-        Self {
-            cas_url: String::new(),
-            allow_scopes: Vec::new(),
-            allow_publish_non_scope_package: false,
-            admins: Vec::new(),
-        }
-    }
 }
 
 impl AuthConfig {

@@ -10,8 +10,8 @@ use axum::http::HeaderMap;
 use axum::Extension;
 use axum::Json;
 use base64::Engine;
-use sha1::{Digest as Sha1Digest, Sha1};
-use sha2::Sha512;
+use sha1::Sha1;
+use sha2::{Digest, Sha512};
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
@@ -23,35 +23,30 @@ fn validate_npm_command(headers: &HeaderMap) -> WebResult<()> {
     let command = headers
         .get("npm-command")
         .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string())
         .or_else(|| {
             headers
                 .get("referer")
                 .and_then(|v| v.to_str().ok())
-                .map(|s| s.split_whitespace().next().unwrap_or("").to_string())
+                .and_then(|s| s.split_whitespace().next())
         });
 
-    if let Some(cmd) = command {
-        if cmd == "star" || cmd == "unstar" {
-            return Err(WebError::Forbidden(format!("npm {cmd} is not allowed")));
-        }
+    if matches!(command, Some("star" | "unstar")) {
+        return Err(WebError::Forbidden(format!(
+            "npm {} is not allowed",
+            command.unwrap()
+        )));
     }
     Ok(())
 }
 
 fn compute_shasum(data: &[u8]) -> String {
-    let mut hasher = Sha1::new();
-    hasher.update(data);
-    format!("{:x}", hasher.finalize())
+    format!("{:x}", Sha1::digest(data))
 }
 
 fn compute_integrity_sha512(data: &[u8]) -> String {
-    let mut hasher = Sha512::new();
-    hasher.update(data);
-    let hash = hasher.finalize();
     format!(
         "sha512-{}",
-        base64::engine::general_purpose::STANDARD.encode(hash)
+        base64::engine::general_purpose::STANDARD.encode(Sha512::digest(data))
     )
 }
 
@@ -59,29 +54,13 @@ fn verify_integrity(data: &[u8], integrity: &str) -> bool {
     let Some((algo, hash_b64)) = integrity.split_once('-') else {
         return false;
     };
-    match algo {
-        "sha512" => {
-            let mut hasher = Sha512::new();
-            hasher.update(data);
-            let computed = hasher.finalize();
-            let expected = base64::engine::general_purpose::STANDARD.decode(hash_b64);
-            match expected {
-                Ok(bytes) => computed.as_slice() == bytes.as_slice(),
-                Err(_) => false,
-            }
-        }
-        "sha1" => {
-            let mut hasher = Sha1::new();
-            hasher.update(data);
-            let computed = hasher.finalize();
-            let expected = base64::engine::general_purpose::STANDARD.decode(hash_b64);
-            match expected {
-                Ok(bytes) => computed.as_slice() == bytes.as_slice(),
-                Err(_) => false,
-            }
-        }
-        _ => false,
-    }
+    let computed = match algo {
+        "sha512" => Sha512::digest(data).to_vec(),
+        "sha1" => Sha1::digest(data).to_vec(),
+        _ => return false,
+    };
+    let expected = base64::engine::general_purpose::STANDARD.decode(hash_b64);
+    expected.is_ok_and(|bytes| computed.as_slice() == bytes.as_slice())
 }
 
 fn validate_package_name(name: &str) -> WebResult<()> {
@@ -275,10 +254,9 @@ pub async fn publish_package(
         .await
         .map_err(WebError::CustomApiError)?;
 
-    if existing_source.is_some() {
+    if let Some(source) = existing_source {
         return Err(WebError::Forbidden(format!(
-            "package {fullname} was synced from upstream ({}), local publish is not allowed",
-            existing_source.as_deref().unwrap_or("unknown")
+            "package {fullname} was synced from upstream ({source}), local publish is not allowed"
         )));
     }
 
@@ -289,18 +267,18 @@ pub async fn publish_package(
         .map_err(WebError::CustomApiError)?;
 
     let pkg_exists = pkg.is_some();
-    if !pkg_exists {
-        if !dist_tags.contains_key("latest") {
-            dist_tags.insert("latest".to_string(), package_version.version.clone());
-        }
-    } else if !dist_tags.contains_key("latest") {
-        let existing_tags = state
-            .repo
-            .list_tags(package_id)
-            .await
-            .map_err(WebError::CustomApiError)?;
-        let has_latest = existing_tags.iter().any(|t| t.tag == "latest");
-        if !has_latest {
+    if !dist_tags.contains_key("latest") {
+        let needs_latest = if pkg_exists {
+            let existing_tags = state
+                .repo
+                .list_tags(package_id)
+                .await
+                .map_err(WebError::CustomApiError)?;
+            !existing_tags.iter().any(|t| t.tag == "latest")
+        } else {
+            true
+        };
+        if needs_latest {
             dist_tags.insert("latest".to_string(), package_version.version.clone());
         }
     }

@@ -1,7 +1,6 @@
 use crate::error::{WebError, WebResult};
 use crate::state::AppState;
 use axum::body::Body;
-use axum::extract::{Path, State};
 use axum::response::Response;
 use reqwest::StatusCode;
 
@@ -23,9 +22,10 @@ fn extract_version(fullname: &str, filename: &str) -> Option<String> {
         .map(|s| s.to_string())
 }
 
-pub async fn download_tarball(
-    State(state): State<AppState>,
-    Path((fullname, filename)): Path<(String, String)>,
+pub async fn download_tarball_inner(
+    state: &AppState,
+    fullname: &str,
+    filename: &str,
 ) -> WebResult<Response> {
     if !filename.ends_with(".tgz") {
         return Err(WebError::BadRequest(format!("{filename} not a tarball file")));
@@ -33,7 +33,7 @@ pub async fn download_tarball(
 
     let pkg = state
         .repo
-        .get_package_by_name(&fullname)
+        .get_package_by_name(fullname)
         .await
         .map_err(WebError::CustomApiError)?
         .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
@@ -44,7 +44,7 @@ pub async fn download_tarball(
         .await
         .map_err(WebError::CustomApiError)?;
 
-    let version_name = extract_version(&fullname, &filename)
+    let version_name = extract_version(fullname, filename)
         .ok_or_else(|| WebError::NotFound(format!("{fullname}: invalid tarball filename {filename}")))?;
 
     let ver = versions
@@ -88,7 +88,7 @@ pub async fn download_tarball(
     let storage_key = format!("packages/{fullname}/{version_name}/{filename}");
     let dist_id = state
         .repo
-        .put_content(&filename, &storage_key, data.clone(), None, None)
+        .put_content(filename, &storage_key, data.clone(), None, None)
         .await
         .map_err(WebError::CustomApiError)?;
 

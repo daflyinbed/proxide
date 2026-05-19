@@ -99,8 +99,21 @@ pub async fn sync_package(
         .await
         .context("failed to read upstream response body")?;
 
-    let packument: Packument = serde_json::from_slice(&raw_bytes)
+    let mut packument: Packument = serde_json::from_slice(&raw_bytes)
         .context("failed to parse upstream packument")?;
+
+    for ver_data in packument.versions.values_mut() {
+        if let Some(filename) = extract_tarball_filename(&ver_data.dist.tarball) {
+            ver_data.dist.tarball = format!(
+                "{}/npm/{fullname}/-/{filename}",
+                config.server.root_url
+            );
+        }
+    }
+
+    let mut full_json: serde_json::Value = serde_json::from_slice(&raw_bytes)
+        .context("failed to parse upstream response as JSON")?;
+    rewrite_tarball_urls_value(&mut full_json, &config.server.root_url, fullname);
 
     let (scope, _name) = split_scope_name(fullname);
 
@@ -211,7 +224,7 @@ pub async fn sync_package(
     let full_storage_key = format!("packages/{fullname}/full_manifests.json");
 
     let abbrev_bytes = serde_json::to_vec(&abbreviated_manifest).unwrap_or_default();
-    let full_bytes: Vec<u8> = raw_bytes.to_vec();
+    let full_bytes = serde_json::to_vec(&full_json).unwrap_or_default();
 
     repo.put_storage(&abbrev_storage_key, abbrev_bytes.clone())
         .await
@@ -288,4 +301,29 @@ pub async fn sync_package(
     );
 
     Ok(())
+}
+
+fn extract_tarball_filename(url: &str) -> Option<String> {
+    let last_segment = url.rsplit('/').next()?;
+    if last_segment.ends_with(".tgz") {
+        Some(last_segment.to_string())
+    } else {
+        None
+    }
+}
+
+fn rewrite_tarball_urls_value(json: &mut serde_json::Value, root_url: &str, fullname: &str) {
+    let Some(versions) = json.get_mut("versions").and_then(|v| v.as_object_mut()) else {
+        return;
+    };
+    for obj in versions.values_mut() {
+        let Some(dist) = obj.get_mut("dist") else { continue };
+        let Some(tarball) = dist.get_mut("tarball") else { continue };
+        let Some(url) = tarball.as_str() else { continue };
+        if let Some(filename) = extract_tarball_filename(url) {
+            *tarball = serde_json::Value::String(format!(
+                "{root_url}/npm/{fullname}/-/{filename}"
+            ));
+        }
+    }
 }

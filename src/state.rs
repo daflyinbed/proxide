@@ -76,20 +76,20 @@ pub struct LoginSession {
 }
 
 pub struct LoginSessionMap {
-    inner: DashMap<String, LoginSession>,
+    inner: Arc<DashMap<String, LoginSession>>,
     cleanup_handle: JoinHandle<()>,
 }
 
 impl LoginSessionMap {
     pub fn new() -> Self {
-        let inner: DashMap<String, LoginSession> = DashMap::new();
+        let inner = Arc::new(DashMap::new());
         let cleanup_inner = inner.clone();
         let handle = tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
             loop {
                 interval.tick().await;
                 let now = chrono::Utc::now().naive_utc();
-                cleanup_inner.retain(|_, v| v.expired_at > now);
+                cleanup_inner.retain(|_, v: &mut LoginSession| v.expired_at > now);
             }
         });
         Self {

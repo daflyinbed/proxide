@@ -1,10 +1,7 @@
 use crate::error::{WebError, WebResult};
 use crate::repository::{TokenRow, UserRow};
 use crate::state::AppState;
-use axum::extract::{Request, State};
 use axum::http::HeaderMap;
-use axum::middleware::Next;
-use axum::response::Response;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use sha2::{Digest, Sha256};
@@ -25,12 +22,8 @@ pub fn hash_token(raw: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-pub async fn require_auth(
-    State(state): State<AppState>,
-    mut request: Request,
-    next: Next,
-) -> WebResult<Response> {
-    let raw_token = extract_bearer_token(request.headers())
+pub async fn validate_auth(state: &AppState, headers: &HeaderMap) -> WebResult<AuthContext> {
+    let raw_token = extract_bearer_token(headers)
         .ok_or_else(|| WebError::Unauthorized("Login first".to_string()))?;
 
     let token_key = hash_token(&raw_token);
@@ -65,8 +58,7 @@ pub async fn require_auth(
         tracing::warn!("failed to update token last_used_at: {e:#}");
     }
 
-    request.extensions_mut().insert(AuthContext { user, token: token_row });
-    Ok(next.run(request).await)
+    Ok(AuthContext { user, token: token_row })
 }
 
 #[derive(Debug, Clone)]

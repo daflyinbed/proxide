@@ -5,9 +5,7 @@ use crate::npm::types::*;
 use crate::npm::{build_abbreviated_version_entry, is_prerelease, pad_version};
 use crate::repository::{PendingDist, PublishVersionParams, SyncManifestParams};
 use crate::state::{AppState, LockOwner, UnlockGuard};
-use axum::extract::{Path, State};
 use axum::http::HeaderMap;
-use axum::Extension;
 use axum::Json;
 use base64::Engine;
 use sha1::Sha1;
@@ -87,14 +85,14 @@ fn validate_package_name(name: &str) -> WebResult<()> {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub async fn publish_package(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Extension(auth): Extension<AuthContext>,
-    Path(fullname): Path<String>,
-    Json(payload): Json<PublishPayload>,
+pub async fn publish_package_inner(
+    state: &AppState,
+    headers: &HeaderMap,
+    auth: &AuthContext,
+    fullname: &str,
+    payload: PublishPayload,
 ) -> WebResult<Json<PublishResponse>> {
-    validate_npm_command(&headers)?;
+    validate_npm_command(headers)?;
 
     let fullname = fullname.trim().to_string();
     if fullname != payload.name {

@@ -131,6 +131,8 @@ pub struct SyncTaskRow {
 
 #[async_trait]
 pub trait Repository: Send + Sync + 'static {
+    async fn migrate(&self) -> Result<()>;
+
     // ── content ──
 
     async fn get_content(&self, dist_id: i64) -> Result<(Vec<u8>, DistRow)>;

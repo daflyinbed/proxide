@@ -1,5 +1,4 @@
 use crate::handlers;
-use crate::middleware::auth::require_auth;
 use crate::state::AppState;
 use axum::routing::{get, post, put};
 use axum::Router;
@@ -11,34 +10,18 @@ pub fn build_router(state: AppState) -> Router {
             "/-/user/org.couchdb.user:{name}",
             put(handlers::auth::login),
         )
-        .route("/-/v1/login", post(handlers::cas::init_login))
-        .route(
-            "/-/v1/login/request/session/{sessionId}",
-            get(handlers::cas::cas_callback),
-        )
+        .route("/-/v1/login", post(handlers::web_login::init_login))
         .route(
             "/-/v1/login/done/session/{sessionId}",
-            get(handlers::cas::poll_done),
+            get(handlers::web_login::poll_done),
         )
         .route(
             "/-/package/{fullname}/syncs",
             put(handlers::sync::trigger_sync),
         )
-        .route(
-            "/{fullname}/-/{filename}",
-            get(handlers::tarball::download_tarball),
-        )
-        .route(
-            "/{fullname}/{version}",
-            get(handlers::registry::get_package_version),
-        )
-        .route("/{fullname}", get(handlers::registry::get_package))
-        .route(
-            "/{fullname}",
-            put(handlers::publish::publish_package).layer(axum::middleware::from_fn_with_state(
-                state.clone(),
-                require_auth,
-            )),
+        .fallback(
+            get(handlers::package_dispatch::dispatch_get)
+                .put(handlers::package_dispatch::dispatch_put),
         );
 
     let fast = Router::new()
@@ -46,9 +29,15 @@ pub fn build_router(state: AppState) -> Router {
         .route("/versions/{pkg}", get(handlers::fast_meta::get_versions))
         .route("/full/{pkg}", get(handlers::fast_meta::get_full));
 
+    let api = Router::new().route(
+        "/auth/cas/callback/session/{sessionId}",
+        get(handlers::sso::cas::cas_callback),
+    );
+
     Router::new()
         .route("/-/ping", get(handlers::home::ping))
         .nest("/npm", npm)
         .nest("/fast", fast)
+        .nest("/api", api)
         .with_state(state)
 }

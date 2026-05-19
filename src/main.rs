@@ -54,6 +54,7 @@ async fn run_server(config: config::Config) -> Result<()> {
     log::info!("Proxide server starting up...");
 
     let state = AppState::new(config).await?;
+    state.repo.migrate().await?;
     let listener = TcpListener::bind(state.config.server.full_url()).await?;
     let router = build_router(state);
     axum::serve(listener, router)
@@ -66,11 +67,13 @@ async fn run_worker(config: config::Config) -> Result<()> {
     log::info!("Proxide worker starting up...");
 
     let state = AppState::new(config).await?;
+    state.repo.migrate().await?;
     worker::run_worker(state.repo, state.config, state.http, state.package_lock).await
 }
 
 async fn run_cleanup_storage(config: config::Config) -> Result<()> {
     let state = AppState::new(config).await?;
+    state.repo.migrate().await?;
     worker::cleanup_storage::cleanup_orphan_storage(&state.repo).await
 }
 

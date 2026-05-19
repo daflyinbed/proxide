@@ -34,11 +34,6 @@ impl MysqlRepository {
             .is_ok()
     }
 
-    pub async fn migrate(&self) -> Result<()> {
-        sqlx::migrate!("./migrations").run(&self.pool).await?;
-        Ok(())
-    }
-
     async fn insert_dist(
         &self,
         name: &str,
@@ -70,6 +65,11 @@ impl MysqlRepository {
 
 #[async_trait]
 impl Repository for MysqlRepository {
+    async fn migrate(&self) -> Result<()> {
+        sqlx::migrate!("./migrations").run(&self.pool).await?;
+        Ok(())
+    }
+
     // ── content ──
 
     async fn get_content(&self, dist_id: i64) -> Result<(Vec<u8>, DistRow)> {

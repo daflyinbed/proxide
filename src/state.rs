@@ -1,8 +1,11 @@
-use crate::{config::Config, repository::mysql::MysqlRepository, repository::Repository};
+use crate::{config::Config, repository::Repository, repository::mysql::MysqlRepository};
 use anyhow::Result;
-use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
+use dashmap::mapref::entry::Entry;
+use parking_lot::Mutex;
+use std::path::PathBuf;
 use std::sync::Arc;
+use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -48,6 +51,12 @@ impl PackageLock {
 
     pub fn get_owner(&self, name: &str) -> Option<LockOwner> {
         self.inner.get(name).map(|v| *v.value())
+    }
+}
+
+impl Default for PackageLock {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -111,9 +120,155 @@ impl LoginSessionMap {
     }
 }
 
+impl Default for LoginSessionMap {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Drop for LoginSessionMap {
     fn drop(&mut self) {
         self.cleanup_handle.abort();
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum TarballInflightError {
+    NotFound(String),
+    Internal(String),
+}
+
+#[derive(Clone, Debug)]
+pub struct TarballInflightSnapshot {
+    pub ready: bool,
+    pub bytes_written: u64,
+    pub content_length: Option<u64>,
+    pub completed: bool,
+    pub error: Option<TarballInflightError>,
+}
+
+#[derive(Debug, Default)]
+struct TarballInflightProgress {
+    ready: bool,
+    bytes_written: u64,
+    content_length: Option<u64>,
+    completed: bool,
+    reader_count: usize,
+    cleanup_started: bool,
+    error: Option<TarballInflightError>,
+}
+
+#[derive(Debug)]
+pub struct TarballInflight {
+    pub file_path: PathBuf,
+    progress: Mutex<TarballInflightProgress>,
+    pub notify: Arc<Notify>,
+}
+
+impl TarballInflight {
+    pub fn new(file_path: PathBuf) -> Self {
+        Self {
+            file_path,
+            progress: Mutex::new(TarballInflightProgress::default()),
+            notify: Arc::new(Notify::new()),
+        }
+    }
+
+    pub fn mark_ready(&self, content_length: Option<u64>) {
+        let mut progress = self.progress.lock();
+        progress.ready = true;
+        progress.content_length = content_length;
+        drop(progress);
+        self.notify.notify_waiters();
+    }
+
+    pub fn advance(&self, bytes_written: u64) {
+        let mut progress = self.progress.lock();
+        progress.bytes_written = bytes_written;
+        drop(progress);
+        self.notify.notify_waiters();
+    }
+
+    pub fn finish(&self) {
+        let mut progress = self.progress.lock();
+        progress.completed = true;
+        progress.ready = true;
+        drop(progress);
+        self.notify.notify_waiters();
+    }
+
+    pub fn fail(&self, error: TarballInflightError) {
+        let mut progress = self.progress.lock();
+        progress.error = Some(error);
+        progress.completed = true;
+        drop(progress);
+        self.notify.notify_waiters();
+    }
+
+    pub fn add_reader(&self) {
+        let mut progress = self.progress.lock();
+        progress.reader_count += 1;
+    }
+
+    pub fn remove_reader(&self) {
+        let mut progress = self.progress.lock();
+        if progress.reader_count > 0 {
+            progress.reader_count -= 1;
+        }
+        drop(progress);
+        self.notify.notify_waiters();
+    }
+
+    pub fn try_start_cleanup(&self) -> bool {
+        let mut progress = self.progress.lock();
+        if progress.cleanup_started || !progress.completed || progress.reader_count > 0 {
+            return false;
+        }
+        progress.cleanup_started = true;
+        true
+    }
+
+    pub fn snapshot(&self) -> TarballInflightSnapshot {
+        let progress = self.progress.lock();
+        TarballInflightSnapshot {
+            ready: progress.ready,
+            bytes_written: progress.bytes_written,
+            content_length: progress.content_length,
+            completed: progress.completed,
+            error: progress.error.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct TarballInflightMap {
+    inner: Arc<DashMap<String, Arc<TarballInflight>>>,
+}
+
+impl TarballInflightMap {
+    pub fn new() -> Self {
+        Self {
+            inner: Arc::new(DashMap::new()),
+        }
+    }
+
+    pub fn get_or_insert(
+        &self,
+        storage_key: &str,
+        file_path: PathBuf,
+    ) -> (Arc<TarballInflight>, bool) {
+        match self.inner.entry(storage_key.to_string()) {
+            Entry::Occupied(entry) => (entry.get().clone(), false),
+            Entry::Vacant(entry) => {
+                let inflight = Arc::new(TarballInflight::new(file_path));
+                entry.insert(inflight.clone());
+                (inflight, true)
+            }
+        }
+    }
+
+    pub fn remove(&self, storage_key: &str) {
+        self.inner.remove(storage_key);
     }
 }
 
@@ -124,11 +279,13 @@ pub struct AppState {
     pub http: reqwest::Client,
     pub package_lock: PackageLock,
     pub login_sessions: Arc<LoginSessionMap>,
+    pub tarball_downloads: TarballInflightMap,
 }
 
 impl AppState {
     pub async fn new(config: Config) -> Result<Self> {
         let repo = MysqlRepository::new(&config.database, &config.storage).await?;
+        tokio::fs::create_dir_all(&config.server.tarball_cache_dir).await?;
         let http = reqwest::Client::new();
         Ok(Self {
             repo: Arc::new(repo),
@@ -136,6 +293,7 @@ impl AppState {
             http,
             package_lock: PackageLock::new(),
             login_sessions: Arc::new(LoginSessionMap::new()),
+            tarball_downloads: TarballInflightMap::new(),
         })
     }
 }

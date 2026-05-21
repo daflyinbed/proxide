@@ -25,7 +25,10 @@ pub async fn cleanup_orphan_storage(repo: &Arc<dyn Repository>) -> anyhow::Resul
                 deleted += 1;
             }
             Err(e) => {
-                error!("failed to delete orphan dist id={} path={}: {e:#}", d.id, d.path);
+                error!(
+                    "failed to delete orphan dist id={} path={}: {e:#}",
+                    d.id, d.path
+                );
                 failed += 1;
                 ids_to_delete.push(d.id);
             }
@@ -34,7 +37,9 @@ pub async fn cleanup_orphan_storage(repo: &Arc<dyn Repository>) -> anyhow::Resul
 
     if !ids_to_delete.is_empty() {
         let db_deleted = repo.delete_dists_by_ids(&ids_to_delete).await?;
-        println!("Force-deleted {db_deleted} dist row(s) from DB (storage objects may still exist).");
+        println!(
+            "Force-deleted {db_deleted} dist row(s) from DB (storage objects may still exist)."
+        );
     }
 
     println!("Done: {deleted} object(s) deleted, {failed} deletion(s) failed.");

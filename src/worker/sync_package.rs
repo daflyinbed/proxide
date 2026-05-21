@@ -2,7 +2,7 @@ use crate::config::Config;
 use crate::npm::types::*;
 use crate::npm::{build_abbreviated_version_entry, is_prerelease, pad_version, split_scope_name};
 use crate::repository::{
-    PendingDist, PackageVersionRow, Repository, SyncManifestParams, VersionCommitParams,
+    PackageVersionRow, PendingDist, Repository, SyncManifestParams, VersionCommitParams,
 };
 use crate::state::{LockOwner, PackageLock, UnlockGuard};
 use anyhow::{Context, Result};
@@ -14,7 +14,10 @@ use tracing::error;
 fn build_abbreviated_manifest(packument: &Packument) -> AbbreviatedPackument {
     let mut versions = HashMap::new();
     for (ver, data) in &packument.versions {
-        versions.insert(ver.clone(), build_abbreviated_version_entry(data, packument.time.get(ver)));
+        versions.insert(
+            ver.clone(),
+            build_abbreviated_version_entry(data, packument.time.get(ver)),
+        );
     }
     let time = if packument.time.is_empty() {
         None
@@ -67,7 +70,10 @@ pub async fn sync_package(
     if !package_lock.try_lock(fullname, LockOwner::Sync) {
         return Err(SyncPackageError::Conflict(format!(
             "package {fullname} is locked by {}",
-            package_lock.get_owner(fullname).map(|o| o.to_string()).unwrap_or_default()
+            package_lock
+                .get_owner(fullname)
+                .map(|o| o.to_string())
+                .unwrap_or_default()
         )));
     }
     let _guard = UnlockGuard::new(package_lock, fullname.to_string());
@@ -99,29 +105,33 @@ pub async fn sync_package(
         .await
         .context("failed to read upstream response body")?;
 
-    let mut packument: Packument = serde_json::from_slice(&raw_bytes)
-        .context("failed to parse upstream packument")?;
+    let mut packument: Packument =
+        serde_json::from_slice(&raw_bytes).context("failed to parse upstream packument")?;
 
     for ver_data in packument.versions.values_mut() {
         if let Some(filename) = extract_tarball_filename(&ver_data.dist.tarball) {
-            ver_data.dist.tarball = format!(
-                "{}/npm/{fullname}/-/{filename}",
-                config.server.root_url
-            );
+            ver_data.dist.tarball =
+                format!("{}/npm/{fullname}/-/{filename}", config.server.root_url);
         }
     }
 
-    let mut full_json: serde_json::Value = serde_json::from_slice(&raw_bytes)
-        .context("failed to parse upstream response as JSON")?;
+    let mut full_json: serde_json::Value =
+        serde_json::from_slice(&raw_bytes).context("failed to parse upstream response as JSON")?;
     rewrite_tarball_urls_value(&mut full_json, &config.server.root_url, fullname);
 
     let (scope, _name) = split_scope_name(fullname);
 
     let (package_id, existing_source) = repo
-        .upsert_package(fullname, scope, packument.description.as_deref(), Some(&config.worker.upstream_name))
+        .upsert_package(
+            fullname,
+            scope,
+            packument.description.as_deref(),
+            Some(&config.worker.upstream_name),
+        )
         .await?;
 
-    if existing_source.as_deref() != Some(&config.worker.upstream_name) && existing_source.is_some() {
+    if existing_source.as_deref() != Some(&config.worker.upstream_name) && existing_source.is_some()
+    {
         return Err(SyncPackageError::Conflict(format!(
             "package {fullname} is a locally published package, sync is not allowed"
         )));
@@ -171,12 +181,18 @@ pub async fn sync_package(
         let abbrev_data = build_abbreviated_version(&ver_data.name, ver_data);
         let manifest_data = serde_json::to_vec(&ver_data).unwrap_or_default();
 
-        if let Err(e) = repo.put_storage(&abbrev_storage_key, abbrev_data.clone()).await {
+        if let Err(e) = repo
+            .put_storage(&abbrev_storage_key, abbrev_data.clone())
+            .await
+        {
             error!("Storage upload failed for {fullname}@{ver_str} abbreviated: {e:#}");
             continue;
         }
 
-        if let Err(e) = repo.put_storage(&manifest_storage_key, manifest_data.clone()).await {
+        if let Err(e) = repo
+            .put_storage(&manifest_storage_key, manifest_data.clone())
+            .await
+        {
             error!("Storage upload failed for {fullname}@{ver_str} manifest: {e:#}");
             continue;
         }
@@ -271,9 +287,14 @@ pub async fn sync_package(
         let orphan_dist_ids: Vec<i64> = versions_to_delete
             .iter()
             .flat_map(|v| {
-                [&v.abbrev_dist_id, &v.manifest_dist_id, &v.tar_dist_id, &v.readme_dist_id]
-                    .into_iter()
-                    .filter_map(|id| *id)
+                [
+                    &v.abbrev_dist_id,
+                    &v.manifest_dist_id,
+                    &v.tar_dist_id,
+                    &v.readme_dist_id,
+                ]
+                .into_iter()
+                .filter_map(|id| *id)
             })
             .collect();
 
@@ -287,8 +308,10 @@ pub async fn sync_package(
         }
     }
 
-    let old_manifest_dist_ids: Vec<i64> =
-        [old_abbrev_dist_id, old_full_dist_id].into_iter().flatten().collect();
+    let old_manifest_dist_ids: Vec<i64> = [old_abbrev_dist_id, old_full_dist_id]
+        .into_iter()
+        .flatten()
+        .collect();
     for dist_id in &old_manifest_dist_ids {
         if let Err(e) = repo.delete_content(*dist_id).await {
             error!("failed to delete old manifest dist {dist_id}: {e:#}");
@@ -317,13 +340,17 @@ fn rewrite_tarball_urls_value(json: &mut serde_json::Value, root_url: &str, full
         return;
     };
     for obj in versions.values_mut() {
-        let Some(dist) = obj.get_mut("dist") else { continue };
-        let Some(tarball) = dist.get_mut("tarball") else { continue };
-        let Some(url) = tarball.as_str() else { continue };
+        let Some(dist) = obj.get_mut("dist") else {
+            continue;
+        };
+        let Some(tarball) = dist.get_mut("tarball") else {
+            continue;
+        };
+        let Some(url) = tarball.as_str() else {
+            continue;
+        };
         if let Some(filename) = extract_tarball_filename(url) {
-            *tarball = serde_json::Value::String(format!(
-                "{root_url}/npm/{fullname}/-/{filename}"
-            ));
+            *tarball = serde_json::Value::String(format!("{root_url}/npm/{fullname}/-/{filename}"));
         }
     }
 }

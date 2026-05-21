@@ -2,7 +2,7 @@
 uri = "mysql://root:root@127.0.0.1:3306/proxide_e2e"
 
 [server]
-binding = "localhost"
+binding = "0.0.0.0"
 port = 14873
 rootUrl = "http://localhost:14873"
 

@@ -58,8 +58,8 @@ pub async fn run_worker(
     });
 
     let result = tokio::select! {
-        r = poller_handle => r?.map_err(Into::into),
-        r = cleanup_handle => r?.map_err(Into::into),
+        r = poller_handle => r?,
+        r = cleanup_handle => r?,
         r = async {
             for h in consumer_handles {
                 let _ = h.await;

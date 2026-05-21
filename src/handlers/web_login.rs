@@ -1,9 +1,9 @@
 use crate::error::{WebError, WebResult};
 use crate::state::{AppState, LoginSession};
+use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use serde::{Deserialize, Serialize};
 
 const SESSION_TTL_SECS: i64 = 300;
@@ -24,24 +24,20 @@ pub async fn init_login(
     Json(_body): Json<LoginRequestBody>,
 ) -> WebResult<Json<WebLoginResponse>> {
     if !state.config.auth.is_cas_enabled() {
-        return Err(WebError::BadRequest(
-            "Web login is not enabled".to_string(),
-        ));
+        return Err(WebError::BadRequest("Web login is not enabled".to_string()));
     }
 
     let session_id = uuid::Uuid::new_v4().to_string();
     let expired_at = chrono::Utc::now().naive_utc() + chrono::Duration::seconds(SESSION_TTL_SECS);
 
-    state
-        .login_sessions
-        .insert(
-            session_id.clone(),
-            LoginSession {
-                token: None,
-                user_id: None,
-                expired_at,
-            },
-        );
+    state.login_sessions.insert(
+        session_id.clone(),
+        LoginSession {
+            token: None,
+            user_id: None,
+            expired_at,
+        },
+    );
 
     let root_url = &state.config.server.root_url;
     let cas_url = &state.config.auth.cas_url;

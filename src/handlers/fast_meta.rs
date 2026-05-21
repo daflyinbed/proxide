@@ -2,17 +2,17 @@ use crate::error::{WebError, WebResult};
 use crate::npm::types::{FastMetaFull, FastMetaResolved, FastMetaVersions, VersionMeta};
 use crate::repository::PackageRow;
 use crate::state::AppState;
-use axum::extract::{Path, State};
 use axum::Json;
+use axum::extract::{Path, State};
 use semver::VersionReq;
 use serde_json::Value;
 use std::collections::HashMap;
 
 fn parse_specifier(pkg: &str) -> (String, String) {
-    if let Some(at_pos) = pkg.rfind('@') {
-        if at_pos > 0 {
-            return (pkg[..at_pos].to_string(), pkg[at_pos + 1..].to_string());
-        }
+    if let Some(at_pos) = pkg.rfind('@')
+        && at_pos > 0
+    {
+        return (pkg[..at_pos].to_string(), pkg[at_pos + 1..].to_string());
     }
     (pkg.to_string(), "latest".to_string())
 }
@@ -191,12 +191,11 @@ fn resolve_specifier(
     if let Ok(req) = VersionReq::parse(specifier) {
         let mut best: Option<semver::Version> = None;
         for v in versions {
-            if let Ok(sv) = semver::Version::parse(v) {
-                if req.matches(&sv) {
-                    if best.as_ref().map_or(true, |b| sv > *b) {
-                        best = Some(sv);
-                    }
-                }
+            if let Ok(sv) = semver::Version::parse(v)
+                && req.matches(&sv)
+                && best.as_ref().is_none_or(|b| sv > *b)
+            {
+                best = Some(sv);
             }
         }
         return best.map(|v| v.to_string());

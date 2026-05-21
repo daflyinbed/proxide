@@ -7,9 +7,9 @@ use crate::repository::{
 use crate::storage::Storage;
 use anyhow::Result;
 use async_trait::async_trait;
+use sqlx::{MySql, Pool, Row};
 use std::collections::HashMap;
 use tracing::error;
-use sqlx::{MySql, Pool, Row};
 
 #[derive(Debug, Clone)]
 pub struct MysqlRepository {
@@ -65,6 +65,18 @@ impl MysqlRepository {
 
 #[async_trait]
 impl Repository for MysqlRepository {
+    async fn storage_exists(&self, key: &str) -> Result<bool> {
+        self.storage.exists(key).await
+    }
+
+    async fn storage_get_result(&self, key: &str) -> Result<object_store::GetResult> {
+        self.storage.get_result(key).await
+    }
+
+    async fn storage_put_multipart(&self, key: &str) -> Result<object_store::WriteMultipart> {
+        self.storage.put_multipart(key).await
+    }
+
     async fn migrate(&self) -> Result<()> {
         sqlx::migrate!("./migrations").run(&self.pool).await?;
         Ok(())
@@ -97,13 +109,25 @@ impl Repository for MysqlRepository {
         Ok(dist_id)
     }
 
+    async fn create_dist(
+        &self,
+        name: &str,
+        storage_key: &str,
+        size: i64,
+        shasum: Option<&str>,
+        integrity: Option<&str>,
+    ) -> Result<i64> {
+        self.insert_dist(name, storage_key, size, shasum, integrity)
+            .await
+    }
+
     async fn delete_content(&self, dist_id: i64) -> Result<()> {
         let dist_path = self.get_dist(dist_id).await?.map(|d| d.path);
         self.delete_dist(dist_id).await?;
-        if let Some(path) = dist_path {
-            if let Err(e) = self.storage.delete(&path).await {
-                error!("failed to delete storage object for dist {dist_id} path {path}: {e:#}");
-            }
+        if let Some(path) = dist_path
+            && let Err(e) = self.storage.delete(&path).await
+        {
+            error!("failed to delete storage object for dist {dist_id} path {path}: {e:#}");
         }
         Ok(())
     }
@@ -141,12 +165,9 @@ impl Repository for MysqlRepository {
         )
         .execute(&self.pool)
         .await?;
-        let row = sqlx::query!(
-            r#"SELECT id, source FROM packages WHERE name = ?"#,
-            name
-        )
-        .fetch_one(&self.pool)
-        .await?;
+        let row = sqlx::query!(r#"SELECT id, source FROM packages WHERE name = ?"#, name)
+            .fetch_one(&self.pool)
+            .await?;
         Ok((row.id as i64, row.source))
     }
 
@@ -320,11 +341,7 @@ impl Repository for MysqlRepository {
         Ok(rows)
     }
 
-    async fn sync_tags(
-        &self,
-        package_id: i64,
-        tags: &HashMap<String, String>,
-    ) -> Result<()> {
+    async fn sync_tags(&self, package_id: i64, tags: &HashMap<String, String>) -> Result<()> {
         let mut tx = self.pool.begin().await?;
         sync_tags_tx(&mut tx, package_id, tags).await?;
         tx.commit().await?;
@@ -338,6 +355,17 @@ impl Repository for MysqlRepository {
             DistRow,
             r#"SELECT id, name, path, size, shasum, integrity FROM dists WHERE id = ?"#,
             id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    async fn get_dist_by_path(&self, path: &str) -> Result<Option<DistRow>> {
+        let row = sqlx::query_as!(
+            DistRow,
+            r#"SELECT id, name, path, size, shasum, integrity FROM dists WHERE path = ? LIMIT 1"#,
+            path
         )
         .fetch_optional(&self.pool)
         .await?;
@@ -578,9 +606,10 @@ impl Repository for MysqlRepository {
     }
 
     async fn count_tasks_by_status(&self) -> Result<HashMap<String, i64>> {
-        let rows = sqlx::query("SELECT status, COUNT(*) AS `count` FROM sync_tasks GROUP BY status")
-            .fetch_all(&self.pool)
-            .await?;
+        let rows =
+            sqlx::query("SELECT status, COUNT(*) AS `count` FROM sync_tasks GROUP BY status")
+                .fetch_all(&self.pool)
+                .await?;
 
         let mut map = HashMap::new();
         for row in rows {
@@ -885,10 +914,8 @@ async fn sync_tags_tx(
     .fetch_all(&mut **tx)
     .await?;
 
-    let existing_map: HashMap<String, String> = existing
-        .into_iter()
-        .map(|t| (t.tag, t.version))
-        .collect();
+    let existing_map: HashMap<String, String> =
+        existing.into_iter().map(|t| (t.tag, t.version)).collect();
 
     for (tag, version) in tags {
         if let Some(existing_ver) = existing_map.get(tag) {

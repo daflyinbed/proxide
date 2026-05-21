@@ -2,8 +2,8 @@ use crate::error::{WebError, WebResult};
 use crate::repository::{TokenRow, UserRow};
 use crate::state::AppState;
 use axum::http::HeaderMap;
-use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use sha2::{Digest, Sha256};
 
 fn extract_bearer_token(headers: &HeaderMap) -> Option<String> {
@@ -41,10 +41,10 @@ pub async fn validate_auth(state: &AppState, headers: &HeaderMap) -> WebResult<A
         ));
     }
 
-    if let Some(expired) = token_row.expired_at {
-        if expired < chrono::Utc::now().naive_utc() {
-            return Err(WebError::Unauthorized("Token expired".to_string()));
-        }
+    if let Some(expired) = token_row.expired_at
+        && expired < chrono::Utc::now().naive_utc()
+    {
+        return Err(WebError::Unauthorized("Token expired".to_string()));
     }
 
     let user = state
@@ -58,7 +58,10 @@ pub async fn validate_auth(state: &AppState, headers: &HeaderMap) -> WebResult<A
         tracing::warn!("failed to update token last_used_at: {e:#}");
     }
 
-    Ok(AuthContext { user, token: token_row })
+    Ok(AuthContext {
+        user,
+        token: token_row,
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -112,5 +115,3 @@ pub fn compute_password_integrity(salt: &str, password: &str) -> String {
 pub fn verify_password(salt: &str, integrity: &str, password: &str) -> bool {
     compute_password_integrity(salt, password) == integrity
 }
-
-

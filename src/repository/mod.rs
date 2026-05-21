@@ -133,6 +133,10 @@ pub struct SyncTaskRow {
 pub trait Repository: Send + Sync + 'static {
     async fn migrate(&self) -> Result<()>;
 
+    async fn storage_exists(&self, key: &str) -> Result<bool>;
+    async fn storage_get_result(&self, key: &str) -> Result<object_store::GetResult>;
+    async fn storage_put_multipart(&self, key: &str) -> Result<object_store::WriteMultipart>;
+
     // ── content ──
 
     async fn get_content(&self, dist_id: i64) -> Result<(Vec<u8>, DistRow)>;
@@ -141,6 +145,14 @@ pub trait Repository: Send + Sync + 'static {
         name: &str,
         storage_key: &str,
         data: Vec<u8>,
+        shasum: Option<&str>,
+        integrity: Option<&str>,
+    ) -> Result<i64>;
+    async fn create_dist(
+        &self,
+        name: &str,
+        storage_key: &str,
+        size: i64,
         shasum: Option<&str>,
         integrity: Option<&str>,
     ) -> Result<i64>;
@@ -167,7 +179,11 @@ pub trait Repository: Send + Sync + 'static {
 
     // ── package_versions ──
 
-    async fn get_version(&self, package_id: i64, version: &str) -> Result<Option<PackageVersionRow>>;
+    async fn get_version(
+        &self,
+        package_id: i64,
+        version: &str,
+    ) -> Result<Option<PackageVersionRow>>;
     async fn list_versions(&self, package_id: i64) -> Result<Vec<PackageVersionRow>>;
     async fn insert_version(
         &self,
@@ -205,6 +221,7 @@ pub trait Repository: Send + Sync + 'static {
     // ── dists ──
 
     async fn get_dist(&self, id: i64) -> Result<Option<DistRow>>;
+    async fn get_dist_by_path(&self, path: &str) -> Result<Option<DistRow>>;
     async fn list_orphan_dists(&self) -> Result<Vec<DistRow>>;
     async fn delete_dists_by_ids(&self, ids: &[i64]) -> Result<u64>;
 

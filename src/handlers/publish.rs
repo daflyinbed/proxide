@@ -1,21 +1,20 @@
 use crate::error::{WebError, WebResult};
-use crate::middleware::auth::{is_admin, AuthContext};
+use crate::middleware::auth::{AuthContext, is_admin};
 use crate::npm::split_scope_name;
 use crate::npm::types::*;
 use crate::npm::{build_abbreviated_version_entry, is_prerelease, pad_version};
 use crate::repository::{PendingDist, PublishVersionParams, SyncManifestParams};
 use crate::state::{AppState, LockOwner, UnlockGuard};
-use axum::http::HeaderMap;
 use axum::Json;
+use axum::http::HeaderMap;
 use base64::Engine;
 use sha1::Sha1;
 use sha2::{Digest, Sha512};
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
-static BASE64_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
-    regex::Regex::new("^[A-Za-z0-9+/]{4}").unwrap()
-});
+static BASE64_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new("^[A-Za-z0-9+/]{4}").unwrap());
 
 fn validate_npm_command(headers: &HeaderMap) -> WebResult<()> {
     let command = headers
@@ -238,13 +237,7 @@ pub async fn publish_package_inner(
             .other
             .get("description")
             .and_then(|v| v.as_str()))
-        .map(|s| {
-            if s.len() > 10240 {
-                &s[..10240]
-            } else {
-                s
-            }
-        });
+        .map(|s| if s.len() > 10240 { &s[..10240] } else { s });
 
     let (package_id, existing_source) = state
         .repo
@@ -533,8 +526,15 @@ pub async fn publish_package_inner(
             }
         })?;
 
-    refresh_manifests(&state, package_id, &fullname, description, &dist_tags, readme_content)
-        .await?;
+    refresh_manifests(
+        state,
+        package_id,
+        &fullname,
+        description,
+        &dist_tags,
+        readme_content,
+    )
+    .await?;
 
     log::info!(
         action = "publish";
@@ -570,27 +570,22 @@ async fn refresh_manifests(
         let v_str = &v.version;
         time_map.insert(
             v_str.clone(),
-            v.publish_time
-                .format("%Y-%m-%dT%H:%M:%S%.f")
-                .to_string(),
+            v.publish_time.format("%Y-%m-%dT%H:%M:%S%.f").to_string(),
         );
 
-        if let Some(abbrev_id) = v.abbrev_dist_id {
-            if let Ok((data, _)) = state.repo.get_content(abbrev_id).await {
-                if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&data) {
-                    if let Ok(abbrev) = serde_json::from_value::<AbbreviatedVersion>(val.clone()) {
-                        abbrev_versions.insert(v_str.clone(), abbrev);
-                    }
-                }
-            }
+        if let Some(abbrev_id) = v.abbrev_dist_id
+            && let Ok((data, _)) = state.repo.get_content(abbrev_id).await
+            && let Ok(val) = serde_json::from_slice::<serde_json::Value>(&data)
+            && let Ok(abbrev) = serde_json::from_value::<AbbreviatedVersion>(val.clone())
+        {
+            abbrev_versions.insert(v_str.clone(), abbrev);
         }
 
-        if let Some(manifest_id) = v.manifest_dist_id {
-            if let Ok((data, _)) = state.repo.get_content(manifest_id).await {
-                if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&data) {
-                    full_versions.insert(v_str.clone(), val);
-                }
-            }
+        if let Some(manifest_id) = v.manifest_dist_id
+            && let Ok((data, _)) = state.repo.get_content(manifest_id).await
+            && let Ok(val) = serde_json::from_slice::<serde_json::Value>(&data)
+        {
+            full_versions.insert(v_str.clone(), val);
         }
     }
 
@@ -676,5 +671,5 @@ async fn refresh_manifests(
 fn is_duplicate_key_error(err: &anyhow::Error) -> bool {
     err.chain()
         .filter_map(|e| e.downcast_ref::<sqlx::mysql::MySqlDatabaseError>())
-        .any(|db_err| db_err.code().as_deref() == Some("23000") && db_err.number() == 1062)
+        .any(|db_err| db_err.code() == Some("23000") && db_err.number() == 1062)
 }

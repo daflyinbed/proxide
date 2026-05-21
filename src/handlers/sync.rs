@@ -1,8 +1,8 @@
 use crate::error::{WebError, WebResult};
 use crate::npm::types::SyncResponse;
 use crate::state::AppState;
-use axum::extract::{Path, State};
 use axum::Json;
+use axum::extract::{Path, State};
 
 pub async fn trigger_sync(
     State(state): State<AppState>,

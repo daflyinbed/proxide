@@ -4,6 +4,9 @@ export async function api(
   path: string,
   opts: RequestInit = {},
 ): Promise<Response> {
+  if (path.startsWith("http://") || path.startsWith("https://")) {
+    return fetch(path, opts);
+  }
   return fetch(`${BASE_URL}${path}`, opts);
 }
 

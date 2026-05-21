@@ -1,10 +1,10 @@
 pub mod auth;
-pub mod home;
-pub mod registry;
 pub mod fast_meta;
-pub mod tarball;
-pub mod sync;
-pub mod publish;
-pub mod web_login;
-pub mod sso;
+pub mod home;
 pub mod package_dispatch;
+pub mod publish;
+pub mod registry;
+pub mod sso;
+pub mod sync;
+pub mod tarball;
+pub mod web_login;

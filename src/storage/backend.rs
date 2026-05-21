@@ -1,10 +1,11 @@
 use crate::config::StorageConfig;
 use anyhow::{Context, Result};
 use futures::StreamExt;
+use object_store::ObjectStore;
 use object_store::aws::AmazonS3Builder;
 use object_store::local::LocalFileSystem;
 use object_store::path::Path;
-use object_store::ObjectStore;
+use object_store::{GetResult, WriteMultipart};
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]
@@ -56,6 +57,14 @@ impl Storage {
         Ok(bytes.to_vec())
     }
 
+    pub async fn get_result(&self, key: &str) -> Result<GetResult> {
+        let path = Path::from(key);
+        self.inner
+            .get(&path)
+            .await
+            .with_context(|| format!("failed to get object: {key}"))
+    }
+
     pub async fn put(&self, key: &str, data: Vec<u8>) -> Result<()> {
         let path = Path::from(key);
         self.inner
@@ -63,6 +72,16 @@ impl Storage {
             .await
             .with_context(|| format!("failed to put object: {key}"))?;
         Ok(())
+    }
+
+    pub async fn put_multipart(&self, key: &str) -> Result<WriteMultipart> {
+        let path = Path::from(key);
+        let upload = self
+            .inner
+            .put_multipart(&path)
+            .await
+            .with_context(|| format!("failed to start multipart upload: {key}"))?;
+        Ok(WriteMultipart::new(upload))
     }
 
     pub async fn exists(&self, key: &str) -> Result<bool> {
@@ -88,7 +107,8 @@ impl Storage {
         let mut objects = Vec::new();
         let mut stream = self.inner.list(Some(&path));
         while let Some(meta) = stream.next().await {
-            let meta = meta.with_context(|| format!("failed to list objects with prefix: {prefix}"))?;
+            let meta =
+                meta.with_context(|| format!("failed to list objects with prefix: {prefix}"))?;
             objects.push(meta.location.to_string());
         }
         Ok(objects)

@@ -26,6 +26,8 @@ pub struct ServerConfig {
     pub binding: String,
     pub port: u16,
     pub root_url: String,
+    #[serde(default = "default_tarball_cache_dir")]
+    pub tarball_cache_dir: String,
 }
 
 impl ServerConfig {
@@ -36,6 +38,10 @@ impl ServerConfig {
 
 fn default_binding() -> String {
     "localhost".to_string()
+}
+
+fn default_tarball_cache_dir() -> String {
+    "/tmp/proxide-tarballs".to_string()
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

@@ -3,8 +3,8 @@ use crate::middleware::auth::hash_token;
 use crate::state::{AppState, LoginSession};
 use axum::extract::{Path, Query, State};
 use axum::response::{Html, IntoResponse, Response};
-use quick_xml::events::Event;
 use quick_xml::Reader;
+use quick_xml::events::Event;
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -34,9 +34,8 @@ pub async fn cas_callback(
     let root_url = &state.config.server.root_url;
     let cas_url = &state.config.auth.cas_url;
     let service_url = format!("{root_url}/api/auth/cas/callback/session/{session_id}");
-    let validate_url = format!(
-        "{cas_url}/cas/serviceValidate?service={service_url}&ticket={ticket}"
-    );
+    let validate_url =
+        format!("{cas_url}/cas/serviceValidate?service={service_url}&ticket={ticket}");
 
     let cas_response = state
         .http
@@ -65,16 +64,14 @@ pub async fn cas_callback(
         .await
         .map_err(WebError::CustomApiError)?;
 
-    state
-        .login_sessions
-        .insert(
-            session_id.clone(),
-            LoginSession {
-                token: Some(raw_token),
-                user_id: Some(user_id),
-                expired_at: session.expired_at,
-            },
-        );
+    state.login_sessions.insert(
+        session_id.clone(),
+        LoginSession {
+            token: Some(raw_token),
+            user_id: Some(user_id),
+            expired_at: session.expired_at,
+        },
+    );
 
     log::info!(action = "cas_login"; "user={}", username);
 

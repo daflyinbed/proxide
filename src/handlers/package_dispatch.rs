@@ -14,6 +14,7 @@ fn decode_path(path: &str) -> String {
         .to_string()
 }
 
+#[derive(Debug)]
 enum PackageRoute {
     Package { fullname: String },
     Version { fullname: String, version: String },
@@ -34,10 +35,7 @@ fn parse_package_route(path: &str) -> WebResult<PackageRoute> {
                 "incomplete scoped package name".to_string(),
             ));
         }
-        (
-            format!("{}/{}", segments[0], segments[1]),
-            &segments[2..],
-        )
+        (format!("{}/{}", segments[0], segments[1]), &segments[2..])
     } else {
         (segments[0].to_string(), &segments[1..])
     };
@@ -56,6 +54,123 @@ fn parse_package_route(path: &str) -> WebResult<PackageRoute> {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn simple_package() {
+        let route = parse_package_route("lodash").unwrap();
+        let PackageRoute::Package { fullname } = route else {
+            panic!("expected Package");
+        };
+        assert_eq!(fullname, "lodash");
+    }
+
+    #[test]
+    fn simple_package_with_leading_slash() {
+        let route = parse_package_route("/lodash").unwrap();
+        let PackageRoute::Package { fullname } = route else {
+            panic!("expected Package");
+        };
+        assert_eq!(fullname, "lodash");
+    }
+
+    #[test]
+    fn scoped_package() {
+        let route = parse_package_route("@babel/core").unwrap();
+        let PackageRoute::Package { fullname } = route else {
+            panic!("expected Package");
+        };
+        assert_eq!(fullname, "@babel/core");
+    }
+
+    #[test]
+    fn scoped_package_with_leading_slash() {
+        let route = parse_package_route("/@babel/core").unwrap();
+        let PackageRoute::Package { fullname } = route else {
+            panic!("expected Package");
+        };
+        assert_eq!(fullname, "@babel/core");
+    }
+
+    #[test]
+    fn simple_package_version() {
+        let route = parse_package_route("lodash/4.17.21").unwrap();
+        let PackageRoute::Version { fullname, version } = route else {
+            panic!("expected Version");
+        };
+        assert_eq!(fullname, "lodash");
+        assert_eq!(version, "4.17.21");
+    }
+
+    #[test]
+    fn scoped_package_version() {
+        let route = parse_package_route("@babel/core/7.24.0").unwrap();
+        let PackageRoute::Version { fullname, version } = route else {
+            panic!("expected Version");
+        };
+        assert_eq!(fullname, "@babel/core");
+        assert_eq!(version, "7.24.0");
+    }
+
+    #[test]
+    fn simple_package_tarball() {
+        let route = parse_package_route("lodash/-/lodash-4.17.21.tgz").unwrap();
+        let PackageRoute::Tarball { fullname, filename } = route else {
+            panic!("expected Tarball");
+        };
+        assert_eq!(fullname, "lodash");
+        assert_eq!(filename, "lodash-4.17.21.tgz");
+    }
+
+    #[test]
+    fn scoped_package_tarball() {
+        let route = parse_package_route("@babel/core/-/core-7.24.0.tgz").unwrap();
+        let PackageRoute::Tarball { fullname, filename } = route else {
+            panic!("expected Tarball");
+        };
+        assert_eq!(fullname, "@babel/core");
+        assert_eq!(filename, "core-7.24.0.tgz");
+    }
+
+    #[test]
+    fn empty_path() {
+        let err = parse_package_route("").unwrap_err();
+        assert!(matches!(err, WebError::NotFound(_)));
+    }
+
+    #[test]
+    fn only_slashes() {
+        let err = parse_package_route("///").unwrap_err();
+        assert!(matches!(err, WebError::NotFound(_)));
+    }
+
+    #[test]
+    fn incomplete_scope() {
+        let err = parse_package_route("@babel").unwrap_err();
+        assert!(matches!(err, WebError::NotFound(_)));
+    }
+
+    #[test]
+    fn incomplete_scope_with_slash() {
+        let err = parse_package_route("/@babel").unwrap_err();
+        assert!(matches!(err, WebError::NotFound(_)));
+    }
+
+    #[test]
+    fn too_many_segments() {
+        let err = parse_package_route("lodash/foo/bar").unwrap_err();
+        assert!(matches!(err, WebError::NotFound(_)));
+    }
+
+    #[test]
+    fn scoped_package_too_many_segments() {
+        let err = parse_package_route("@babel/core/foo/bar").unwrap_err();
+        assert!(matches!(err, WebError::NotFound(_)));
+    }
+}
+
 pub async fn dispatch_get(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -69,8 +184,7 @@ pub async fn dispatch_get(
             registry::get_package_inner(&state, &headers, &fullname).await
         }
         PackageRoute::Version { fullname, version } => {
-            let json =
-                registry::get_package_version_inner(&state, &fullname, &version).await?;
+            let json = registry::get_package_version_inner(&state, &fullname, &version).await?;
             Ok(json.into_response())
         }
         PackageRoute::Tarball { fullname, filename } => {
@@ -88,18 +202,14 @@ pub async fn dispatch_put(
     let route = parse_package_route(&path)?;
 
     let PackageRoute::Package { fullname } = route else {
-        return Err(WebError::NotFound(format!(
-            "PUT not supported for: {path}"
-        )));
+        return Err(WebError::NotFound(format!("PUT not supported for: {path}")));
     };
 
     let auth = validate_auth(&state, &headers).await?;
 
     let body_bytes = body::to_bytes(req.into_body(), 10 * 1024 * 1024)
         .await
-        .map_err(|e| {
-            WebError::CustomApiError(anyhow::anyhow!("failed to read body: {e}"))
-        })?;
+        .map_err(|e| WebError::CustomApiError(anyhow::anyhow!("failed to read body: {e}")))?;
 
     let payload: PublishPayload = serde_json::from_slice(&body_bytes)
         .map_err(|e| WebError::BadRequest(format!("invalid JSON: {e}")))?;

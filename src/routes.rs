@@ -1,7 +1,7 @@
 use crate::handlers;
 use crate::state::AppState;
-use axum::routing::{get, post, put};
 use axum::Router;
+use axum::routing::{get, post, put};
 
 pub fn build_router(state: AppState) -> Router {
     let npm = Router::new()

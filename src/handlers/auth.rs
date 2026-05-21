@@ -1,10 +1,12 @@
 use crate::error::{WebError, WebResult};
-use crate::middleware::auth::{compute_password_integrity, generate_salt, hash_token, verify_password};
+use crate::middleware::auth::{
+    compute_password_integrity, generate_salt, hash_token, verify_password,
+};
 use crate::npm::types::{LoginPayload, LoginResponse};
 use crate::state::AppState;
+use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::Json;
 
 pub async fn login(
     State(state): State<AppState>,

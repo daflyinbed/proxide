@@ -93,9 +93,14 @@ export default async function setup() {
   await waitFor(`${BASE_URL}/-/ping`);
   log("proxide is ready");
 
-  return () => {
+  return async () => {
     log("stopping proxide...");
-    child.kill("SIGTERM");
+    if (child.exitCode === null && !child.killed) {
+      child.kill("SIGTERM");
+      await new Promise<void>((resolve) => {
+        child.once("exit", () => resolve());
+      });
+    }
     log("done");
   };
 }

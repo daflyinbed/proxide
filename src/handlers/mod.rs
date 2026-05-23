@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod downloads;
 pub mod fast_meta;
 pub mod home;
 pub mod package_dispatch;

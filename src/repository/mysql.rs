@@ -1,8 +1,8 @@
 use crate::config::{DatabaseConfig, StorageConfig};
 use crate::repository::{
-    ChangeStreamCursorRow, DistRow, PackageRow, PackageTagRow, PackageVersionRow,
-    PublishVersionParams, Repository, SyncManifestParams, SyncTaskRow, TokenRow, UserRow,
-    VersionCommitParams,
+    ChangeStreamCursorRow, DistRow, PackageDownloadRow, PackageRow, PackageTagRow,
+    PackageVersionRow, PublishVersionParams, Repository, SyncManifestParams, SyncTaskRow,
+    TokenRow, UpstreamPackageDownloadRow, UserRow, VersionCommitParams,
 };
 use crate::storage::Storage;
 use anyhow::Result;
@@ -877,6 +877,783 @@ impl Repository for MysqlRepository {
         .execute(&self.pool)
         .await?;
         Ok(())
+    }
+
+    // ── package_downloads ──
+
+    async fn increment_package_download(
+        &self,
+        package_version_id: i64,
+        year: u16,
+        month: u8,
+        day: u8,
+        count: u64,
+    ) -> Result<()> {
+        match day {
+            1 => sqlx::query!(
+                r#"INSERT INTO package_downloads (package_version_id, year, month, d01) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d01 = d01 + ?"#,
+                package_version_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            2 => sqlx::query!(
+                r#"INSERT INTO package_downloads (package_version_id, year, month, d02) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d02 = d02 + ?"#,
+                package_version_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            3 => sqlx::query!(
+                r#"INSERT INTO package_downloads (package_version_id, year, month, d03) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d03 = d03 + ?"#,
+                package_version_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            4 => sqlx::query!(
+                r#"INSERT INTO package_downloads (package_version_id, year, month, d04) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d04 = d04 + ?"#,
+                package_version_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            5 => sqlx::query!(
+                r#"INSERT INTO package_downloads (package_version_id, year, month, d05) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d05 = d05 + ?"#,
+                package_version_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            6 => sqlx::query!(
+                r#"INSERT INTO package_downloads (package_version_id, year, month, d06) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d06 = d06 + ?"#,
+                package_version_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            7 => sqlx::query!(
+                r#"INSERT INTO package_downloads (package_version_id, year, month, d07) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d07 = d07 + ?"#,
+                package_version_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            8 => sqlx::query!(
+                r#"INSERT INTO package_downloads (package_version_id, year, month, d08) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d08 = d08 + ?"#,
+                package_version_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            9 => sqlx::query!(
+                r#"INSERT INTO package_downloads (package_version_id, year, month, d09) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d09 = d09 + ?"#,
+                package_version_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            10 => sqlx::query!(
+                r#"INSERT INTO package_downloads (package_version_id, year, month, d10) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d10 = d10 + ?"#,
+                package_version_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            11 => sqlx::query!(
+                r#"INSERT INTO package_downloads (package_version_id, year, month, d11) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d11 = d11 + ?"#,
+                package_version_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            12 => sqlx::query!(
+                r#"INSERT INTO package_downloads (package_version_id, year, month, d12) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d12 = d12 + ?"#,
+                package_version_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            13 => sqlx::query!(
+                r#"INSERT INTO package_downloads (package_version_id, year, month, d13) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d13 = d13 + ?"#,
+                package_version_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            14 => sqlx::query!(
+                r#"INSERT INTO package_downloads (package_version_id, year, month, d14) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d14 = d14 + ?"#,
+                package_version_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            15 => sqlx::query!(
+                r#"INSERT INTO package_downloads (package_version_id, year, month, d15) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d15 = d15 + ?"#,
+                package_version_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            16 => sqlx::query!(
+                r#"INSERT INTO package_downloads (package_version_id, year, month, d16) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d16 = d16 + ?"#,
+                package_version_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            17 => sqlx::query!(
+                r#"INSERT INTO package_downloads (package_version_id, year, month, d17) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d17 = d17 + ?"#,
+                package_version_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            18 => sqlx::query!(
+                r#"INSERT INTO package_downloads (package_version_id, year, month, d18) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d18 = d18 + ?"#,
+                package_version_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            19 => sqlx::query!(
+                r#"INSERT INTO package_downloads (package_version_id, year, month, d19) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d19 = d19 + ?"#,
+                package_version_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            20 => sqlx::query!(
+                r#"INSERT INTO package_downloads (package_version_id, year, month, d20) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d20 = d20 + ?"#,
+                package_version_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            21 => sqlx::query!(
+                r#"INSERT INTO package_downloads (package_version_id, year, month, d21) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d21 = d21 + ?"#,
+                package_version_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            22 => sqlx::query!(
+                r#"INSERT INTO package_downloads (package_version_id, year, month, d22) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d22 = d22 + ?"#,
+                package_version_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            23 => sqlx::query!(
+                r#"INSERT INTO package_downloads (package_version_id, year, month, d23) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d23 = d23 + ?"#,
+                package_version_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            24 => sqlx::query!(
+                r#"INSERT INTO package_downloads (package_version_id, year, month, d24) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d24 = d24 + ?"#,
+                package_version_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            25 => sqlx::query!(
+                r#"INSERT INTO package_downloads (package_version_id, year, month, d25) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d25 = d25 + ?"#,
+                package_version_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            26 => sqlx::query!(
+                r#"INSERT INTO package_downloads (package_version_id, year, month, d26) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d26 = d26 + ?"#,
+                package_version_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            27 => sqlx::query!(
+                r#"INSERT INTO package_downloads (package_version_id, year, month, d27) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d27 = d27 + ?"#,
+                package_version_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            28 => sqlx::query!(
+                r#"INSERT INTO package_downloads (package_version_id, year, month, d28) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d28 = d28 + ?"#,
+                package_version_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            29 => sqlx::query!(
+                r#"INSERT INTO package_downloads (package_version_id, year, month, d29) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d29 = d29 + ?"#,
+                package_version_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            30 => sqlx::query!(
+                r#"INSERT INTO package_downloads (package_version_id, year, month, d30) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d30 = d30 + ?"#,
+                package_version_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            31 => sqlx::query!(
+                r#"INSERT INTO package_downloads (package_version_id, year, month, d31) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d31 = d31 + ?"#,
+                package_version_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            _ => anyhow::bail!("invalid day: {day}"),
+        };
+        Ok(())
+    }
+
+    async fn query_package_downloads_by_version(
+        &self,
+        package_version_id: i64,
+        year: u16,
+    ) -> Result<Vec<PackageDownloadRow>> {
+        let rows = sqlx::query_as!(
+            PackageDownloadRow,
+            r#"SELECT id, package_version_id, year, month,
+            d01, d02, d03, d04, d05, d06, d07, d08, d09, d10,
+            d11, d12, d13, d14, d15, d16, d17, d18, d19, d20,
+            d21, d22, d23, d24, d25, d26, d27, d28, d29, d30, d31
+            FROM package_downloads
+            WHERE package_version_id = ? AND year = ?"#,
+            package_version_id,
+            year
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    async fn query_package_downloads_by_package(
+        &self,
+        package_id: i64,
+        start_year: u16,
+        start_month: u8,
+        end_year: u16,
+        end_month: u8,
+    ) -> Result<Vec<(i64, String, PackageDownloadRow)>> {
+        let rows = sqlx::query!(
+            r#"SELECT pd.id, pd.package_version_id, pv.version, pd.year, pd.month,
+            pd.d01, pd.d02, pd.d03, pd.d04, pd.d05, pd.d06, pd.d07, pd.d08, pd.d09, pd.d10,
+            pd.d11, pd.d12, pd.d13, pd.d14, pd.d15, pd.d16, pd.d17, pd.d18, pd.d19, pd.d20,
+            pd.d21, pd.d22, pd.d23, pd.d24, pd.d25, pd.d26, pd.d27, pd.d28, pd.d29, pd.d30, pd.d31
+            FROM package_downloads pd
+            JOIN package_versions pv ON pv.id = pd.package_version_id
+            WHERE pv.package_id = ?
+            AND (pd.year > ? OR (pd.year = ? AND pd.month >= ?))
+            AND (pd.year < ? OR (pd.year = ? AND pd.month <= ?))"#,
+            package_id,
+            start_year,
+            start_year,
+            start_month,
+            end_year,
+            end_year,
+            end_month
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut result = Vec::new();
+        for row in rows {
+            let dl_row = PackageDownloadRow {
+                id: row.id,
+                package_version_id: row.package_version_id,
+                year: row.year,
+                month: row.month,
+                d01: row.d01,
+                d02: row.d02,
+                d03: row.d03,
+                d04: row.d04,
+                d05: row.d05,
+                d06: row.d06,
+                d07: row.d07,
+                d08: row.d08,
+                d09: row.d09,
+                d10: row.d10,
+                d11: row.d11,
+                d12: row.d12,
+                d13: row.d13,
+                d14: row.d14,
+                d15: row.d15,
+                d16: row.d16,
+                d17: row.d17,
+                d18: row.d18,
+                d19: row.d19,
+                d20: row.d20,
+                d21: row.d21,
+                d22: row.d22,
+                d23: row.d23,
+                d24: row.d24,
+                d25: row.d25,
+                d26: row.d26,
+                d27: row.d27,
+                d28: row.d28,
+                d29: row.d29,
+                d30: row.d30,
+                d31: row.d31,
+            };
+            result.push((dl_row.package_version_id, row.version, dl_row));
+        }
+        Ok(result)
+    }
+
+    // ── upstream_package_downloads ──
+
+    async fn upsert_upstream_download(
+        &self,
+        package_id: i64,
+        year: u16,
+        month: u8,
+        day: u8,
+        count: u64,
+    ) -> Result<()> {
+        match day {
+            1 => sqlx::query!(
+                r#"INSERT INTO upstream_package_downloads (package_id, year, month, d01) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d01 = ?"#,
+                package_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            2 => sqlx::query!(
+                r#"INSERT INTO upstream_package_downloads (package_id, year, month, d02) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d02 = ?"#,
+                package_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            3 => sqlx::query!(
+                r#"INSERT INTO upstream_package_downloads (package_id, year, month, d03) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d03 = ?"#,
+                package_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            4 => sqlx::query!(
+                r#"INSERT INTO upstream_package_downloads (package_id, year, month, d04) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d04 = ?"#,
+                package_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            5 => sqlx::query!(
+                r#"INSERT INTO upstream_package_downloads (package_id, year, month, d05) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d05 = ?"#,
+                package_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            6 => sqlx::query!(
+                r#"INSERT INTO upstream_package_downloads (package_id, year, month, d06) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d06 = ?"#,
+                package_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            7 => sqlx::query!(
+                r#"INSERT INTO upstream_package_downloads (package_id, year, month, d07) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d07 = ?"#,
+                package_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            8 => sqlx::query!(
+                r#"INSERT INTO upstream_package_downloads (package_id, year, month, d08) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d08 = ?"#,
+                package_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            9 => sqlx::query!(
+                r#"INSERT INTO upstream_package_downloads (package_id, year, month, d09) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d09 = ?"#,
+                package_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            10 => sqlx::query!(
+                r#"INSERT INTO upstream_package_downloads (package_id, year, month, d10) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d10 = ?"#,
+                package_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            11 => sqlx::query!(
+                r#"INSERT INTO upstream_package_downloads (package_id, year, month, d11) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d11 = ?"#,
+                package_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            12 => sqlx::query!(
+                r#"INSERT INTO upstream_package_downloads (package_id, year, month, d12) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d12 = ?"#,
+                package_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            13 => sqlx::query!(
+                r#"INSERT INTO upstream_package_downloads (package_id, year, month, d13) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d13 = ?"#,
+                package_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            14 => sqlx::query!(
+                r#"INSERT INTO upstream_package_downloads (package_id, year, month, d14) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d14 = ?"#,
+                package_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            15 => sqlx::query!(
+                r#"INSERT INTO upstream_package_downloads (package_id, year, month, d15) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d15 = ?"#,
+                package_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            16 => sqlx::query!(
+                r#"INSERT INTO upstream_package_downloads (package_id, year, month, d16) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d16 = ?"#,
+                package_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            17 => sqlx::query!(
+                r#"INSERT INTO upstream_package_downloads (package_id, year, month, d17) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d17 = ?"#,
+                package_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            18 => sqlx::query!(
+                r#"INSERT INTO upstream_package_downloads (package_id, year, month, d18) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d18 = ?"#,
+                package_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            19 => sqlx::query!(
+                r#"INSERT INTO upstream_package_downloads (package_id, year, month, d19) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d19 = ?"#,
+                package_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            20 => sqlx::query!(
+                r#"INSERT INTO upstream_package_downloads (package_id, year, month, d20) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d20 = ?"#,
+                package_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            21 => sqlx::query!(
+                r#"INSERT INTO upstream_package_downloads (package_id, year, month, d21) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d21 = ?"#,
+                package_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            22 => sqlx::query!(
+                r#"INSERT INTO upstream_package_downloads (package_id, year, month, d22) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d22 = ?"#,
+                package_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            23 => sqlx::query!(
+                r#"INSERT INTO upstream_package_downloads (package_id, year, month, d23) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d23 = ?"#,
+                package_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            24 => sqlx::query!(
+                r#"INSERT INTO upstream_package_downloads (package_id, year, month, d24) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d24 = ?"#,
+                package_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            25 => sqlx::query!(
+                r#"INSERT INTO upstream_package_downloads (package_id, year, month, d25) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d25 = ?"#,
+                package_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            26 => sqlx::query!(
+                r#"INSERT INTO upstream_package_downloads (package_id, year, month, d26) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d26 = ?"#,
+                package_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            27 => sqlx::query!(
+                r#"INSERT INTO upstream_package_downloads (package_id, year, month, d27) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d27 = ?"#,
+                package_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            28 => sqlx::query!(
+                r#"INSERT INTO upstream_package_downloads (package_id, year, month, d28) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d28 = ?"#,
+                package_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            29 => sqlx::query!(
+                r#"INSERT INTO upstream_package_downloads (package_id, year, month, d29) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d29 = ?"#,
+                package_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            30 => sqlx::query!(
+                r#"INSERT INTO upstream_package_downloads (package_id, year, month, d30) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d30 = ?"#,
+                package_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            31 => sqlx::query!(
+                r#"INSERT INTO upstream_package_downloads (package_id, year, month, d31) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d31 = ?"#,
+                package_id,
+                year,
+                month,
+                count,
+                count
+            )
+            .execute(&self.pool)
+            .await?,
+            _ => anyhow::bail!("invalid day: {day}"),
+        };
+        Ok(())
+    }
+
+    async fn query_upstream_downloads(
+        &self,
+        package_id: i64,
+        start_year: u16,
+        start_month: u8,
+        end_year: u16,
+        end_month: u8,
+    ) -> Result<Vec<UpstreamPackageDownloadRow>> {
+        let rows = sqlx::query_as!(
+            UpstreamPackageDownloadRow,
+            r#"SELECT id, package_id, year, month,
+            d01, d02, d03, d04, d05, d06, d07, d08, d09, d10,
+            d11, d12, d13, d14, d15, d16, d17, d18, d19, d20,
+            d21, d22, d23, d24, d25, d26, d27, d28, d29, d30, d31
+            FROM upstream_package_downloads
+            WHERE package_id = ?
+            AND (year > ? OR (year = ? AND month >= ?))
+            AND (year < ? OR (year = ? AND month <= ?))"#,
+            package_id,
+            start_year,
+            start_year,
+            start_month,
+            end_year,
+            end_year,
+            end_month
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
     }
 }
 

@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO package_downloads (package_version_id, year, month, d29) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d29 = d29 + ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "fe237de5a261b54a516ea6ef6c6174697a8fc4ccb63fcb0d6bedad5b257cf9ab"
+}

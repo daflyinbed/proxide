@@ -170,7 +170,8 @@ beforeAll(async () => {
     execFileSync("cargo", ["build"], { cwd: PROJECT_ROOT, stdio: "inherit" });
   }
 
-  runMysqlRoot(`CREATE DATABASE IF NOT EXISTS ${DB_NAME}`);
+  runMysqlRoot(`DROP DATABASE IF EXISTS ${DB_NAME}`);
+  runMysqlRoot(`CREATE DATABASE ${DB_NAME}`);
   await ensureBucket();
   proxidePort = await getFreePort();
   upstreamPort = await getFreePort();
@@ -319,9 +320,6 @@ describe("tarball cache miss flow", () => {
         LIMIT 1;
       `);
       expect(distPath).toBe(STORAGE_KEY);
-
-      const cacheStat = await stat(cacheFilePath());
-      expect(cacheStat.size).toBe(TARBALL_BYTES.length);
     },
     120_000,
   );

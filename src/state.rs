@@ -5,6 +5,7 @@ use dashmap::mapref::entry::Entry;
 use parking_lot::Mutex;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
@@ -280,6 +281,7 @@ pub struct AppState {
     pub package_lock: PackageLock,
     pub login_sessions: Arc<LoginSessionMap>,
     pub tarball_downloads: TarballInflightMap,
+    pub download_counters: Arc<DashMap<i64, AtomicU64>>,
 }
 
 impl AppState {
@@ -294,6 +296,7 @@ impl AppState {
             package_lock: PackageLock::new(),
             login_sessions: Arc::new(LoginSessionMap::new()),
             tarball_downloads: TarballInflightMap::new(),
+            download_counters: Arc::new(DashMap::new()),
         })
     }
 }

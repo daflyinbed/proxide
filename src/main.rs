@@ -55,11 +55,24 @@ async fn run_server(config: config::Config) -> Result<()> {
 
     let state = AppState::new(config).await?;
     state.repo.migrate().await?;
+
+    let flush_state = state.clone();
+    let flush_handle = tokio::spawn(async move {
+        proxide::server::run_download_flush(flush_state).await;
+    });
+
     let listener = TcpListener::bind(state.config.server.full_url()).await?;
+    let shutdown_flush_state = state.clone();
     let router = build_router(state);
     axum::serve(listener, router)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
+
+    flush_handle.abort();
+    let _ = flush_handle.await;
+
+    proxide::server::flush_download_counters(&shutdown_flush_state).await?;
+
     Ok(())
 }
 

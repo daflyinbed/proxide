@@ -10,6 +10,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::task::{Context, Poll};
 use tokio::fs::{self, File};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
@@ -500,6 +501,12 @@ pub async fn download_tarball_inner(
         .await
         .map_err(WebError::CustomApiError)?
         .ok_or_else(|| WebError::NotFound(format!("{fullname}@{version_name} not found")))?;
+
+    state
+        .download_counters
+        .entry(version.id)
+        .or_insert(AtomicU64::new(0))
+        .fetch_add(1, Ordering::Relaxed);
 
     let storage_key = format!("packages/{fullname}/{version_name}/{filename}");
     if state

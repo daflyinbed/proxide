@@ -116,6 +116,84 @@ pub struct ChangeStreamCursorRow {
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
+pub struct PackageDownloadRow {
+    pub id: i64,
+    pub package_version_id: i64,
+    pub year: u16,
+    pub month: u8,
+    pub d01: u32,
+    pub d02: u32,
+    pub d03: u32,
+    pub d04: u32,
+    pub d05: u32,
+    pub d06: u32,
+    pub d07: u32,
+    pub d08: u32,
+    pub d09: u32,
+    pub d10: u32,
+    pub d11: u32,
+    pub d12: u32,
+    pub d13: u32,
+    pub d14: u32,
+    pub d15: u32,
+    pub d16: u32,
+    pub d17: u32,
+    pub d18: u32,
+    pub d19: u32,
+    pub d20: u32,
+    pub d21: u32,
+    pub d22: u32,
+    pub d23: u32,
+    pub d24: u32,
+    pub d25: u32,
+    pub d26: u32,
+    pub d27: u32,
+    pub d28: u32,
+    pub d29: u32,
+    pub d30: u32,
+    pub d31: u32,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct UpstreamPackageDownloadRow {
+    pub id: i64,
+    pub package_id: i64,
+    pub year: u16,
+    pub month: u8,
+    pub d01: u32,
+    pub d02: u32,
+    pub d03: u32,
+    pub d04: u32,
+    pub d05: u32,
+    pub d06: u32,
+    pub d07: u32,
+    pub d08: u32,
+    pub d09: u32,
+    pub d10: u32,
+    pub d11: u32,
+    pub d12: u32,
+    pub d13: u32,
+    pub d14: u32,
+    pub d15: u32,
+    pub d16: u32,
+    pub d17: u32,
+    pub d18: u32,
+    pub d19: u32,
+    pub d20: u32,
+    pub d21: u32,
+    pub d22: u32,
+    pub d23: u32,
+    pub d24: u32,
+    pub d25: u32,
+    pub d26: u32,
+    pub d27: u32,
+    pub d28: u32,
+    pub d29: u32,
+    pub d30: u32,
+    pub d31: u32,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct SyncTaskRow {
     pub id: i64,
     pub name: String,
@@ -289,4 +367,47 @@ pub trait Repository: Send + Sync + 'static {
     // ── sync_tasks ──
 
     async fn fail_task_no_retry(&self, id: i64, error: &str) -> Result<()>;
+
+    // ── package_downloads ──
+
+    async fn increment_package_download(
+        &self,
+        package_version_id: i64,
+        year: u16,
+        month: u8,
+        day: u8,
+        count: u64,
+    ) -> Result<()>;
+    async fn query_package_downloads_by_version(
+        &self,
+        package_version_id: i64,
+        year: u16,
+    ) -> Result<Vec<PackageDownloadRow>>;
+    async fn query_package_downloads_by_package(
+        &self,
+        package_id: i64,
+        start_year: u16,
+        start_month: u8,
+        end_year: u16,
+        end_month: u8,
+    ) -> Result<Vec<(i64, String, PackageDownloadRow)>>;
+
+    // ── upstream_package_downloads ──
+
+    async fn upsert_upstream_download(
+        &self,
+        package_id: i64,
+        year: u16,
+        month: u8,
+        day: u8,
+        count: u64,
+    ) -> Result<()>;
+    async fn query_upstream_downloads(
+        &self,
+        package_id: i64,
+        start_year: u16,
+        start_month: u8,
+        end_year: u16,
+        end_month: u8,
+    ) -> Result<Vec<UpstreamPackageDownloadRow>>;
 }

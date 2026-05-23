@@ -1,3 +1,5 @@
+DROP TABLE IF EXISTS upstream_package_downloads;
+DROP TABLE IF EXISTS package_downloads;
 DROP TABLE IF EXISTS maintainers;
 DROP TABLE IF EXISTS tokens;
 DROP TABLE IF EXISTS users;

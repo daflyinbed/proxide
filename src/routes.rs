@@ -29,10 +29,19 @@ pub fn build_router(state: AppState) -> Router {
         .route("/versions/{pkg}", get(handlers::fast_meta::get_versions))
         .route("/full/{pkg}", get(handlers::fast_meta::get_full));
 
-    let api = Router::new().route(
-        "/auth/cas/callback/session/{sessionId}",
-        get(handlers::sso::cas::cas_callback),
-    );
+    let api = Router::new()
+        .route(
+            "/auth/cas/callback/session/{sessionId}",
+            get(handlers::sso::cas::cas_callback),
+        )
+        .route(
+            "/downloads/point/{*rest}",
+            get(handlers::downloads::downloads_point),
+        )
+        .route(
+            "/downloads/range/{*rest}",
+            get(handlers::downloads::downloads_range),
+        );
 
     Router::new()
         .route("/-/ping", get(handlers::home::ping))

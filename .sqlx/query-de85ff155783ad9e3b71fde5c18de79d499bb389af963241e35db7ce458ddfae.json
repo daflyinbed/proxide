@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO upstream_package_downloads (package_id, year, month, d30) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE d30 = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "de85ff155783ad9e3b71fde5c18de79d499bb389af963241e35db7ce458ddfae"
+}

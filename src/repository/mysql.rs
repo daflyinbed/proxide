@@ -1,4 +1,5 @@
 use crate::config::{DatabaseConfig, StorageConfig};
+use crate::npm::types::Maintainer;
 use crate::repository::{
     ChangeStreamCursorRow, DistRow, PackageDownloadRow, PackageRow, PackageTagRow,
     PackageVersionRow, PublishVersionParams, Repository, SyncManifestParams, SyncTaskRow,
@@ -802,6 +803,22 @@ impl Repository for MysqlRepository {
 
         tx.commit().await?;
         Ok(())
+    }
+
+    async fn list_maintainers(&self, package_id: i64) -> Result<Vec<Maintainer>> {
+        let rows = sqlx::query!(
+            r#"SELECT u.name, u.email FROM maintainers m JOIN users u ON u.id = m.user_id WHERE m.package_id = ?"#,
+            package_id
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| Maintainer {
+                name: r.name,
+                email: r.email,
+            })
+            .collect())
     }
 
     // ── publish ──

@@ -8,7 +8,7 @@ pub struct Packument {
     #[serde(rename = "_rev")]
     pub rev: Option<String>,
     pub name: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     #[serde(default, rename = "dist-tags")]
     pub dist_tags: HashMap<String, String>,
@@ -16,26 +16,30 @@ pub struct Packument {
     pub versions: HashMap<String, PackageVersion>,
     #[serde(default)]
     pub time: HashMap<String, String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub maintainers: Option<Vec<Maintainer>>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub readme: Option<String>,
-    #[serde(default)]
+    #[serde(default, rename = "readmeFilename", skip_serializing_if = "Option::is_none")]
     pub readme_filename: Option<String>,
-    #[serde(default)]
-    pub keywords: Option<Vec<String>>,
-    #[serde(default)]
-    pub homepage: Option<String>,
-    #[serde(default)]
-    pub license: Option<String>,
-    #[serde(default)]
-    pub repository: Option<RepositoryInfo>,
-    #[serde(default)]
-    pub author: Option<Person>,
-    #[serde(default)]
-    pub bugs: Option<BugsInfo>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keywords: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub homepage: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub license: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bugs: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contributors: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub users: Option<HashMap<String, bool>>,
+    #[serde(flatten)]
+    pub other: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -121,19 +125,6 @@ pub struct Person {
     pub name: Option<String>,
     pub email: Option<String>,
     pub url: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct RepositoryInfo {
-    #[serde(rename = "type")]
-    pub repo_type: Option<String>,
-    pub url: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct BugsInfo {
-    pub url: Option<String>,
-    pub email: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

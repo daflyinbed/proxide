@@ -1,5 +1,6 @@
 pub mod mysql;
 
+use crate::npm::types::Maintainer;
 use anyhow::Result;
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -359,6 +360,7 @@ pub trait Repository: Send + Sync + 'static {
     async fn save_maintainer(&self, package_id: i64, user_id: i64) -> Result<()>;
     async fn is_maintainer(&self, package_id: i64, user_id: i64) -> Result<bool>;
     async fn sync_maintainers(&self, package_id: i64, user_ids: &[i64]) -> Result<()>;
+    async fn list_maintainers(&self, package_id: i64) -> Result<Vec<Maintainer>>;
 
     // ── publish ──
 

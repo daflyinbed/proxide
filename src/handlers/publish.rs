@@ -562,7 +562,7 @@ async fn refresh_manifests(
         .await
         .map_err(WebError::CustomApiError)?;
 
-    let mut full_versions: HashMap<String, serde_json::Value> = HashMap::new();
+    let mut full_versions: HashMap<String, PackageVersion> = HashMap::new();
     let mut abbrev_versions: HashMap<String, AbbreviatedVersion> = HashMap::new();
     let mut time_map: HashMap<String, String> = HashMap::new();
 
@@ -583,9 +583,9 @@ async fn refresh_manifests(
 
         if let Some(manifest_id) = v.manifest_dist_id
             && let Ok((data, _)) = state.repo.get_content(manifest_id).await
-            && let Ok(val) = serde_json::from_slice::<serde_json::Value>(&data)
+            && let Ok(ver) = serde_json::from_slice::<PackageVersion>(&data)
         {
-            full_versions.insert(v_str.clone(), val);
+            full_versions.insert(v_str.clone(), ver);
         }
     }
 
@@ -604,6 +604,44 @@ async fn refresh_manifests(
         });
     }
 
+    let latest_version = dist_tags
+        .get("latest")
+        .and_then(|v| full_versions.get(v));
+
+    let (author, keywords, homepage, license, repository, bugs, contributors, readme_filename) =
+        if let Some(latest) = latest_version {
+            let author = latest.other.get("author").cloned();
+            let keywords = latest.other.get("keywords").cloned();
+            let homepage = latest.other.get("homepage").cloned();
+            let license = latest.other.get("license").cloned();
+            let repository = latest.other.get("repository").cloned();
+            let bugs = latest.other.get("bugs").cloned();
+            let contributors = latest.other.get("contributors").cloned();
+            let readme_filename = latest
+                .other
+                .get("readmeFilename")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            (
+                author,
+                keywords,
+                homepage,
+                license,
+                repository,
+                bugs,
+                contributors,
+                readme_filename,
+            )
+        } else {
+            (None, None, None, None, None, None, None, None)
+        };
+
+    let maintainers_list = state
+        .repo
+        .list_maintainers(package_id)
+        .await
+        .map_err(WebError::CustomApiError)?;
+
     let abbrev_manifest = AbbreviatedPackument {
         name: fullname.to_string(),
         modified: time_map.get("modified").cloned(),
@@ -618,14 +656,35 @@ async fn refresh_manifests(
     let abbrev_manifest_bytes = serde_json::to_vec(&abbrev_manifest).unwrap_or_default();
     let abbrev_manifest_storage_key = format!("packages/{fullname}/abbreviated_manifests.json");
 
-    let full_manifest = serde_json::json!({
-        "name": fullname,
-        "description": description.unwrap_or(""),
-        "dist-tags": dist_tags,
-        "versions": full_versions,
-        "time": time_map,
-        "readme": readme,
-    });
+    let full_manifest = Packument {
+        id: Some(fullname.to_string()),
+        rev: Some(package_id.to_string()),
+        name: fullname.to_string(),
+        description: description.map(String::from),
+        dist_tags: dist_tags.clone(),
+        versions: full_versions,
+        time: time_map,
+        maintainers: if maintainers_list.is_empty() {
+            None
+        } else {
+            Some(maintainers_list)
+        },
+        readme: if readme.is_empty() {
+            None
+        } else {
+            Some(readme.to_string())
+        },
+        readme_filename,
+        keywords,
+        homepage,
+        license,
+        repository,
+        author,
+        bugs,
+        contributors,
+        users: None,
+        other: Default::default(),
+    };
     let full_manifest_bytes = serde_json::to_vec(&full_manifest).unwrap_or_default();
     let full_manifest_storage_key = format!("packages/{fullname}/full_manifests.json");
 

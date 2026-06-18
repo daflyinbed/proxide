@@ -23,6 +23,7 @@ enum Commands {
     Server,
     Worker,
     CleanupStorage,
+    ReindexSearch,
 }
 
 #[tokio::main]
@@ -47,6 +48,7 @@ async fn main() -> Result<()> {
         Commands::Server => run_server(cfg).await,
         Commands::Worker => run_worker(cfg).await,
         Commands::CleanupStorage => run_cleanup_storage(cfg).await,
+        Commands::ReindexSearch => run_reindex_search(cfg).await,
     }
 }
 
@@ -81,13 +83,31 @@ async fn run_worker(config: config::Config) -> Result<()> {
 
     let state = AppState::new(config).await?;
     state.repo.migrate().await?;
-    worker::run_worker(state.repo, state.config, state.http, state.package_lock).await
+    worker::run_worker(
+        state.repo,
+        state.config,
+        state.http,
+        state.package_lock,
+        state.search,
+    )
+    .await
 }
 
 async fn run_cleanup_storage(config: config::Config) -> Result<()> {
     let state = AppState::new(config).await?;
     state.repo.migrate().await?;
     worker::cleanup_storage::cleanup_orphan_storage(&state.repo).await
+}
+
+async fn run_reindex_search(config: config::Config) -> Result<()> {
+    let state = AppState::new(config).await?;
+    state.repo.migrate().await?;
+    let search = state
+        .search
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("search is not enabled (configure [search] in proxide.toml)"))?;
+    search.ensure_index().await?;
+    proxide::search::reindex_all(&*state.repo, search).await
 }
 
 async fn shutdown_signal() {

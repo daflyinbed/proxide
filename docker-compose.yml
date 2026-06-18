@@ -36,6 +36,18 @@ services:
       timeout: 5s
       retries: 30
 
+  meilisearch:
+    image: getmeili/meilisearch:v1.12
+    container_name: proxide-meilisearch
+    ports:
+      - "7700:7700"
+    environment:
+      MEILI_MASTER_KEY: proxide
+      MEILI_ENV: development
+    volumes:
+      - meili_data:/meili_data
+
 volumes:
   mariadb_data:
   rustfs_data:
+  meili_data:

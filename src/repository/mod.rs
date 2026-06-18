@@ -241,6 +241,7 @@ pub trait Repository: Send + Sync + 'static {
     // ── packages ──
 
     async fn get_package_by_name(&self, name: &str) -> Result<Option<PackageRow>>;
+    async fn list_packages(&self, offset: i64, limit: i64) -> Result<Vec<PackageRow>>;
     async fn upsert_package(
         &self,
         name: &str,

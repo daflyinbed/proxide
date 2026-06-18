@@ -1,0 +1,34 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT u.name, u.email FROM maintainers m JOIN users u ON u.id = m.user_id WHERE m.package_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "name",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL | MULTIPLE_KEY | NO_DEFAULT_VALUE",
+          "max_size": 1024
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "email",
+        "type_info": {
+          "type": "VarString",
+          "flags": "",
+          "max_size": 1024
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "d3a7df48d2b42ed9f56ada35a98d53bc2ba9064aa6c6c96fd524bb2e5d48c9d5"
+}

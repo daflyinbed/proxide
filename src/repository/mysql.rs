@@ -150,6 +150,19 @@ impl Repository for MysqlRepository {
         Ok(row)
     }
 
+    async fn list_packages(&self, offset: i64, limit: i64) -> Result<Vec<PackageRow>> {
+        let rows = sqlx::query_as!(
+            PackageRow,
+            r#"SELECT id, name, scope, description, source, abbreviated_dist_id, full_dist_id
+               FROM packages ORDER BY id LIMIT ? OFFSET ?"#,
+            limit,
+            offset
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
     async fn upsert_package(
         &self,
         name: &str,

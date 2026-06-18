@@ -4,8 +4,10 @@ use crate::npm::{build_abbreviated_version_entry, is_prerelease, pad_version, sp
 use crate::repository::{
     PackageVersionRow, PendingDist, Repository, SyncManifestParams, VersionCommitParams,
 };
+use crate::search::{build_search_document, sum_downloads, SearchIndex};
 use crate::state::{LockOwner, PackageLock, UnlockGuard};
 use anyhow::{Context, Result};
+use chrono::Datelike;
 use chrono::NaiveDateTime;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -66,6 +68,7 @@ pub async fn sync_package(
     fullname: &str,
     client: &reqwest::Client,
     package_lock: &PackageLock,
+    search: Option<&SearchIndex>,
 ) -> Result<(), SyncPackageError> {
     if !package_lock.try_lock(fullname, LockOwner::Sync) {
         return Err(SyncPackageError::Conflict(format!(
@@ -268,6 +271,25 @@ pub async fn sync_package(
         return Err(SyncPackageError::Other(
             db_err.context("DB transaction failed for manifest commit"),
         ));
+    }
+
+    if let Some(idx) = search {
+        let now = chrono::Utc::now();
+        let start = now - chrono::Duration::days(365);
+        let downloads = repo
+            .query_upstream_downloads(
+                package_id,
+                start.year() as u16,
+                start.month() as u8,
+                now.year() as u16,
+                now.month() as u8,
+            )
+            .await
+            .unwrap_or_default();
+        let doc = build_search_document(&packument, sum_downloads(&downloads));
+        if let Err(e) = idx.upsert_package(&doc).await {
+            log::warn!(action = "search_index_upsert"; "name={fullname} failed: {e:#}");
+        }
     }
 
     // ── Phase 3: Clean up old data (best-effort) ──

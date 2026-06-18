@@ -5,6 +5,7 @@ pub mod middleware;
 pub mod npm;
 pub mod repository;
 pub mod routes;
+pub mod search;
 pub mod server;
 pub mod state;
 pub mod storage;

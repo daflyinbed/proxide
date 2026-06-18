@@ -11,6 +11,7 @@ pub use task_consumer::run_task_consumer;
 
 use crate::config::Config;
 use crate::repository::Repository;
+use crate::search::SearchIndex;
 use crate::state::PackageLock;
 use anyhow::Result;
 use std::sync::Arc;
@@ -20,6 +21,7 @@ pub async fn run_worker(
     config: Config,
     client: reqwest::Client,
     package_lock: PackageLock,
+    search: Option<Arc<SearchIndex>>,
 ) -> Result<()> {
     log::info!(
         consumer_count = config.worker.consumer_count,
@@ -38,9 +40,10 @@ pub async fn run_worker(
         let config = config.clone();
         let client = client.clone();
         let package_lock = package_lock.clone();
+        let search = search.clone();
         consumer_handles.push(tokio::spawn(async move {
             log::info!(consumer = i; "consumer starting");
-            task_consumer::run_task_consumer(repo, config, client, package_lock).await
+            task_consumer::run_task_consumer(repo, config, client, package_lock, search).await
         }));
     }
 

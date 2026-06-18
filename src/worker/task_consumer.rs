@@ -1,5 +1,6 @@
 use crate::config::Config;
 use crate::repository::Repository;
+use crate::search::SearchIndex;
 use crate::state::PackageLock;
 use crate::worker::sync_package::{self, SyncPackageError};
 use std::sync::Arc;
@@ -10,6 +11,7 @@ pub async fn run_task_consumer(
     config: Config,
     client: reqwest::Client,
     package_lock: PackageLock,
+    search: Option<Arc<SearchIndex>>,
 ) -> anyhow::Result<()> {
     let poll_interval = Duration::from_millis(config.worker.consumer_poll_interval_ms);
 
@@ -24,7 +26,7 @@ pub async fn run_task_consumer(
 
                 let start = std::time::Instant::now();
                 let result =
-                    sync_package::sync_package(&repo, &config, &task.name, &client, &package_lock)
+                    sync_package::sync_package(&repo, &config, &task.name, &client, &package_lock, search.as_deref())
                         .await;
                 let elapsed = start.elapsed().as_millis() as u64;
 

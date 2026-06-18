@@ -80,11 +80,14 @@ pub struct DownloadsDoc {
     pub all: u64,
 }
 
+pub fn sanitize_id(name: &str) -> String {
+    name.replace('@', "").replace('/', "__")
+}
+
 pub fn build_search_document(packument: &Packument, downloads_all: u64) -> SearchDocument {
     let latest_version = packument.dist_tags.get("latest");
     let latest_manifest = latest_version
         .and_then(|v| packument.versions.get(v));
-
     let scope = split_scope_name(&packument.name)
         .0
         .map(|s| s.to_string())
@@ -138,7 +141,7 @@ pub fn build_search_document(packument: &Packument, downloads_all: u64) -> Searc
     };
 
     SearchDocument {
-        id: packument.name.clone(),
+        id: sanitize_id(&packument.name),
         package,
         downloads: DownloadsDoc { all: downloads_all },
     }

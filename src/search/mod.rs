@@ -1,6 +1,6 @@
 pub mod document;
 
-pub use document::{build_search_document, sum_downloads, SearchDocument};
+pub use document::{build_search_document, sanitize_id, sum_downloads, SearchDocument};
 
 use anyhow::{Context, Result};
 use meilisearch_sdk::client::Client;
@@ -96,7 +96,7 @@ impl SearchIndex {
     pub async fn remove_package(&self, name: &str) -> Result<()> {
         let index = self.client.index(&self.index_uid);
         index
-            .delete_document(name)
+            .delete_document(&sanitize_id(name))
             .await
             .context("failed to submit delete task")?;
         Ok(())

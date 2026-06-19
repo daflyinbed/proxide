@@ -1,3 +1,5 @@
+import { buildPublishPayload } from "./fixtures/tarball.js";
+
 export const BASE_URL = "http://localhost:14873";
 
 const MEILI_URL = "http://127.0.0.1:7700";
@@ -55,7 +57,6 @@ export async function publishPackage(
   version: string,
   opts?: { description?: string; keywords?: string[]; author?: string },
 ): Promise<{ res: Response; body: any }> {
-  const { buildPublishPayload } = await import("./fixtures/tarball.js");
   const payload = buildPublishPayload(name, version, opts);
   const { res, body } = await apiJson(packagePath(name), {
     method: "PUT",

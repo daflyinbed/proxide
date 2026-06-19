@@ -159,8 +159,15 @@ describe("GET /npm/-/v1/search — pagination", () => {
     const prefix = uniqueName("e2e-search-from");
     const token = await login(uniqueName("e2e-search-from-pub"), "pass1234");
 
+    const names: string[] = [];
     for (let i = 0; i < 3; i++) {
-      await publishPackage(token, `${prefix}-${i}`, "1.0.0");
+      const n = `${prefix}-${i}`;
+      names.push(n);
+      await publishPackage(token, n, "1.0.0");
+    }
+
+    for (const n of names) {
+      await waitForSearch(n, (b) => !!findInObjects(b, n));
     }
 
     const { body: page0 } = await searchPackages(prefix, { from: 0, size: 1 });

@@ -8,6 +8,7 @@ use crate::state::{AppState, LockOwner, UnlockGuard};
 use axum::Json;
 use axum::http::HeaderMap;
 use base64::Engine;
+use chrono::Datelike;
 use sha1::Sha1;
 use sha2::{Digest, Sha512};
 use std::collections::HashMap;
@@ -538,7 +539,24 @@ pub async fn publish_package_inner(
         .await?;
 
     if let Some(idx) = &state.search {
-        let doc = crate::search::build_search_document(&full_manifest, 0);
+        let now = chrono::Utc::now();
+        let start = now - chrono::Duration::days(365);
+        let local = state
+            .repo
+            .query_package_downloads_by_package(
+                package_id,
+                start.year() as u16,
+                start.month() as u8,
+                now.year() as u16,
+                now.month() as u8,
+            )
+            .await
+            .unwrap_or_default();
+        let doc = crate::search::build_search_document(
+            &full_manifest,
+            0,
+            crate::search::sum_local_downloads(&local),
+        );
         if let Err(e) = idx.upsert_package(&doc).await {
             log::warn!(action = "search_index_upsert"; "name={fullname} publish: {e:#}");
         }

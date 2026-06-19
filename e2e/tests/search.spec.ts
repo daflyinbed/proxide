@@ -115,7 +115,7 @@ describe("GET /npm/-/v1/search — response structure", () => {
     expect(hit.package.name).toBe(name);
     expect(hit.package.version).toBe("3.1.0");
     expect(hit.package).toHaveProperty("scope");
-    expect(hit.downloads).toEqual({ all: 0 });
+    expect(hit.downloads).toEqual({ upstream: 0, local: 0 });
   });
 
   it("includes dist-tags with latest", async () => {

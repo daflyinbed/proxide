@@ -1,6 +1,8 @@
 pub mod document;
 
-pub use document::{build_search_document, sanitize_id, sum_downloads, SearchDocument};
+pub use document::{
+    build_search_document, sanitize_id, sum_downloads, sum_local_downloads, SearchDocument,
+};
 
 use anyhow::{Context, Result};
 use meilisearch_sdk::client::Client;
@@ -56,7 +58,8 @@ impl SearchIndex {
                 "typo",
                 "proximity",
                 "attribute",
-                "downloads.all:desc",
+                "downloads.upstream:desc",
+                "downloads.local:desc",
                 "exactness",
             ])
             .with_filterable_attributes([
@@ -65,7 +68,8 @@ impl SearchIndex {
                 "package.created",
             ])
             .with_sortable_attributes([
-                "downloads.all",
+                "downloads.upstream",
+                "downloads.local",
                 "package.date",
                 "package.created",
             ]);
@@ -160,7 +164,7 @@ pub async fn reindex_all(repo: &dyn Repository, index: &SearchIndex) -> Result<(
                     continue;
                 }
             };
-            let downloads = repo
+            let upstream = repo
                 .query_upstream_downloads(
                     pkg.id,
                     start.year() as u16,
@@ -170,7 +174,21 @@ pub async fn reindex_all(repo: &dyn Repository, index: &SearchIndex) -> Result<(
                 )
                 .await
                 .unwrap_or_default();
-            let doc = build_search_document(&packument, sum_downloads(&downloads));
+            let local = repo
+                .query_package_downloads_by_package(
+                    pkg.id,
+                    start.year() as u16,
+                    start.month() as u8,
+                    now.year() as u16,
+                    now.month() as u8,
+                )
+                .await
+                .unwrap_or_default();
+            let doc = build_search_document(
+                &packument,
+                sum_downloads(&upstream),
+                sum_local_downloads(&local),
+            );
             docs.push(doc);
         }
 

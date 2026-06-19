@@ -4,7 +4,7 @@ use crate::npm::{build_abbreviated_version_entry, is_prerelease, pad_version, sp
 use crate::repository::{
     PackageVersionRow, PendingDist, Repository, SyncManifestParams, VersionCommitParams,
 };
-use crate::search::{build_search_document, sum_downloads, SearchIndex};
+use crate::search::{build_search_document, sum_downloads, sum_local_downloads, SearchIndex};
 use crate::state::{LockOwner, PackageLock, UnlockGuard};
 use anyhow::{Context, Result};
 use chrono::Datelike;
@@ -276,7 +276,7 @@ pub async fn sync_package(
     if let Some(idx) = search {
         let now = chrono::Utc::now();
         let start = now - chrono::Duration::days(365);
-        let downloads = repo
+        let upstream = repo
             .query_upstream_downloads(
                 package_id,
                 start.year() as u16,
@@ -286,7 +286,21 @@ pub async fn sync_package(
             )
             .await
             .unwrap_or_default();
-        let doc = build_search_document(&packument, sum_downloads(&downloads));
+        let local = repo
+            .query_package_downloads_by_package(
+                package_id,
+                start.year() as u16,
+                start.month() as u8,
+                now.year() as u16,
+                now.month() as u8,
+            )
+            .await
+            .unwrap_or_default();
+        let doc = build_search_document(
+            &packument,
+            sum_downloads(&upstream),
+            sum_local_downloads(&local),
+        );
         if let Err(e) = idx.upsert_package(&doc).await {
             log::warn!(action = "search_index_upsert"; "name={fullname} failed: {e:#}");
         }

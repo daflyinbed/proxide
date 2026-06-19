@@ -4,6 +4,7 @@ import { mkdir } from "node:fs/promises";
 import { copyFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { S3Client, CreateBucketCommand } from "@aws-sdk/client-s3";
+import { clearSearchIndex } from "./helpers.js";
 
 const PROJECT_ROOT = resolve(import.meta.dirname, "..");
 const E2E_DIR = import.meta.dirname;
@@ -92,6 +93,10 @@ export default async function setup() {
   log("waiting for proxide /-/ping...");
   await waitFor(`${BASE_URL}/-/ping`);
   log("proxide is ready");
+
+  log("clearing search index...");
+  await clearSearchIndex();
+  log("search index cleared");
 
   return async () => {
     log("stopping proxide...");

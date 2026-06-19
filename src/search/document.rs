@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::npm::split_scope_name;
 use crate::npm::types::{Maintainer, Packument, Person};
-use crate::repository::UpstreamPackageDownloadRow;
+use crate::repository::{PackageDownloadRow, UpstreamPackageDownloadRow};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchDocument {
@@ -77,14 +77,15 @@ pub struct NpmUserDoc {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DownloadsDoc {
-    pub all: u64,
+    pub upstream: u64,
+    pub local: u64,
 }
 
 pub fn sanitize_id(name: &str) -> String {
     name.replace('@', "").replace('/', "__")
 }
 
-pub fn build_search_document(packument: &Packument, downloads_all: u64) -> SearchDocument {
+pub fn build_search_document(packument: &Packument, upstream: u64, local: u64) -> SearchDocument {
     let latest_version = packument.dist_tags.get("latest");
     let latest_manifest = latest_version
         .and_then(|v| packument.versions.get(v));
@@ -144,25 +145,40 @@ pub fn build_search_document(packument: &Packument, downloads_all: u64) -> Searc
     SearchDocument {
         id: sanitize_id(&packument.name),
         package,
-        downloads: DownloadsDoc { all: downloads_all },
+        downloads: DownloadsDoc { upstream, local },
     }
 }
 
 pub fn sum_downloads(rows: &[UpstreamPackageDownloadRow]) -> u64 {
-    rows.iter().map(|r| sum_row_downloads(r)).sum()
+    rows.iter().map(sum_row_downloads).sum()
+}
+
+pub fn sum_local_downloads(rows: &[(i64, String, PackageDownloadRow)]) -> u64 {
+    rows.iter().map(|(_, _, r)| sum_local_row_downloads(r)).sum()
+}
+
+fn row_days_u64(row: &[u32; 31]) -> u64 {
+    row.iter().map(|d| *d as u64).sum()
 }
 
 fn sum_row_downloads(row: &UpstreamPackageDownloadRow) -> u64 {
-    [
+    row_days_u64(&[
         row.d01, row.d02, row.d03, row.d04, row.d05, row.d06, row.d07,
         row.d08, row.d09, row.d10, row.d11, row.d12, row.d13, row.d14,
         row.d15, row.d16, row.d17, row.d18, row.d19, row.d20, row.d21,
         row.d22, row.d23, row.d24, row.d25, row.d26, row.d27, row.d28,
         row.d29, row.d30, row.d31,
-    ]
-    .iter()
-    .map(|d| *d as u64)
-    .sum()
+    ])
+}
+
+fn sum_local_row_downloads(row: &PackageDownloadRow) -> u64 {
+    row_days_u64(&[
+        row.d01, row.d02, row.d03, row.d04, row.d05, row.d06, row.d07,
+        row.d08, row.d09, row.d10, row.d11, row.d12, row.d13, row.d14,
+        row.d15, row.d16, row.d17, row.d18, row.d19, row.d20, row.d21,
+        row.d22, row.d23, row.d24, row.d25, row.d26, row.d27, row.d28,
+        row.d29, row.d30, row.d31,
+    ])
 }
 
 fn extract_keywords(value: &Option<serde_json::Value>) -> Vec<String> {
@@ -250,7 +266,7 @@ mod tests {
     #[test]
     fn publish_time_parsed_from_upstream_z_suffix() {
         let packument = packument_with_time("2021-09-30T20:34:49.756Z");
-        let doc = build_search_document(&packument, 0);
+        let doc = build_search_document(&packument, 0, 0);
         assert_eq!(doc.package.publish_time, Some(1_633_034_089_756));
         assert_eq!(doc.package.date.as_deref(), Some("2021-09-30T20:34:49.756Z"));
     }
@@ -258,21 +274,23 @@ mod tests {
     #[test]
     fn publish_time_parsed_from_local_no_suffix() {
         let packument = packument_with_time("2021-09-30T20:34:49.756");
-        let doc = build_search_document(&packument, 42);
+        let doc = build_search_document(&packument, 42, 7);
         assert_eq!(doc.package.publish_time, Some(1_633_034_089_756));
-        assert_eq!(doc.downloads.all, 42);
+        assert_eq!(doc.downloads.upstream, 42);
+        assert_eq!(doc.downloads.local, 7);
     }
 
     #[test]
     fn build_search_document_basic_structure() {
         let packument = packument_with_time("2021-09-30T20:34:49.756Z");
-        let doc = build_search_document(&packument, 7);
+        let doc = build_search_document(&packument, 7, 3);
 
         assert_eq!(doc.id, "scope__pkg");
         assert_eq!(doc.package.name, "@scope/pkg");
         assert_eq!(doc.package.version, "1.2.3");
         assert_eq!(doc.package.scope, "scope");
-        assert_eq!(doc.downloads.all, 7);
+        assert_eq!(doc.downloads.upstream, 7);
+        assert_eq!(doc.downloads.local, 3);
         assert_eq!(doc.package.versions, vec!["1.2.3".to_string()]);
         assert_eq!(doc.package.dist_tags.get("latest").map(String::as_str), Some("1.2.3"));
         assert_eq!(doc.package.created.as_deref(), Some("2020-01-01T00:00:00.000Z"));
@@ -284,5 +302,33 @@ mod tests {
         assert_eq!(sanitize_id("@scope/pkg"), "scope__pkg");
         assert_eq!(sanitize_id("lodash"), "lodash");
         assert_eq!(sanitize_id("@a/b/c"), "a__b__c");
+    }
+
+    fn local_row(version_id: i64, version: &str, d01: u32, d15: u32, d31: u32) -> (i64, String, PackageDownloadRow) {
+        (
+            version_id,
+            version.to_string(),
+            PackageDownloadRow {
+                id: version_id,
+                package_version_id: version_id,
+                year: 2025,
+                month: 6,
+                d01, d02: 0, d03: 0, d04: 0, d05: 0, d06: 0, d07: 0,
+                d08: 0, d09: 0, d10: 0, d11: 0, d12: 0, d13: 0, d14: 0,
+                d15, d16: 0, d17: 0, d18: 0, d19: 0, d20: 0, d21: 0,
+                d22: 0, d23: 0, d24: 0, d25: 0, d26: 0, d27: 0, d28: 0,
+                d29: 0, d30: 0, d31,
+            },
+        )
+    }
+
+    #[test]
+    fn sum_local_downloads_across_versions() {
+        let rows = vec![
+            local_row(1, "1.0.0", 10, 0, 5),
+            local_row(2, "2.0.0", 0, 7, 3),
+        ];
+        assert_eq!(sum_local_downloads(&rows), 25);
+        assert_eq!(sum_local_downloads(&[]), 0);
     }
 }

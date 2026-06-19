@@ -14,6 +14,8 @@ const CONFIG_SRC = join(E2E_DIR, "proxide.e2e.toml");
 const RUN_DIR = join(PROJECT_ROOT, "target", "e2e-run");
 
 export const BASE_URL = "http://localhost:14873";
+export const PROXIDE_BINARY = BINARY;
+export const PROXIDE_RUN_DIR = RUN_DIR;
 
 function log(msg: string) {
   console.log(`[e2e:setup] ${msg}`);

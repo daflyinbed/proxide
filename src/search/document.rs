@@ -118,7 +118,8 @@ pub fn build_search_document(packument: &Packument, upstream: u64, local: u64) -
                 .map(|dt| dt.and_utc().timestamp_millis())
         });
 
-    let versions: Vec<String> = packument.versions.keys().cloned().collect();
+    let mut versions: Vec<String> = packument.versions.keys().cloned().collect();
+    versions.sort();
     let dist_tags: std::collections::BTreeMap<String, String> =
         packument.dist_tags.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
 

@@ -6,8 +6,10 @@ pub use document::{
 
 use anyhow::{Context, Result};
 use meilisearch_sdk::client::Client;
+use meilisearch_sdk::errors::{Error as MeiliError, ErrorCode};
 use meilisearch_sdk::search::SearchResults;
 use meilisearch_sdk::settings::Settings;
+use meilisearch_sdk::tasks::Task;
 
 use crate::config::SearchConfig;
 use crate::npm::types::Packument;
@@ -35,14 +37,51 @@ impl SearchIndex {
     }
 
     pub async fn ensure_index(&self) -> Result<()> {
-        let task = self
+        match self
             .client
             .create_index(&self.index_uid, Some("id"))
             .await
-            .context("failed to submit index creation task")?;
-        task.wait_for_completion(&self.client, None, None)
-            .await
-            .context("index creation task failed")?;
+        {
+            Ok(task) => {
+                let outcome = task
+                    .wait_for_completion(&self.client, None, None)
+                    .await
+                    .context("index creation task wait failed")?;
+                match outcome {
+                    Task::Succeeded { .. } => {}
+                    Task::Failed { ref content }
+                        if content.error.error_code == ErrorCode::IndexAlreadyExists =>
+                    {
+                        log::info!(
+                            action = "search_init";
+                            "meilisearch index `{}` already exists; proceeding to apply settings",
+                            self.index_uid
+                        );
+                    }
+                    Task::Failed { content } => {
+                        return Err(content.error)
+                            .context("index creation task failed");
+                    }
+                    other => {
+                        return Err(anyhow::anyhow!(
+                            "index creation task ended in unexpected state: {other:?}"
+                        ));
+                    }
+                }
+            }
+            Err(MeiliError::Meilisearch(e))
+                if e.error_code == ErrorCode::IndexAlreadyExists =>
+            {
+                log::info!(
+                    action = "search_init";
+                    "meilisearch index `{}` already exists; proceeding to apply settings",
+                    self.index_uid
+                );
+            }
+            Err(e) => {
+                return Err(e).context("failed to submit index creation task");
+            }
+        }
 
         let index = self.client.index(&self.index_uid);
         let settings = Settings::new()

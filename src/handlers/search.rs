@@ -5,6 +5,10 @@ use axum::Json;
 use axum::extract::{Query, State};
 use serde::{Deserialize, Serialize};
 
+const DEFAULT_SIZE: usize = 20;
+const MAX_SIZE: usize = 250;
+const MAX_FROM: usize = 10000;
+
 #[derive(Debug, Deserialize)]
 pub struct SearchQuery {
     pub text: String,
@@ -15,7 +19,7 @@ pub struct SearchQuery {
 }
 
 fn default_size() -> usize {
-    20
+    DEFAULT_SIZE
 }
 
 #[derive(Debug, Serialize)]
@@ -38,8 +42,15 @@ pub async fn search_packages(
         ));
     };
 
+    let from = q.from.min(MAX_FROM);
+    let size = if q.size == 0 {
+        DEFAULT_SIZE
+    } else {
+        q.size.min(MAX_SIZE)
+    };
+
     let results = idx
-        .search(text, q.from, q.size)
+        .search(text, from, size)
         .await
         .map_err(WebError::CustomApiError)?;
 

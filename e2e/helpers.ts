@@ -137,6 +137,13 @@ export async function clearSearchIndex(): Promise<void> {
   await waitForMeiliTask(body.taskUid);
 }
 
+export async function getMeiliSettings(): Promise<any> {
+  const res = await fetch(`${MEILI_URL}/indexes/${MEILI_INDEX}/settings`, {
+    headers: meiliHeaders(),
+  });
+  return res.json();
+}
+
 function sanitizeSearchId(name: string): string {
   return name.replace(/@/g, "").replace(/\//g, "__");
 }

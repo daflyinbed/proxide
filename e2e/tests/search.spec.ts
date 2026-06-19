@@ -111,7 +111,9 @@ describe("GET /npm/-/v1/search — response structure", () => {
     expect(body.total).toBeGreaterThanOrEqual(1);
 
     const hit = findInObjects(body, name);
-    expect(hit.id).toBe(name);
+    expect(hit).toBeDefined();
+    expect(typeof hit.id).toBe("string");
+    expect(hit.id.length).toBeGreaterThan(0);
     expect(hit.package.name).toBe(name);
     expect(hit.package.version).toBe("3.1.0");
     expect(hit.package).toHaveProperty("scope");
@@ -228,12 +230,17 @@ describe("reindex-search subcommand", () => {
       await deleteSearchDoc(nameB);
 
       const start = Date.now();
+      let removed = false;
       while (Date.now() - start < 10_000) {
         const { body: checkA } = await searchPackages(nameA);
         const { body: checkB } = await searchPackages(nameB);
-        if (!findInObjects(checkA, nameA) && !findInObjects(checkB, nameB)) break;
+        if (!findInObjects(checkA, nameA) && !findInObjects(checkB, nameB)) {
+          removed = true;
+          break;
+        }
         await new Promise((resolve) => setTimeout(resolve, 300));
       }
+      expect(removed).toBe(true);
 
       const result = spawnSync(BINARY, ["reindex-search"], {
         cwd: RUN_DIR,

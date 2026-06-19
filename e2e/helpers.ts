@@ -144,12 +144,18 @@ export async function getMeiliSettings(): Promise<any> {
   return res.json();
 }
 
-function sanitizeSearchId(name: string): string {
-  return name.replace(/@/g, "").replace(/\//g, "__");
-}
-
-export async function deleteSearchDoc(id: string): Promise<void> {
-  const res = await fetch(`${MEILI_URL}/indexes/${MEILI_INDEX}/documents/${encodeURIComponent(sanitizeSearchId(id))}`, {
+export async function deleteSearchDoc(name: string): Promise<void> {
+  const searchRes = await fetch(`${MEILI_URL}/indexes/${MEILI_INDEX}/search`, {
+    method: "POST",
+    headers: meiliHeaders(),
+    body: JSON.stringify({ q: name, limit: 50 }),
+  });
+  const searchBody = await searchRes.json();
+  const hit = (searchBody.hits ?? []).find((h: any) => h.package?.name === name);
+  if (!hit) {
+    throw new Error(`deleteSearchDoc: no search document found for "${name}"`);
+  }
+  const res = await fetch(`${MEILI_URL}/indexes/${MEILI_INDEX}/documents/${encodeURIComponent(hit.id)}`, {
     method: "DELETE",
     headers: meiliHeaders(),
   });

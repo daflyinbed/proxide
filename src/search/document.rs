@@ -111,7 +111,8 @@ pub fn build_search_document(packument: &Packument, downloads_all: u64) -> Searc
     let publish_time = latest_manifest
         .and_then(|m| packument.time.get(&m.version))
         .and_then(|t| {
-            chrono::NaiveDateTime::parse_from_str(t, "%Y-%m-%dT%H:%M:%S%.f")
+            let trimmed = t.strip_suffix('Z').unwrap_or(t);
+            chrono::NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%dT%H:%M:%S%.f")
                 .ok()
                 .map(|dt| dt.and_utc().timestamp_millis())
         });
@@ -218,5 +219,70 @@ fn value_to_author_doc(value: &serde_json::Value) -> Option<AuthorDoc> {
             })
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::npm::types::Packument;
+
+    fn packument_with_time(time_value: &str) -> Packument {
+        let json = serde_json::json!({
+            "name": "@scope/pkg",
+            "dist-tags": { "latest": "1.2.3" },
+            "versions": {
+                "1.2.3": {
+                    "name": "@scope/pkg",
+                    "version": "1.2.3",
+                    "dist": { "tarball": "https://example.com/@scope/pkg/-/pkg-1.2.3.tgz" }
+                }
+            },
+            "time": {
+                "created": "2020-01-01T00:00:00.000Z",
+                "modified": "2021-09-30T20:34:49.756Z",
+                "1.2.3": time_value
+            }
+        });
+        serde_json::from_value(json).expect("packument must deserialize")
+    }
+
+    #[test]
+    fn publish_time_parsed_from_upstream_z_suffix() {
+        let packument = packument_with_time("2021-09-30T20:34:49.756Z");
+        let doc = build_search_document(&packument, 0);
+        assert_eq!(doc.package.publish_time, Some(1_633_034_089_756));
+        assert_eq!(doc.package.date.as_deref(), Some("2021-09-30T20:34:49.756Z"));
+    }
+
+    #[test]
+    fn publish_time_parsed_from_local_no_suffix() {
+        let packument = packument_with_time("2021-09-30T20:34:49.756");
+        let doc = build_search_document(&packument, 42);
+        assert_eq!(doc.package.publish_time, Some(1_633_034_089_756));
+        assert_eq!(doc.downloads.all, 42);
+    }
+
+    #[test]
+    fn build_search_document_basic_structure() {
+        let packument = packument_with_time("2021-09-30T20:34:49.756Z");
+        let doc = build_search_document(&packument, 7);
+
+        assert_eq!(doc.id, "scope__pkg");
+        assert_eq!(doc.package.name, "@scope/pkg");
+        assert_eq!(doc.package.version, "1.2.3");
+        assert_eq!(doc.package.scope, "scope");
+        assert_eq!(doc.downloads.all, 7);
+        assert_eq!(doc.package.versions, vec!["1.2.3".to_string()]);
+        assert_eq!(doc.package.dist_tags.get("latest").map(String::as_str), Some("1.2.3"));
+        assert_eq!(doc.package.created.as_deref(), Some("2020-01-01T00:00:00.000Z"));
+        assert_eq!(doc.package.modified.as_deref(), Some("2021-09-30T20:34:49.756Z"));
+    }
+
+    #[test]
+    fn sanitize_id_handles_scoped_and_unscoped() {
+        assert_eq!(sanitize_id("@scope/pkg"), "scope__pkg");
+        assert_eq!(sanitize_id("lodash"), "lodash");
+        assert_eq!(sanitize_id("@a/b/c"), "a__b__c");
     }
 }

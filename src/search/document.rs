@@ -81,11 +81,12 @@ pub struct DownloadsDoc {
     pub local: u64,
 }
 
-pub fn sanitize_id(name: &str) -> String {
-    name.replace('@', "").replace('/', "__")
-}
-
-pub fn build_search_document(packument: &Packument, upstream: u64, local: u64) -> SearchDocument {
+pub fn build_search_document(
+    package_id: i64,
+    packument: &Packument,
+    upstream: u64,
+    local: u64,
+) -> SearchDocument {
     let latest_version = packument.dist_tags.get("latest");
     let latest_manifest = latest_version
         .and_then(|v| packument.versions.get(v));
@@ -144,7 +145,7 @@ pub fn build_search_document(packument: &Packument, upstream: u64, local: u64) -
     };
 
     SearchDocument {
-        id: sanitize_id(&packument.name),
+        id: package_id.to_string(),
         package,
         downloads: DownloadsDoc { upstream, local },
     }
@@ -267,7 +268,7 @@ mod tests {
     #[test]
     fn publish_time_parsed_from_upstream_z_suffix() {
         let packument = packument_with_time("2021-09-30T20:34:49.756Z");
-        let doc = build_search_document(&packument, 0, 0);
+        let doc = build_search_document(1, &packument, 0, 0);
         assert_eq!(doc.package.publish_time, Some(1_633_034_089_756));
         assert_eq!(doc.package.date.as_deref(), Some("2021-09-30T20:34:49.756Z"));
     }
@@ -275,7 +276,7 @@ mod tests {
     #[test]
     fn publish_time_parsed_from_local_no_suffix() {
         let packument = packument_with_time("2021-09-30T20:34:49.756");
-        let doc = build_search_document(&packument, 42, 7);
+        let doc = build_search_document(1, &packument, 42, 7);
         assert_eq!(doc.package.publish_time, Some(1_633_034_089_756));
         assert_eq!(doc.downloads.upstream, 42);
         assert_eq!(doc.downloads.local, 7);
@@ -284,9 +285,9 @@ mod tests {
     #[test]
     fn build_search_document_basic_structure() {
         let packument = packument_with_time("2021-09-30T20:34:49.756Z");
-        let doc = build_search_document(&packument, 7, 3);
+        let doc = build_search_document(42, &packument, 7, 3);
 
-        assert_eq!(doc.id, "scope__pkg");
+        assert_eq!(doc.id, "42");
         assert_eq!(doc.package.name, "@scope/pkg");
         assert_eq!(doc.package.version, "1.2.3");
         assert_eq!(doc.package.scope, "scope");
@@ -299,10 +300,9 @@ mod tests {
     }
 
     #[test]
-    fn sanitize_id_handles_scoped_and_unscoped() {
-        assert_eq!(sanitize_id("@scope/pkg"), "scope__pkg");
-        assert_eq!(sanitize_id("lodash"), "lodash");
-        assert_eq!(sanitize_id("@a/b/c"), "a__b__c");
+    fn build_search_document_uses_unique_db_id() {
+        assert_eq!(build_search_document(1, &packument_with_time("2021-09-30T20:34:49.756Z"), 0, 0).id, "1");
+        assert_eq!(build_search_document(999, &packument_with_time("2021-09-30T20:34:49.756Z"), 0, 0).id, "999");
     }
 
     fn local_row(version_id: i64, version: &str, d01: u32, d15: u32, d31: u32) -> (i64, String, PackageDownloadRow) {

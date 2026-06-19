@@ -541,18 +541,21 @@ pub async fn publish_package_inner(
     if let Some(idx) = &state.search {
         let now = chrono::Utc::now();
         let start = now - chrono::Duration::days(365);
-        let local = state
-            .repo
-            .query_package_downloads_by_package(
-                package_id,
-                start.year() as u16,
-                start.month() as u8,
-                now.year() as u16,
-                now.month() as u8,
-            )
-            .await
-            .unwrap_or_default();
+        let local = crate::search::unwrap_or_log(
+            state
+                .repo
+                .query_package_downloads_by_package(
+                    package_id,
+                    start.year() as u16,
+                    start.month() as u8,
+                    now.year() as u16,
+                    now.month() as u8,
+                )
+                .await,
+            || format!("local downloads, package_id={package_id}"),
+        );
         let doc = crate::search::build_search_document(
+            package_id,
             &full_manifest,
             0,
             crate::search::sum_local_downloads(&local),

@@ -276,27 +276,30 @@ pub async fn sync_package(
     if let Some(idx) = search {
         let now = chrono::Utc::now();
         let start = now - chrono::Duration::days(365);
-        let upstream = repo
-            .query_upstream_downloads(
+        let upstream = crate::search::unwrap_or_log(
+            repo.query_upstream_downloads(
                 package_id,
                 start.year() as u16,
                 start.month() as u8,
                 now.year() as u16,
                 now.month() as u8,
             )
-            .await
-            .unwrap_or_default();
-        let local = repo
-            .query_package_downloads_by_package(
+            .await,
+            || format!("upstream downloads, package_id={package_id}"),
+        );
+        let local = crate::search::unwrap_or_log(
+            repo.query_package_downloads_by_package(
                 package_id,
                 start.year() as u16,
                 start.month() as u8,
                 now.year() as u16,
                 now.month() as u8,
             )
-            .await
-            .unwrap_or_default();
+            .await,
+            || format!("local downloads, package_id={package_id}"),
+        );
         let doc = build_search_document(
+            package_id,
             &packument,
             sum_downloads(&upstream),
             sum_local_downloads(&local),

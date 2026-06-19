@@ -1,7 +1,7 @@
 pub mod document;
 
 pub use document::{
-    build_search_document, sanitize_id, sum_downloads, sum_local_downloads, SearchDocument,
+    build_search_document, sum_downloads, sum_local_downloads, SearchDocument,
 };
 
 use anyhow::{Context, Result};
@@ -28,7 +28,12 @@ impl SearchIndex {
         if !cfg.is_enabled() {
             return Ok(None);
         }
-        let client = Client::new(&cfg.meili_url, Some(&cfg.meili_key))
+        let key = if cfg.meili_key.is_empty() {
+            None
+        } else {
+            Some(cfg.meili_key.as_str())
+        };
+        let client = Client::new(&cfg.meili_url, key)
             .with_context(|| format!("failed to connect to meilisearch at {}", cfg.meili_url))?;
         Ok(Some(Self {
             client,
@@ -144,10 +149,10 @@ impl SearchIndex {
         Ok(())
     }
 
-    pub async fn remove_package(&self, name: &str) -> Result<()> {
+    pub async fn remove_package(&self, package_id: i64) -> Result<()> {
         let index = self.client.index(&self.index_uid);
         index
-            .delete_document(&sanitize_id(name))
+            .delete_document(&package_id.to_string())
             .await
             .context("failed to submit delete task")?;
         Ok(())
@@ -169,6 +174,23 @@ impl SearchIndex {
             .await
             .context("meilisearch query failed")?;
         Ok(results)
+    }
+}
+
+pub fn unwrap_or_log<T: Default, E: std::fmt::Display>(
+    res: Result<T, E>,
+    ctx: impl FnOnce() -> String,
+) -> T {
+    match res {
+        Ok(v) => v,
+        Err(e) => {
+            log::warn!(
+                action = "search_downloads";
+                "download aggregation query failed ({}): {e:#}",
+                ctx()
+            );
+            T::default()
+        }
     }
 }
 
@@ -203,27 +225,30 @@ pub async fn reindex_all(repo: &dyn Repository, index: &SearchIndex) -> Result<(
                     continue;
                 }
             };
-            let upstream = repo
-                .query_upstream_downloads(
+            let upstream = unwrap_or_log(
+                repo.query_upstream_downloads(
                     pkg.id,
                     start.year() as u16,
                     start.month() as u8,
                     now.year() as u16,
                     now.month() as u8,
                 )
-                .await
-                .unwrap_or_default();
-            let local = repo
-                .query_package_downloads_by_package(
+                .await,
+                || format!("upstream downloads, package_id={}", pkg.id),
+            );
+            let local = unwrap_or_log(
+                repo.query_package_downloads_by_package(
                     pkg.id,
                     start.year() as u16,
                     start.month() as u8,
                     now.year() as u16,
                     now.month() as u8,
                 )
-                .await
-                .unwrap_or_default();
+                .await,
+                || format!("local downloads, package_id={}", pkg.id),
+            );
             let doc = build_search_document(
+                pkg.id,
                 &packument,
                 sum_downloads(&upstream),
                 sum_local_downloads(&local),

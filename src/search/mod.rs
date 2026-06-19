@@ -51,6 +51,14 @@ impl SearchIndex {
                 "package.author.name",
                 "package.maintainers.name",
             ])
+            .with_ranking_rules([
+                "words",
+                "typo",
+                "proximity",
+                "attribute",
+                "downloads.all:desc",
+                "exactness",
+            ])
             .with_filterable_attributes([
                 "package.scope",
                 "package.deprecated",

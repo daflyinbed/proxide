@@ -21,6 +21,9 @@ pub enum WebError {
 
     #[error("[CONFLICT] {0}")]
     Conflict(String),
+
+    #[error("[NOT_IMPLEMENTED] {0}")]
+    NotImplemented(String),
 }
 
 #[derive(Debug, Serialize)]
@@ -45,6 +48,7 @@ impl WebError {
             Self::Unauthorized(..) => StatusCode::UNAUTHORIZED,
             Self::Forbidden(..) => StatusCode::FORBIDDEN,
             Self::Conflict(..) => StatusCode::CONFLICT,
+            Self::NotImplemented(..) => StatusCode::NOT_IMPLEMENTED,
         }
     }
 }

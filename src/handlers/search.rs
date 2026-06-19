@@ -33,9 +33,9 @@ pub async fn search_packages(
         return Err(WebError::BadRequest("text is required".to_string()));
     }
     let Some(idx) = &state.search else {
-        return Err(WebError::CustomApiError(anyhow::anyhow!(
-            "search is not enabled"
-        )));
+        return Err(WebError::NotImplemented(
+            "search is not enabled".to_string(),
+        ));
     };
 
     let results = idx

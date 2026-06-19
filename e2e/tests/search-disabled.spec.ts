@@ -143,9 +143,9 @@ afterAll(async () => {
 });
 
 describe("search disabled (no [search] config)", () => {
-  it("returns 500 when search is not configured", async () => {
+  it("returns 501 when search is not configured", async () => {
     const res = await fetch(`${proxideUrl()}/npm/-/v1/search?text=foo`);
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(501);
     const body = await res.json();
     expect(body.error).toContain("search is not enabled");
   });

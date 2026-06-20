@@ -22,3 +22,8 @@ cronIntervalSecs = 3600
 
 [auth]
 allowPublishNonScopePackage = true
+
+[search]
+meiliUrl = "http://127.0.0.1:7700"
+meiliKey = "proxide"
+indexName = "proxide-e2e"

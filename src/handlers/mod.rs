@@ -5,6 +5,7 @@ pub mod home;
 pub mod package_dispatch;
 pub mod publish;
 pub mod registry;
+pub mod search;
 pub mod sso;
 pub mod sync;
 pub mod tarball;

@@ -11,6 +11,8 @@ pub struct Config {
     pub worker: WorkerConfig,
     #[serde(default)]
     pub auth: AuthConfig,
+    #[serde(default)]
+    pub search: SearchConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -180,5 +182,26 @@ pub struct AuthConfig {
 impl AuthConfig {
     pub fn is_cas_enabled(&self) -> bool {
         !self.cas_url.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchConfig {
+    #[serde(default)]
+    pub meili_url: String,
+    #[serde(default)]
+    pub meili_key: String,
+    #[serde(default = "default_index_name")]
+    pub index_name: String,
+}
+
+fn default_index_name() -> String {
+    "packages".to_string()
+}
+
+impl SearchConfig {
+    pub fn is_enabled(&self) -> bool {
+        !self.meili_url.is_empty()
     }
 }

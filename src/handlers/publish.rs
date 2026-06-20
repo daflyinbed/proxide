@@ -526,15 +526,24 @@ pub async fn publish_package_inner(
             }
         })?;
 
-    refresh_manifests(
-        state,
-        package_id,
-        &fullname,
-        description,
-        &dist_tags,
-        readme_content,
-    )
-    .await?;
+    let full_manifest =
+        refresh_manifests(
+            state,
+            package_id,
+            &fullname,
+            description,
+            &dist_tags,
+            readme_content,
+        )
+        .await?;
+
+    if let Some(idx) = &state.search {
+        let local = crate::search::fetch_local_downloads(&*state.repo, package_id).await;
+        let doc = crate::search::build_search_document(package_id, &full_manifest, 0, local);
+        if let Err(e) = idx.upsert_package(&doc).await {
+            log::warn!(action = "search_index_upsert"; "name={fullname} publish: {e:#}");
+        }
+    }
 
     log::info!(
         action = "publish";
@@ -555,7 +564,7 @@ async fn refresh_manifests(
     description: Option<&str>,
     dist_tags: &HashMap<String, String>,
     readme: &str,
-) -> WebResult<()> {
+) -> WebResult<Packument> {
     let all_versions = state
         .repo
         .list_versions(package_id)
@@ -724,7 +733,7 @@ async fn refresh_manifests(
         .await
         .map_err(WebError::CustomApiError)?;
 
-    Ok(())
+    Ok(full_manifest)
 }
 
 fn is_duplicate_key_error(err: &anyhow::Error) -> bool {

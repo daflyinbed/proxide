@@ -4,6 +4,7 @@ use crate::npm::{build_abbreviated_version_entry, is_prerelease, pad_version, sp
 use crate::repository::{
     PackageVersionRow, PendingDist, Repository, SyncManifestParams, VersionCommitParams,
 };
+use crate::search::SearchIndex;
 use crate::state::{LockOwner, PackageLock, UnlockGuard};
 use anyhow::{Context, Result};
 use chrono::NaiveDateTime;
@@ -66,6 +67,7 @@ pub async fn sync_package(
     fullname: &str,
     client: &reqwest::Client,
     package_lock: &PackageLock,
+    search: Option<&SearchIndex>,
 ) -> Result<(), SyncPackageError> {
     if !package_lock.try_lock(fullname, LockOwner::Sync) {
         return Err(SyncPackageError::Conflict(format!(
@@ -268,6 +270,10 @@ pub async fn sync_package(
         return Err(SyncPackageError::Other(
             db_err.context("DB transaction failed for manifest commit"),
         ));
+    }
+
+    if let Some(idx) = search {
+        crate::search::upsert_search_document(&**repo, idx, package_id, &packument).await;
     }
 
     // ── Phase 3: Clean up old data (best-effort) ──

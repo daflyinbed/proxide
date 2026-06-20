@@ -11,7 +11,7 @@ import {
   fileExists,
   readJsonFile,
 } from "../npm-cli-helpers.js";
-import { uniqueName } from "../helpers.js";
+import { uniqueName, waitForSearch } from "../helpers.js";
 
 async function setupAuth(): Promise<{ token: string; username: string }> {
   const username = uniqueName("e2e-npm-user");
@@ -23,8 +23,9 @@ async function publishPackage(
   token: string,
   name: string,
   version: string,
+  extra?: Record<string, any>,
 ): Promise<void> {
-  const pkgDir = await createTempPackageDir(name, version);
+  const pkgDir = await createTempPackageDir(name, version, extra);
   await writeNpmrc(pkgDir, token);
   const args = name.startsWith("@") ? ["publish", "--access", "public"] : ["publish"];
   const res = await execNpm(args, { cwd: pkgDir });
@@ -146,5 +147,95 @@ describe("npm view (scoped)", () => {
     const res = await execNpm(["view", name], { cwd: viewDir });
     expect(res.exitCode).toBe(0);
     expect(res.stdout).toContain(version);
+  });
+});
+
+describe("npm search", () => {
+  it("finds a published package by name (json)", async () => {
+    const { token } = await setupAuth();
+    const { name, version } = makeUnscopedPkg();
+    await publishPackage(token, name, version);
+
+    await waitForSearch(name, (b) =>
+      !!b.objects?.find((o: any) => o.package?.name === name),
+    );
+
+    const dir = await createTempDir("npm-search-name");
+    await writeNpmrc(dir, token);
+    const res = await execNpm(["search", name, "--json"], { cwd: dir });
+    expect(res.exitCode).toBe(0);
+    const results = JSON.parse(res.stdout);
+    expect(Array.isArray(results)).toBe(true);
+    const found = results.find((r: any) => r.name === name);
+    expect(found).toBeDefined();
+    expect(found.version).toBe(version);
+  });
+
+  it("finds a package by description (json)", async () => {
+    const desc = "special e2e crypto widget gadget";
+    const { token } = await setupAuth();
+    const { name, version } = makeUnscopedPkg();
+    await publishPackage(token, name, version, { description: desc });
+
+    await waitForSearch("crypto widget", (b) =>
+      !!b.objects?.find((o: any) => o.package?.name === name),
+    );
+
+    const dir = await createTempDir("npm-search-desc");
+    await writeNpmrc(dir, token);
+    const res = await execNpm(["search", "crypto widget", "--json"], { cwd: dir });
+    expect(res.exitCode).toBe(0);
+    const results = JSON.parse(res.stdout);
+    const found = results.find((r: any) => r.name === name);
+    expect(found).toBeDefined();
+    expect(found.description).toBe(desc);
+  });
+
+  it("finds a package by keyword (json)", async () => {
+    const keyword = uniqueName("e2e-npm-search-kw");
+    const { token } = await setupAuth();
+    const { name, version } = makeUnscopedPkg();
+    await publishPackage(token, name, version, { keywords: [keyword] });
+
+    await waitForSearch(keyword, (b) =>
+      !!b.objects?.find((o: any) => o.package?.name === name),
+    );
+
+    const dir = await createTempDir("npm-search-kw");
+    await writeNpmrc(dir, token);
+    const res = await execNpm(["search", keyword, "--json"], { cwd: dir });
+    expect(res.exitCode).toBe(0);
+    const results = JSON.parse(res.stdout);
+    const found = results.find((r: any) => r.name === name);
+    expect(found).toBeDefined();
+  });
+
+  it("shows package name in formatted output", async () => {
+    const { token } = await setupAuth();
+    const { name } = makeUnscopedPkg();
+    await publishPackage(token, name, "1.0.0");
+
+    await waitForSearch(name, (b) =>
+      !!b.objects?.find((o: any) => o.package?.name === name),
+    );
+
+    const dir = await createTempDir("npm-search-plain");
+    await writeNpmrc(dir, token);
+    const res = await execNpm(["search", name], { cwd: dir });
+    expect(res.exitCode).toBe(0);
+    expect(res.stdout).toContain(name);
+  });
+
+  it("returns empty array for no match (json)", async () => {
+    const dir = await createTempDir("npm-search-nomatch");
+    const { token } = await setupAuth();
+    await writeNpmrc(dir, token);
+    const res = await execNpm(
+      ["search", "zzzznomatch999xyzpdq", "--json"],
+      { cwd: dir },
+    );
+    expect(res.exitCode).toBe(0);
+    const results = JSON.parse(res.stdout);
+    expect(results).toEqual([]);
   });
 });

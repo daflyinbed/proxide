@@ -19,6 +19,7 @@ pub fn build_router(state: AppState) -> Router {
             "/-/package/{fullname}/syncs",
             put(handlers::sync::trigger_sync),
         )
+        .route("/-/v1/search", get(handlers::search::search_packages))
         .fallback(
             get(handlers::package_dispatch::dispatch_get)
                 .put(handlers::package_dispatch::dispatch_put),

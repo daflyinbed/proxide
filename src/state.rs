@@ -1,4 +1,4 @@
-use crate::{config::Config, repository::Repository, repository::mysql::MysqlRepository};
+use crate::{config::Config, repository::Repository, repository::mysql::MysqlRepository, search::SearchIndex};
 use anyhow::Result;
 use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
@@ -282,6 +282,7 @@ pub struct AppState {
     pub login_sessions: Arc<LoginSessionMap>,
     pub tarball_downloads: TarballInflightMap,
     pub download_counters: Arc<DashMap<i64, AtomicU64>>,
+    pub search: Option<Arc<SearchIndex>>,
 }
 
 impl AppState {
@@ -289,6 +290,14 @@ impl AppState {
         let repo = MysqlRepository::new(&config.database, &config.storage).await?;
         tokio::fs::create_dir_all(&config.server.tarball_cache_dir).await?;
         let http = reqwest::Client::new();
+
+        let search = SearchIndex::new(&config.search).await?.map(Arc::new);
+        if let Some(ref idx) = search
+            && let Err(e) = idx.ensure_index().await
+        {
+            log::warn!(action = "search_init"; "failed to ensure meilisearch index: {e:#}");
+        }
+
         Ok(Self {
             repo: Arc::new(repo),
             config,
@@ -297,6 +306,7 @@ impl AppState {
             login_sessions: Arc::new(LoginSessionMap::new()),
             tarball_downloads: TarballInflightMap::new(),
             download_counters: Arc::new(DashMap::new()),
+            search,
         })
     }
 }

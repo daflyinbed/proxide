@@ -1,4 +1,10 @@
+import { buildPublishPayload } from "./fixtures/tarball.js";
+
 export const BASE_URL = "http://localhost:14873";
+
+const MEILI_URL = "http://127.0.0.1:7700";
+const MEILI_KEY = "proxide";
+const MEILI_INDEX = "proxide-e2e";
 
 export async function api(
   path: string,
@@ -49,9 +55,9 @@ export async function publishPackage(
   token: string,
   name: string,
   version: string,
+  opts?: { description?: string; keywords?: string[]; author?: string },
 ): Promise<{ res: Response; body: any }> {
-  const { buildPublishPayload } = await import("./fixtures/tarball.js");
-  const payload = buildPublishPayload(name, version);
+  const payload = buildPublishPayload(name, version, opts);
   const { res, body } = await apiJson(packagePath(name), {
     method: "PUT",
     headers: {
@@ -69,4 +75,90 @@ export function uniqueName(prefix: string): string {
 
 export function uniqueScopedName(scope: string, prefix: string): string {
   return `@${scope}/${uniqueName(prefix)}`;
+}
+
+export async function searchPackages(
+  text: string,
+  params?: { from?: number; size?: number },
+): Promise<{ res: Response; body: any }> {
+  const q = new URLSearchParams({ text });
+  if (params?.from !== undefined) q.set("from", String(params.from));
+  if (params?.size !== undefined) q.set("size", String(params.size));
+  return apiJson(`/npm/-/v1/search?${q}`);
+}
+
+export async function waitForSearch(
+  text: string,
+  predicate: (body: any) => boolean,
+  timeoutMs = 10_000,
+): Promise<any> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const { body } = await searchPackages(text);
+      if (predicate(body)) {
+        return body;
+      }
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+  throw new Error(`timed out waiting for search: text="${text}"`);
+}
+
+function meiliHeaders(): Record<string, string> {
+  return {
+    authorization: `Bearer ${MEILI_KEY}`,
+    "content-type": "application/json",
+  };
+}
+
+export async function waitForMeiliTask(taskUid: number, timeoutMs = 10_000): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const res = await fetch(`${MEILI_URL}/tasks/${taskUid}`, { headers: meiliHeaders() });
+      const body = await res.json();
+      if (body.status === "succeeded") return;
+      if (body.status === "failed") throw new Error(`meili task ${taskUid} failed: ${JSON.stringify(body)}`);
+    } catch (e) {
+      if (e instanceof Error && e.message.includes("failed")) throw e;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+  throw new Error(`timed out waiting for meili task ${taskUid}`);
+}
+
+export async function clearSearchIndex(): Promise<void> {
+  const res = await fetch(`${MEILI_URL}/indexes/${MEILI_INDEX}/documents`, {
+    method: "DELETE",
+    headers: meiliHeaders(),
+  });
+  const body = await res.json();
+  await waitForMeiliTask(body.taskUid);
+}
+
+export async function getMeiliSettings(): Promise<any> {
+  const res = await fetch(`${MEILI_URL}/indexes/${MEILI_INDEX}/settings`, {
+    headers: meiliHeaders(),
+  });
+  return res.json();
+}
+
+export async function deleteSearchDoc(name: string): Promise<void> {
+  const searchRes = await fetch(`${MEILI_URL}/indexes/${MEILI_INDEX}/search`, {
+    method: "POST",
+    headers: meiliHeaders(),
+    body: JSON.stringify({ q: name, limit: 50 }),
+  });
+  const searchBody = await searchRes.json();
+  const hit = (searchBody.hits ?? []).find((h: any) => h.package?.name === name);
+  if (!hit) {
+    throw new Error(`deleteSearchDoc: no search document found for "${name}"`);
+  }
+  const res = await fetch(`${MEILI_URL}/indexes/${MEILI_INDEX}/documents/${encodeURIComponent(hit.id)}`, {
+    method: "DELETE",
+    headers: meiliHeaders(),
+  });
+  const body = await res.json();
+  await waitForMeiliTask(body.taskUid);
 }

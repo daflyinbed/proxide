@@ -11,27 +11,48 @@ const TARBALL_BASE64 =
 
 const TARBALL_LENGTH = 512;
 
-export function buildPublishPayload(name: string, version: string) {
+export interface PublishPayloadOpts {
+  description?: string;
+  keywords?: string[];
+  author?: string;
+}
+
+export function buildPublishPayload(
+  name: string,
+  version: string,
+  opts?: PublishPayloadOpts,
+) {
   const tarballName = name.startsWith("@")
     ? `${name.split("/")[1]}-${version}.tgz`
     : `${name}-${version}.tgz`;
 
+  const description = opts?.description ?? `e2e test package ${name}`;
+
+  const versionEntry: Record<string, any> = {
+    name,
+    version,
+    description,
+    main: "index.js",
+    scripts: { test: 'echo "ok"' },
+    dist: {
+      tarball: `http://localhost/-/${tarballName}`,
+    },
+    _id: `${name}@${version}`,
+  };
+
+  if (opts?.keywords) {
+    versionEntry.keywords = opts.keywords;
+  }
+  if (opts?.author) {
+    versionEntry.author = opts.author;
+  }
+
   return {
     name,
-    description: `e2e test package ${name}`,
+    description,
     "dist-tags": { latest: version },
     versions: {
-      [version]: {
-        name,
-        version,
-        description: `e2e test package ${name}`,
-        main: "index.js",
-        scripts: { test: 'echo "ok"' },
-        dist: {
-          tarball: `http://localhost/-/${tarballName}`,
-        },
-        _id: `${name}@${version}`,
-      },
+      [version]: versionEntry,
     },
     _attachments: {
       [tarballName]: {

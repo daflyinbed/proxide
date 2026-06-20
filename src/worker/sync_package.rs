@@ -4,10 +4,9 @@ use crate::npm::{build_abbreviated_version_entry, is_prerelease, pad_version, sp
 use crate::repository::{
     PackageVersionRow, PendingDist, Repository, SyncManifestParams, VersionCommitParams,
 };
-use crate::search::{build_search_document, sum_downloads, sum_local_downloads, SearchIndex};
+use crate::search::SearchIndex;
 use crate::state::{LockOwner, PackageLock, UnlockGuard};
 use anyhow::{Context, Result};
-use chrono::Datelike;
 use chrono::NaiveDateTime;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -274,39 +273,7 @@ pub async fn sync_package(
     }
 
     if let Some(idx) = search {
-        let now = chrono::Utc::now();
-        let start = now - chrono::Duration::days(365);
-        let upstream = crate::search::unwrap_or_log(
-            repo.query_upstream_downloads(
-                package_id,
-                start.year() as u16,
-                start.month() as u8,
-                now.year() as u16,
-                now.month() as u8,
-            )
-            .await,
-            || format!("upstream downloads, package_id={package_id}"),
-        );
-        let local = crate::search::unwrap_or_log(
-            repo.query_package_downloads_by_package(
-                package_id,
-                start.year() as u16,
-                start.month() as u8,
-                now.year() as u16,
-                now.month() as u8,
-            )
-            .await,
-            || format!("local downloads, package_id={package_id}"),
-        );
-        let doc = build_search_document(
-            package_id,
-            &packument,
-            sum_downloads(&upstream),
-            sum_local_downloads(&local),
-        );
-        if let Err(e) = idx.upsert_package(&doc).await {
-            log::warn!(action = "search_index_upsert"; "name={fullname} failed: {e:#}");
-        }
+        crate::search::upsert_search_document(&**repo, idx, package_id, &packument).await;
     }
 
     // ── Phase 3: Clean up old data (best-effort) ──

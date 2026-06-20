@@ -292,10 +292,10 @@ impl AppState {
         let http = reqwest::Client::new();
 
         let search = SearchIndex::new(&config.search).await?.map(Arc::new);
-        if let Some(ref idx) = search {
-            if let Err(e) = idx.ensure_index().await {
-                log::warn!(action = "search_init"; "failed to ensure meilisearch index: {e:#}");
-            }
+        if let Some(ref idx) = search
+            && let Err(e) = idx.ensure_index().await
+        {
+            log::warn!(action = "search_init"; "failed to ensure meilisearch index: {e:#}");
         }
 
         Ok(Self {

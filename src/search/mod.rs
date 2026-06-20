@@ -17,6 +17,7 @@ use crate::repository::Repository;
 use chrono::Datelike;
 
 const REINDEX_BATCH_SIZE: i64 = 500;
+const DOWNLOAD_WINDOW_DAYS: i64 = 365;
 
 pub struct SearchIndex {
     client: Client,
@@ -194,9 +195,57 @@ pub fn unwrap_or_log<T: Default, E: std::fmt::Display>(
     }
 }
 
-pub async fn reindex_all(repo: &dyn Repository, index: &SearchIndex) -> Result<()> {
+fn download_window() -> ((u16, u8), (u16, u8)) {
     let now = chrono::Utc::now();
-    let start = now - chrono::Duration::days(365);
+    let start = now - chrono::Duration::days(DOWNLOAD_WINDOW_DAYS);
+    (
+        (start.year() as u16, start.month() as u8),
+        (now.year() as u16, now.month() as u8),
+    )
+}
+
+pub async fn fetch_downloads(repo: &dyn Repository, package_id: i64) -> (u64, u64) {
+    let (start, end) = download_window();
+    let upstream = unwrap_or_log(
+        repo.query_upstream_downloads(package_id, start.0, start.1, end.0, end.1)
+            .await,
+        || format!("upstream downloads, package_id={package_id}"),
+    );
+    let local = unwrap_or_log(
+        repo.query_package_downloads_by_package(package_id, start.0, start.1, end.0, end.1)
+            .await,
+        || format!("local downloads, package_id={package_id}"),
+    );
+    (sum_downloads(&upstream), sum_local_downloads(&local))
+}
+
+pub async fn fetch_local_downloads(repo: &dyn Repository, package_id: i64) -> u64 {
+    let (start, end) = download_window();
+    let local = unwrap_or_log(
+        repo.query_package_downloads_by_package(package_id, start.0, start.1, end.0, end.1)
+            .await,
+        || format!("local downloads, package_id={package_id}"),
+    );
+    sum_local_downloads(&local)
+}
+
+pub async fn upsert_search_document(
+    repo: &dyn Repository,
+    index: &SearchIndex,
+    package_id: i64,
+    packument: &Packument,
+) {
+    let (upstream, local) = fetch_downloads(repo, package_id).await;
+    let doc = build_search_document(package_id, packument, upstream, local);
+    if let Err(e) = index.upsert_package(&doc).await {
+        log::warn!(
+            action = "search_index_upsert";
+            "package_id={package_id} upsert failed: {e:#}"
+        );
+    }
+}
+
+pub async fn reindex_all(repo: &dyn Repository, index: &SearchIndex) -> Result<()> {
     let mut offset = 0i64;
 
     loop {
@@ -225,41 +274,15 @@ pub async fn reindex_all(repo: &dyn Repository, index: &SearchIndex) -> Result<(
                     continue;
                 }
             };
-            let upstream = unwrap_or_log(
-                repo.query_upstream_downloads(
-                    pkg.id,
-                    start.year() as u16,
-                    start.month() as u8,
-                    now.year() as u16,
-                    now.month() as u8,
-                )
-                .await,
-                || format!("upstream downloads, package_id={}", pkg.id),
-            );
-            let local = unwrap_or_log(
-                repo.query_package_downloads_by_package(
-                    pkg.id,
-                    start.year() as u16,
-                    start.month() as u8,
-                    now.year() as u16,
-                    now.month() as u8,
-                )
-                .await,
-                || format!("local downloads, package_id={}", pkg.id),
-            );
-            let doc = build_search_document(
-                pkg.id,
-                &packument,
-                sum_downloads(&upstream),
-                sum_local_downloads(&local),
-            );
+            let (upstream, local) = fetch_downloads(repo, pkg.id).await;
+            let doc = build_search_document(pkg.id, &packument, upstream, local);
             docs.push(doc);
         }
 
-        if !docs.is_empty() {
-            if let Err(e) = index.upsert_many(&docs).await {
-                log::warn!(action = "reindex"; "batch upsert failed at offset {offset}: {e:#}");
-            }
+        if !docs.is_empty()
+            && let Err(e) = index.upsert_many(&docs).await
+        {
+            log::warn!(action = "reindex"; "batch upsert failed at offset {offset}: {e:#}");
         }
         log::info!(action = "reindex"; "processed {} packages (offset {}), {} indexed", batch_len, offset, docs.len());
 

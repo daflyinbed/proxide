@@ -55,7 +55,7 @@ async fn poll_once(
 
     let changes: ChangesResult = resp.json().await.context("failed to parse changes")?;
 
-    let last_seq = changes.last_seq.clone();
+    let last_seq = changes.last_seq.to_string();
     let package_names: Vec<String> = changes
         .results
         .into_iter()

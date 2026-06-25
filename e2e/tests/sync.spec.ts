@@ -124,7 +124,7 @@ describe("worker sync flow", () => {
       if (req.method === "GET" && req.url?.startsWith("/_changes")) {
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");
-        res.end(JSON.stringify({ results: [], last_seq: "0" }));
+        res.end(JSON.stringify({ results: [], last_seq: 0 }));
         return;
       }
       if (req.method === "GET" && req.url === `/${SYNC_PKG}`) {

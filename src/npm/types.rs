@@ -200,7 +200,7 @@ pub struct AbbreviatedVersion {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ChangesResult {
     pub results: Vec<ChangeEntry>,
-    pub last_seq: String,
+    pub last_seq: u64,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

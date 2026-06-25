@@ -28,7 +28,7 @@ const s3 = new S3Client({
 });
 
 function runMysqlRoot(sql: string): void {
-  execFileSync("docker", ["exec", "proxide-mariadb", "mysql", "-uroot", "-proot", "-e", sql], {
+  execFileSync("docker", ["exec", "proxide-mysql", "mysql", "-uroot", "-proot", "-e", sql], {
     stdio: "pipe",
   });
 }

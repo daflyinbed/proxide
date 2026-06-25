@@ -1,7 +1,7 @@
 services:
-  mariadb:
-    image: mariadb:10.1
-    container_name: proxide-mariadb
+  mysql:
+    image: mysql:8.0
+    container_name: proxide-mysql
     ports:
       - "3306:3306"
     environment:
@@ -13,7 +13,7 @@ services:
       timeout: 3s
       retries: 30
     volumes:
-      - mariadb_data:/var/lib/mysql
+      - mysql_data:/var/lib/mysql
 
   rustfs:
     image: rustfs/rustfs:latest
@@ -53,6 +53,6 @@ services:
       retries: 30
 
 volumes:
-  mariadb_data:
+  mysql_data:
   rustfs_data:
   meili_data:

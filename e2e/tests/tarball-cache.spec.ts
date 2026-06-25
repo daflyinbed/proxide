@@ -76,7 +76,7 @@ function runMysql(sql: string): string {
     "docker",
     [
       "exec",
-      "proxide-mariadb",
+      "proxide-mysql",
       "mysql",
       "-uroot",
       "-proot",
@@ -89,7 +89,7 @@ function runMysql(sql: string): string {
 }
 
 function runMysqlRoot(sql: string): void {
-  execFileSync("docker", ["exec", "proxide-mariadb", "mysql", "-uroot", "-proot", "-e", sql], {
+  execFileSync("docker", ["exec", "proxide-mysql", "mysql", "-uroot", "-proot", "-e", sql], {
     stdio: "pipe",
   });
 }

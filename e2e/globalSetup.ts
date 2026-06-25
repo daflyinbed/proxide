@@ -57,11 +57,11 @@ export default async function setup() {
   log("starting docker compose...");
   run(`docker compose -f ${COMPOSE_FILE} up -d --wait`);
 
-  log("waiting for MariaDB...");
+  log("waiting for MySQL...");
   for (let i = 0; i < 60; i++) {
     try {
       execSync(
-        `docker exec proxide-mariadb mysql -uroot -proot -e "CREATE DATABASE IF NOT EXISTS proxide_e2e"`,
+        `docker exec proxide-mysql mysql -uroot -proot -e "CREATE DATABASE IF NOT EXISTS proxide_e2e"`,
         { stdio: "pipe" },
       );
       break;

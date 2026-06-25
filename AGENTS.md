@@ -30,7 +30,7 @@ pnpm test:e2e                   # End-to-end tests (requires Docker + cargo buil
 
 ## Database
 
-- MariaDB 10.1 (local, credentials from `.env`)
+- MySQL 8.0 (local, credentials from `.env`)
 - Tables: `dists`, `packages`, `package_versions`, `package_tags`, `change_stream_cursors`, `sync_tasks`, `users`, `tokens`, `maintainers`, `package_downloads` (local, per-version per-day counters `d01`..`d31`), `upstream_package_downloads` (upstream npm, per-package per-day counters)
 - Migrations in `/migrations`, managed by sqlx-cli
 - Login sessions are **in-memory** (`DashMap` in `AppState`), not a DB table
@@ -38,7 +38,7 @@ pnpm test:e2e                   # End-to-end tests (requires Docker + cargo buil
 ## Infrastructure
 
 Docker Compose provides local dev dependencies:
-- **MariaDB 10.1** on `localhost:3306` (root/root, database: `proxide`)
+- **MySQL 8.0** on `localhost:3306` (root/root, database: `proxide`)
 - **RustFS** (S3-compatible) on `localhost:9000` (access: `proxide`/`proxide123`)
 - **Meilisearch v1.12** on `localhost:7700` (master key: `proxide`)
 
@@ -139,7 +139,7 @@ Meilisearch integration, enabled when `[search] meiliUrl` is non-empty. `SearchI
 ## E2E Tests
 
 End-to-end tests in `e2e/` using Vitest. The global setup (`e2e/globalSetup.ts`):
-1. Starts Docker Compose (MariaDB + RustFS)
+1. Starts Docker Compose (MySQL + RustFS)
 2. Creates `proxide_e2e` database and S3 bucket
 3. Builds and starts proxide server with `e2e/proxide.e2e.toml`
 4. Waits for `/-/ping` to respond

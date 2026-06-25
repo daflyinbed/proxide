@@ -37,7 +37,7 @@ async fn poll_once(
         .get_cursor()
         .await?
         .map(|c| c.since)
-        .unwrap_or_default();
+        .unwrap_or_else(|| "0".to_string());
 
     let url = format!("{}?since={since}", config.worker.changes_stream_url);
 

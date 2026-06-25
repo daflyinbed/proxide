@@ -203,6 +203,11 @@ pub struct ChangesResult {
     pub last_seq: u64,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateSeqResponse {
+    pub update_seq: u64,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ChangeEntry {
     pub seq: serde_json::Value,

@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-NPM registry mirror written in Rust. Four clap subcommands: `proxide server` (HTTP API), `proxide worker` (sync engine), `proxide cleanup-storage` (orphan storage object remover), `proxide reindex-search` (rebuild Meilisearch index from DB).
+NPM registry mirror written in Rust. Five clap subcommands: `proxide server` (HTTP API), `proxide worker` (sync engine), `proxide cleanup-storage` (orphan storage object remover), `proxide reindex-search` (rebuild Meilisearch index from DB), `proxide bootstrap` (seed sync_tasks with all npm package names for initial sync).
 
 ## Commands
 
@@ -11,6 +11,7 @@ cargo run -- server             # HTTP server (reads proxide.toml from CWD)
 cargo run -- worker             # Sync worker
 cargo run -- cleanup-storage    # Remove orphan storage objects
 cargo run -- reindex-search     # Rebuild Meilisearch index (requires [search] config)
+cargo run -- bootstrap          # Seed sync_tasks with all npm package names (empty registry only)
 cargo check                     # Verify compilation
 sqlx migrate run                # Apply migrations (needs DATABASE_URL in .env)
 sqlx migrate revert             # Revert last migration
@@ -102,6 +103,7 @@ src/
     sync_package.rs    # Fetch upstream packument → diff → write DB + storage + search index
     cleanup.rs         # Requeue stale tasks, purge old tasks
     cleanup_storage.rs # Remove orphan dists/storage objects
+    bootstrap.rs       # Seed sync_tasks from all-package-names (empty registry only)
 ```
 
 ## Worker

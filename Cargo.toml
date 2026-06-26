@@ -62,6 +62,8 @@ quick-xml = "0.37"
 regex = "1"
 dashmap = "6"
 meilisearch-sdk = "0.28"
+flate2 = "1.1"
+tar = "0.4"
 
 [lints.rust]
 async_fn_in_trait = "allow"

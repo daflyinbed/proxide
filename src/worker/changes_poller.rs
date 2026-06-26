@@ -94,11 +94,7 @@ async fn poll_once(
 
 async fn fetch_initial_since(config: &Config, client: &reqwest::Client) -> Result<String> {
     let url = &config.worker.update_seq_url;
-    let resp = client
-        .get(url)
-        .header("npm-replication-opt-in", "true")
-        .send()
-        .await
+    let resp = client.get(url).send().await
         .with_context(|| format!("failed to fetch update_seq from {url}"))?;
 
     if !resp.status().is_success() {

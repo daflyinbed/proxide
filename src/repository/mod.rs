@@ -226,6 +226,7 @@ pub trait Repository: Send + Sync + 'static {
     ) -> Result<i64>;
     async fn delete_content(&self, dist_id: i64) -> Result<()>;
     async fn put_storage(&self, storage_key: &str, data: Vec<u8>) -> Result<()>;
+    async fn put_storage_compressed(&self, storage_key: &str, data: Vec<u8>) -> Result<String>;
 
     // ── packages ──
 
@@ -412,9 +413,11 @@ pub async fn upload_and_commit_manifests(
     let abbrev_storage_key = format!("packages/{fullname}/abbreviated_manifests.json");
     let full_storage_key = format!("packages/{fullname}/full_manifests.json");
 
-    repo.put_storage(&abbrev_storage_key, abbrev_bytes.to_vec())
+    let abbrev_actual_key = repo
+        .put_storage_compressed(&abbrev_storage_key, abbrev_bytes.to_vec())
         .await?;
-    repo.put_storage(&full_storage_key, full_bytes.to_vec())
+    let full_actual_key = repo
+        .put_storage_compressed(&full_storage_key, full_bytes.to_vec())
         .await?;
 
     let params = SyncManifestParams {
@@ -422,14 +425,14 @@ pub async fn upload_and_commit_manifests(
         tags: tags.clone(),
         abbrev_manifest: PendingDist {
             name: format!("{fullname}-abbrev-manifests"),
-            path: abbrev_storage_key,
+            path: abbrev_actual_key,
             size: abbrev_bytes.len() as i64,
             shasum: None,
             integrity: None,
         },
         full_manifest: PendingDist {
             name: format!("{fullname}-full-manifests"),
-            path: full_storage_key,
+            path: full_actual_key,
             size: full_bytes.len() as i64,
             shasum: None,
             integrity: None,

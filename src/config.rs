@@ -56,6 +56,10 @@ pub enum StorageConfig {
 #[serde(rename_all = "camelCase")]
 pub struct LocalConfig {
     pub directory: String,
+    #[serde(default)]
+    pub compress_json: bool,
+    #[serde(default = "default_zstd_level")]
+    pub zstd_level: i32,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -69,6 +73,14 @@ pub struct S3Config {
     pub region: String,
     #[serde(default)]
     pub with_virtual_hosted_style_request: bool,
+    #[serde(default)]
+    pub compress_json: bool,
+    #[serde(default = "default_zstd_level")]
+    pub zstd_level: i32,
+}
+
+fn default_zstd_level() -> i32 {
+    3
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

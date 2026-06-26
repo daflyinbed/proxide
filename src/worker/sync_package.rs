@@ -169,27 +169,33 @@ pub async fn sync_package(
         let is_pre_release = is_prerelease(ver_str);
         let padding_version = Some(pad_version(ver_str));
 
-        let abbrev_storage_key = format!("packages/{fullname}/{ver_str}/abbreviated.json");
-        let manifest_storage_key = format!("packages/{fullname}/{ver_str}/package.json");
+        let abbrev_base_key = format!("packages/{fullname}/{ver_str}/abbreviated.json");
+        let manifest_base_key = format!("packages/{fullname}/{ver_str}/package.json");
 
         let abbrev_data = build_abbreviated_version(&ver_data.name, ver_data);
         let manifest_data = serde_json::to_vec(&ver_data).unwrap_or_default();
 
-        if let Err(e) = repo
-            .put_storage(&abbrev_storage_key, abbrev_data.clone())
+        let abbrev_storage_key = match repo
+            .put_storage_compressed(&abbrev_base_key, abbrev_data.clone())
             .await
         {
-            error!("Storage upload failed for {fullname}@{ver_str} abbreviated: {e:#}");
-            continue;
-        }
+            Ok(k) => k,
+            Err(e) => {
+                error!("Storage upload failed for {fullname}@{ver_str} abbreviated: {e:#}");
+                continue;
+            }
+        };
 
-        if let Err(e) = repo
-            .put_storage(&manifest_storage_key, manifest_data.clone())
+        let manifest_storage_key = match repo
+            .put_storage_compressed(&manifest_base_key, manifest_data.clone())
             .await
         {
-            error!("Storage upload failed for {fullname}@{ver_str} manifest: {e:#}");
-            continue;
-        }
+            Ok(k) => k,
+            Err(e) => {
+                error!("Storage upload failed for {fullname}@{ver_str} manifest: {e:#}");
+                continue;
+            }
+        };
 
         let version_params = CommitVersionParams {
             package_id,
@@ -199,14 +205,14 @@ pub async fn sync_package(
             padding_version,
             abbrev_dist: PendingDist {
                 name: format!("{fullname}@{ver_str}-abbrev"),
-                path: abbrev_storage_key.clone(),
+                path: abbrev_storage_key,
                 size: abbrev_data.len() as i64,
                 shasum: None,
                 integrity: None,
             },
             manifest_dist: PendingDist {
                 name: format!("{fullname}@{ver_str}-manifest"),
-                path: manifest_storage_key.clone(),
+                path: manifest_storage_key,
                 size: manifest_data.len() as i64,
                 shasum: None,
                 integrity: None,

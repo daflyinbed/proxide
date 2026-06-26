@@ -137,6 +137,10 @@ impl Repository for MysqlRepository {
         self.storage.put(storage_key, data).await
     }
 
+    async fn put_storage_compressed(&self, storage_key: &str, data: Vec<u8>) -> Result<String> {
+        self.storage.put_compressed(storage_key, data).await
+    }
+
     // ── packages ──
 
     async fn get_package_by_name(&self, name: &str) -> Result<Option<PackageRow>> {

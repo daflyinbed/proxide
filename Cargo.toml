@@ -64,6 +64,7 @@ dashmap = "6"
 meilisearch-sdk = "0.28"
 flate2 = "1.1"
 tar = "0.4"
+zstd = "0.13"
 
 [lints.rust]
 async_fn_in_trait = "allow"

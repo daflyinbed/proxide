@@ -11,6 +11,8 @@ endpoint = "http://127.0.0.1:9000"
 accessKeyId = "proxide"
 secretAccessKey = "proxide123"
 bucketName = "proxide-e2e"
+compressJson = true
+zstdLevel = 3
 
 [log]
 level = "warn"

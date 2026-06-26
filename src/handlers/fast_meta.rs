@@ -17,7 +17,7 @@ fn parse_specifier(pkg: &str) -> (String, String) {
     (pkg.to_string(), "latest".to_string())
 }
 
-async fn load_packument(
+pub(crate) async fn load_packument(
     state: &AppState,
     fullname: &str,
     use_full: bool,
@@ -120,7 +120,7 @@ pub async fn get_full(
     }))
 }
 
-fn extract_dist_tags(packument: &Value) -> HashMap<String, String> {
+pub(crate) fn extract_dist_tags(packument: &Value) -> HashMap<String, String> {
     packument
         .get("dist-tags")
         .and_then(|v| v.as_object())
@@ -132,7 +132,7 @@ fn extract_dist_tags(packument: &Value) -> HashMap<String, String> {
         .unwrap_or_default()
 }
 
-fn extract_version_list(packument: &Value) -> Vec<String> {
+pub(crate) fn extract_version_list(packument: &Value) -> Vec<String> {
     packument
         .get("versions")
         .and_then(|v| v.as_object())
@@ -177,7 +177,7 @@ fn build_version_meta(packument: &Value, ver: &str, data: &Value) -> Option<Vers
     })
 }
 
-fn resolve_specifier(
+pub(crate) fn resolve_specifier(
     specifier: &str,
     dist_tags: &HashMap<String, String>,
     versions: &[String],

@@ -13,6 +13,8 @@ pub struct Config {
     pub auth: AuthConfig,
     #[serde(default)]
     pub search: SearchConfig,
+    #[serde(default)]
+    pub cdn: CdnConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -221,5 +223,21 @@ fn default_index_name() -> String {
 impl SearchConfig {
     pub fn is_enabled(&self) -> bool {
         !self.meili_url.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CdnConfig {
+    pub enabled: bool,
+    pub max_tarball_size: u64,
+}
+
+impl Default for CdnConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_tarball_size: 52_428_800,
+        }
     }
 }

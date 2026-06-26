@@ -49,6 +49,24 @@ pub struct DistRow {
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
+pub struct VersionFileRow {
+    pub filepath: String,
+    pub content_type: String,
+    pub size: i64,
+    pub shasum: Option<String>,
+    pub storage_path: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewVersionFile {
+    pub storage_key: String,
+    pub size: i64,
+    pub shasum: Option<String>,
+    pub filepath: String,
+    pub content_type: String,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct UserRow {
     pub id: i64,
     pub name: String,
@@ -294,6 +312,18 @@ pub trait Repository: Send + Sync + 'static {
     async fn get_dist_by_path(&self, path: &str) -> Result<Option<DistRow>>;
     async fn list_orphan_dists(&self) -> Result<Vec<DistRow>>;
     async fn delete_dists_by_ids(&self, ids: &[i64]) -> Result<u64>;
+
+    // ── package_version_files ──
+
+    async fn has_version_files(&self, version_id: i64) -> Result<bool>;
+    async fn get_version_file(
+        &self,
+        version_id: i64,
+        filepath: &str,
+    ) -> Result<Option<VersionFileRow>>;
+    async fn list_version_files(&self, version_id: i64) -> Result<Vec<VersionFileRow>>;
+    async fn insert_version_files(&self, version_id: i64, files: &[NewVersionFile]) -> Result<()>;
+    async fn get_version_file_dist_ids(&self, version_ids: &[i64]) -> Result<Vec<(i64, String)>>;
 
     // ── change_stream_cursors ──
 

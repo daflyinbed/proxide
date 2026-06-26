@@ -1,9 +1,9 @@
 use crate::config::{DatabaseConfig, StorageConfig};
 use crate::npm::types::Maintainer;
 use crate::repository::{
-    ChangeStreamCursorRow, CommitVersionParams, DistRow, PackageDownloadRow, PackageRow,
-    PackageTagRow, PackageVersionRow, Repository, SyncManifestParams, SyncTaskRow, TokenRow,
-    UpstreamPackageDownloadRow, UserRow,
+    ChangeStreamCursorRow, CommitVersionParams, DistRow, NewVersionFile, PackageDownloadRow,
+    PackageRow, PackageTagRow, PackageVersionRow, Repository, SyncManifestParams, SyncTaskRow,
+    TokenRow, UpstreamPackageDownloadRow, UserRow, VersionFileRow,
 };
 use crate::storage::Storage;
 use anyhow::Result;
@@ -416,6 +416,105 @@ impl Repository for MysqlRepository {
         }
         let result = query.execute(&self.pool).await?;
         Ok(result.rows_affected())
+    }
+
+    // ── package_version_files ──
+
+    async fn has_version_files(&self, version_id: i64) -> Result<bool> {
+        let row: Option<(i64,)> = sqlx::query_as(
+            "SELECT 1 FROM package_version_files WHERE package_version_id = ? LIMIT 1",
+        )
+        .bind(version_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.is_some())
+    }
+
+    async fn get_version_file(
+        &self,
+        version_id: i64,
+        filepath: &str,
+    ) -> Result<Option<VersionFileRow>> {
+        let row = sqlx::query_as::<_, VersionFileRow>(
+            r#"SELECT pvf.filepath AS `filepath`,
+                      pvf.content_type AS `content_type`,
+                      d.size AS `size`,
+                      d.shasum AS `shasum`,
+                      d.path AS `storage_path`
+               FROM package_version_files pvf
+               JOIN dists d ON d.id = pvf.dist_id
+               WHERE pvf.package_version_id = ? AND pvf.filepath = ?
+               LIMIT 1"#,
+        )
+        .bind(version_id)
+        .bind(filepath)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    async fn list_version_files(&self, version_id: i64) -> Result<Vec<VersionFileRow>> {
+        let rows = sqlx::query_as::<_, VersionFileRow>(
+            r#"SELECT pvf.filepath AS `filepath`,
+                      pvf.content_type AS `content_type`,
+                      d.size AS `size`,
+                      d.shasum AS `shasum`,
+                      d.path AS `storage_path`
+               FROM package_version_files pvf
+               JOIN dists d ON d.id = pvf.dist_id
+               WHERE pvf.package_version_id = ?
+               ORDER BY pvf.filepath"#,
+        )
+        .bind(version_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    async fn insert_version_files(&self, version_id: i64, files: &[NewVersionFile]) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        for f in files {
+            let dist_result = sqlx::query!(
+                r#"INSERT INTO dists (name, path, size, shasum, integrity) VALUES (?, ?, ?, ?, NULL)"#,
+                f.filepath,
+                f.storage_key,
+                f.size,
+                f.shasum,
+            )
+            .execute(&mut *tx)
+            .await?;
+            let dist_id = dist_result.last_insert_id() as i64;
+            sqlx::query!(
+                r#"INSERT INTO package_version_files
+                   (package_version_id, dist_id, filepath, content_type)
+                   VALUES (?, ?, ?, ?)"#,
+                version_id,
+                dist_id,
+                f.filepath,
+                f.content_type,
+            )
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn get_version_file_dist_ids(&self, version_ids: &[i64]) -> Result<Vec<(i64, String)>> {
+        if version_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let placeholders: Vec<String> = version_ids.iter().map(|_| "?".to_string()).collect();
+        let sql = format!(
+            "SELECT d.id, d.path FROM package_version_files pvf JOIN dists d ON d.id = pvf.dist_id WHERE pvf.package_version_id IN ({})",
+            placeholders.join(",")
+        );
+        let mut query = sqlx::query_as::<_, (i64, String)>(&sql);
+        for id in version_ids {
+            query = query.bind(id);
+        }
+        let rows = query.fetch_all(&self.pool).await?;
+        Ok(rows)
     }
 
     // ── change_stream_cursors ──

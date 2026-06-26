@@ -1,4 +1,6 @@
-use crate::{config::Config, repository::Repository, repository::mysql::MysqlRepository, search::SearchIndex};
+use crate::{
+    config::Config, repository::Repository, repository::mysql::MysqlRepository, search::SearchIndex,
+};
 use anyhow::Result;
 use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
@@ -273,6 +275,34 @@ impl TarballInflightMap {
     }
 }
 
+#[derive(Clone, Default)]
+pub struct ExtractionInflightMap {
+    inner: Arc<DashMap<i64, Arc<Notify>>>,
+}
+
+impl ExtractionInflightMap {
+    pub fn new() -> Self {
+        Self {
+            inner: Arc::new(DashMap::new()),
+        }
+    }
+
+    pub fn get_or_insert(&self, version_id: i64) -> (Arc<Notify>, bool) {
+        match self.inner.entry(version_id) {
+            Entry::Occupied(entry) => (entry.get().clone(), false),
+            Entry::Vacant(entry) => {
+                let notify = Arc::new(Notify::new());
+                entry.insert(notify.clone());
+                (notify, true)
+            }
+        }
+    }
+
+    pub fn remove(&self, version_id: i64) {
+        self.inner.remove(&version_id);
+    }
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub repo: Arc<dyn Repository>,
@@ -283,6 +313,7 @@ pub struct AppState {
     pub tarball_downloads: TarballInflightMap,
     pub download_counters: Arc<DashMap<i64, AtomicU64>>,
     pub search: Option<Arc<SearchIndex>>,
+    pub extraction_inflight: ExtractionInflightMap,
 }
 
 impl AppState {
@@ -307,6 +338,7 @@ impl AppState {
             tarball_downloads: TarballInflightMap::new(),
             download_counters: Arc::new(DashMap::new()),
             search,
+            extraction_inflight: ExtractionInflightMap::new(),
         })
     }
 }

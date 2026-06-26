@@ -1,8 +1,11 @@
 use crate::config::Config;
 use crate::npm::types::*;
-use crate::npm::{build_abbreviated_version_entry, is_prerelease, pad_version, split_scope_name};
+use crate::npm::{
+    build_abbreviated_version, build_abbreviated_version_entry, is_prerelease, pad_version,
+    split_scope_name,
+};
 use crate::repository::{
-    PackageVersionRow, PendingDist, Repository, SyncManifestParams, VersionCommitParams,
+    upload_and_commit_manifests, CommitVersionParams, PackageVersionRow, PendingDist, Repository,
 };
 use crate::search::SearchIndex;
 use crate::state::{LockOwner, PackageLock, UnlockGuard};
@@ -32,13 +35,6 @@ fn build_abbreviated_manifest(packument: &Packument) -> AbbreviatedPackument {
         versions,
         time,
     }
-}
-
-fn build_abbreviated_version(name: &str, ver: &PackageVersion) -> Vec<u8> {
-    let entry = build_abbreviated_version_entry(ver, None);
-    let mut map = serde_json::to_value(&entry).unwrap_or_default();
-    map["name"] = serde_json::Value::String(name.to_string());
-    serde_json::to_vec(&map).unwrap_or_default()
 }
 
 pub enum SyncPackageError {
@@ -195,7 +191,7 @@ pub async fn sync_package(
             continue;
         }
 
-        let version_params = VersionCommitParams {
+        let version_params = CommitVersionParams {
             package_id,
             version: ver_str.clone(),
             publish_time,
@@ -215,6 +211,8 @@ pub async fn sync_package(
                 shasum: None,
                 integrity: None,
             },
+            tar_dist: None,
+            readme_dist: None,
         };
 
         if let Err(e) = repo.commit_version(version_params).await {
@@ -234,39 +232,20 @@ pub async fn sync_package(
     let old_full_dist_id = old_pkg.as_ref().and_then(|p| p.full_dist_id);
 
     let abbreviated_manifest = build_abbreviated_manifest(&packument);
-    let abbrev_storage_key = format!("packages/{fullname}/abbreviated_manifests.json");
-    let full_storage_key = format!("packages/{fullname}/full_manifests.json");
 
     let abbrev_bytes = serde_json::to_vec(&abbreviated_manifest).unwrap_or_default();
     let full_bytes = serde_json::to_vec(&packument).unwrap_or_default();
 
-    repo.put_storage(&abbrev_storage_key, abbrev_bytes.clone())
-        .await
-        .context("failed to upload abbreviated manifest to storage")?;
-    repo.put_storage(&full_storage_key, full_bytes.clone())
-        .await
-        .context("failed to upload full manifest to storage")?;
-
-    let params = SyncManifestParams {
+    if let Err(db_err) = upload_and_commit_manifests(
+        &**repo,
         package_id,
-        tags: packument.dist_tags.clone(),
-        abbrev_manifest: PendingDist {
-            name: format!("{fullname}-abbrev-manifests"),
-            path: abbrev_storage_key.clone(),
-            size: abbrev_bytes.len() as i64,
-            shasum: None,
-            integrity: None,
-        },
-        full_manifest: PendingDist {
-            name: format!("{fullname}-full-manifests"),
-            path: full_storage_key.clone(),
-            size: full_bytes.len() as i64,
-            shasum: None,
-            integrity: None,
-        },
-    };
-
-    if let Err(db_err) = repo.sync_manifest_commit(params).await {
+        fullname,
+        &packument.dist_tags,
+        &abbrev_bytes,
+        &full_bytes,
+    )
+    .await
+    {
         return Err(SyncPackageError::Other(
             db_err.context("DB transaction failed for manifest commit"),
         ));

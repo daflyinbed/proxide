@@ -1,9 +1,9 @@
 use crate::config::{DatabaseConfig, StorageConfig};
 use crate::npm::types::Maintainer;
 use crate::repository::{
-    ChangeStreamCursorRow, DistRow, PackageDownloadRow, PackageRow, PackageTagRow,
-    PackageVersionRow, PublishVersionParams, Repository, SyncManifestParams, SyncTaskRow,
-    TokenRow, UpstreamPackageDownloadRow, UserRow, VersionCommitParams,
+    ChangeStreamCursorRow, CommitVersionParams, DistRow, PackageDownloadRow, PackageRow,
+    PackageTagRow, PackageVersionRow, Repository, SyncManifestParams, SyncTaskRow, TokenRow,
+    UpstreamPackageDownloadRow, UserRow,
 };
 use crate::storage::Storage;
 use anyhow::Result;
@@ -438,7 +438,7 @@ impl Repository for MysqlRepository {
 
     // ── sync ──
 
-    async fn commit_version(&self, params: VersionCommitParams) -> Result<()> {
+    async fn commit_version(&self, params: CommitVersionParams) -> Result<()> {
         let mut tx = self.pool.begin().await?;
 
         let abbrev_dist_id = insert_dist_tx(
@@ -461,15 +461,49 @@ impl Repository for MysqlRepository {
         )
         .await?;
 
+        let tar_dist_id = if let Some(d) = &params.tar_dist {
+            Some(
+                insert_dist_tx(
+                    &mut tx,
+                    &d.name,
+                    &d.path,
+                    d.size,
+                    d.shasum.as_deref(),
+                    d.integrity.as_deref(),
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
+
+        let readme_dist_id = if let Some(d) = &params.readme_dist {
+            Some(
+                insert_dist_tx(
+                    &mut tx,
+                    &d.name,
+                    &d.path,
+                    d.size,
+                    d.shasum.as_deref(),
+                    d.integrity.as_deref(),
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
+
         sqlx::query!(
-            r#"INSERT INTO package_versions (package_id, version, publish_time, is_pre_release, padding_version, abbrev_dist_id, manifest_dist_id) VALUES (?, ?, ?, ?, ?, ?, ?)"#,
+            r#"INSERT INTO package_versions (package_id, version, publish_time, is_pre_release, padding_version, abbrev_dist_id, manifest_dist_id, tar_dist_id, readme_dist_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
             params.package_id,
             params.version,
             params.publish_time,
             params.is_pre_release,
             params.padding_version,
             abbrev_dist_id,
-            manifest_dist_id
+            manifest_dist_id,
+            tar_dist_id,
+            readme_dist_id
         )
         .execute(&mut *tx)
         .await?;
@@ -873,69 +907,7 @@ impl Repository for MysqlRepository {
             .collect())
     }
 
-    // ── publish ──
-
-    async fn commit_published_version(&self, params: PublishVersionParams) -> Result<()> {
-        let mut tx = self.pool.begin().await?;
-
-        let abbrev_dist_id = insert_dist_tx(
-            &mut tx,
-            &params.abbrev_dist.name,
-            &params.abbrev_dist.path,
-            params.abbrev_dist.size,
-            params.abbrev_dist.shasum.as_deref(),
-            params.abbrev_dist.integrity.as_deref(),
-        )
-        .await?;
-
-        let manifest_dist_id = insert_dist_tx(
-            &mut tx,
-            &params.manifest_dist.name,
-            &params.manifest_dist.path,
-            params.manifest_dist.size,
-            params.manifest_dist.shasum.as_deref(),
-            params.manifest_dist.integrity.as_deref(),
-        )
-        .await?;
-
-        let tar_dist_id = insert_dist_tx(
-            &mut tx,
-            &params.tar_dist.name,
-            &params.tar_dist.path,
-            params.tar_dist.size,
-            params.tar_dist.shasum.as_deref(),
-            params.tar_dist.integrity.as_deref(),
-        )
-        .await?;
-
-        let readme_dist_id = insert_dist_tx(
-            &mut tx,
-            &params.readme_dist.name,
-            &params.readme_dist.path,
-            params.readme_dist.size,
-            params.readme_dist.shasum.as_deref(),
-            params.readme_dist.integrity.as_deref(),
-        )
-        .await?;
-
-        sqlx::query!(
-            r#"INSERT INTO package_versions (package_id, version, publish_time, is_pre_release, padding_version, abbrev_dist_id, manifest_dist_id, tar_dist_id, readme_dist_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
-            params.package_id,
-            params.version,
-            params.publish_time,
-            params.is_pre_release,
-            params.padding_version,
-            abbrev_dist_id,
-            manifest_dist_id,
-            tar_dist_id,
-            readme_dist_id
-        )
-        .execute(&mut *tx)
-        .await?;
-
-        tx.commit().await?;
-        Ok(())
-    }
+    // ── sync_tasks ──
 
     async fn fail_task_no_retry(&self, id: i64, error: &str) -> Result<()> {
         sqlx::query(

@@ -1,9 +1,10 @@
 use crate::error::{WebError, WebResult};
 use crate::middleware::auth::{AuthContext, is_admin};
-use crate::npm::split_scope_name;
 use crate::npm::types::*;
-use crate::npm::{build_abbreviated_version_entry, is_prerelease, pad_version};
-use crate::repository::{PendingDist, PublishVersionParams, SyncManifestParams};
+use crate::npm::{
+    build_abbreviated_version, is_prerelease, pad_version, split_scope_name,
+};
+use crate::repository::{upload_and_commit_manifests, CommitVersionParams, PendingDist};
 use crate::state::{AppState, LockOwner, UnlockGuard};
 use axum::Json;
 use axum::http::HeaderMap;
@@ -450,10 +451,7 @@ pub async fn publish_package_inner(
         ),
     };
 
-    let abbrev_entry = build_abbreviated_version_entry(&abbrev_ver, None);
-    let mut abbrev_val = serde_json::to_value(&abbrev_entry).unwrap_or_default();
-    abbrev_val["name"] = serde_json::Value::String(fullname.clone());
-    let abbrev_data = serde_json::to_vec(&abbrev_val).unwrap_or_default();
+    let abbrev_data = build_abbreviated_version(&fullname, &abbrev_ver);
     let abbrev_storage_key = format!("packages/{fullname}/{version_str}/abbreviated.json");
 
     let readme_content = payload.readme.as_deref().unwrap_or("");
@@ -476,7 +474,7 @@ pub async fn publish_package_inner(
         .await
         .map_err(WebError::CustomApiError)?;
 
-    let version_params = PublishVersionParams {
+    let version_params = CommitVersionParams {
         package_id,
         version: version_str.clone(),
         publish_time,
@@ -496,25 +494,25 @@ pub async fn publish_package_inner(
             shasum: None,
             integrity: None,
         },
-        tar_dist: PendingDist {
+        tar_dist: Some(PendingDist {
             name: format!("{fullname}@{version_str}-tar"),
             path: tar_storage_key,
             size: tarball_bytes.len() as i64,
             shasum: Some(shasum),
             integrity: Some(integrity),
-        },
-        readme_dist: PendingDist {
+        }),
+        readme_dist: Some(PendingDist {
             name: format!("{fullname}@{version_str}-readme"),
             path: readme_storage_key,
             size: readme_data.len() as i64,
             shasum: None,
             integrity: None,
-        },
+        }),
     };
 
     state
         .repo
-        .commit_published_version(version_params)
+        .commit_version(version_params)
         .await
         .map_err(|e| {
             if is_duplicate_key_error(&e) {
@@ -538,11 +536,7 @@ pub async fn publish_package_inner(
         .await?;
 
     if let Some(idx) = &state.search {
-        let local = crate::search::fetch_local_downloads(&*state.repo, package_id).await;
-        let doc = crate::search::build_search_document(package_id, &full_manifest, 0, local);
-        if let Err(e) = idx.upsert_package(&doc).await {
-            log::warn!(action = "search_index_upsert"; "name={fullname} publish: {e:#}");
-        }
+        crate::search::upsert_search_document(&*state.repo, idx, package_id, &full_manifest).await;
     }
 
     log::info!(
@@ -663,7 +657,6 @@ async fn refresh_manifests(
         },
     };
     let abbrev_manifest_bytes = serde_json::to_vec(&abbrev_manifest).unwrap_or_default();
-    let abbrev_manifest_storage_key = format!("packages/{fullname}/abbreviated_manifests.json");
 
     let full_manifest = Packument {
         id: Some(fullname.to_string()),
@@ -695,43 +688,17 @@ async fn refresh_manifests(
         other: Default::default(),
     };
     let full_manifest_bytes = serde_json::to_vec(&full_manifest).unwrap_or_default();
-    let full_manifest_storage_key = format!("packages/{fullname}/full_manifests.json");
 
-    state
-        .repo
-        .put_storage(&abbrev_manifest_storage_key, abbrev_manifest_bytes.clone())
-        .await
-        .map_err(WebError::CustomApiError)?;
-    state
-        .repo
-        .put_storage(&full_manifest_storage_key, full_manifest_bytes.clone())
-        .await
-        .map_err(WebError::CustomApiError)?;
-
-    let sync_params = SyncManifestParams {
+    upload_and_commit_manifests(
+        &*state.repo,
         package_id,
-        tags: dist_tags.clone(),
-        abbrev_manifest: PendingDist {
-            name: format!("{fullname}-abbrev-manifests"),
-            path: abbrev_manifest_storage_key,
-            size: abbrev_manifest_bytes.len() as i64,
-            shasum: None,
-            integrity: None,
-        },
-        full_manifest: PendingDist {
-            name: format!("{fullname}-full-manifests"),
-            path: full_manifest_storage_key,
-            size: full_manifest_bytes.len() as i64,
-            shasum: None,
-            integrity: None,
-        },
-    };
-
-    state
-        .repo
-        .sync_manifest_commit(sync_params)
-        .await
-        .map_err(WebError::CustomApiError)?;
+        fullname,
+        dist_tags,
+        &abbrev_manifest_bytes,
+        &full_manifest_bytes,
+    )
+    .await
+    .map_err(WebError::CustomApiError)?;
 
     Ok(full_manifest)
 }

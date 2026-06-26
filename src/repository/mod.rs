@@ -79,7 +79,7 @@ pub struct PendingDist {
 }
 
 #[derive(Debug, Clone)]
-pub struct VersionCommitParams {
+pub struct CommitVersionParams {
     pub package_id: i64,
     pub version: String,
     pub publish_time: chrono::NaiveDateTime,
@@ -87,19 +87,8 @@ pub struct VersionCommitParams {
     pub padding_version: Option<String>,
     pub abbrev_dist: PendingDist,
     pub manifest_dist: PendingDist,
-}
-
-#[derive(Debug, Clone)]
-pub struct PublishVersionParams {
-    pub package_id: i64,
-    pub version: String,
-    pub publish_time: chrono::NaiveDateTime,
-    pub is_pre_release: bool,
-    pub padding_version: Option<String>,
-    pub abbrev_dist: PendingDist,
-    pub manifest_dist: PendingDist,
-    pub tar_dist: PendingDist,
-    pub readme_dist: PendingDist,
+    pub tar_dist: Option<PendingDist>,
+    pub readme_dist: Option<PendingDist>,
 }
 
 #[derive(Debug, Clone)]
@@ -312,7 +301,7 @@ pub trait Repository: Send + Sync + 'static {
 
     // ── sync ──
 
-    async fn commit_version(&self, params: VersionCommitParams) -> Result<()>;
+    async fn commit_version(&self, params: CommitVersionParams) -> Result<()>;
     async fn sync_manifest_commit(&self, params: SyncManifestParams) -> Result<()>;
 
     // ── sync_tasks ──
@@ -364,10 +353,6 @@ pub trait Repository: Send + Sync + 'static {
     async fn sync_maintainers(&self, package_id: i64, user_ids: &[i64]) -> Result<()>;
     async fn list_maintainers(&self, package_id: i64) -> Result<Vec<Maintainer>>;
 
-    // ── publish ──
-
-    async fn commit_published_version(&self, params: PublishVersionParams) -> Result<()>;
-
     // ── sync_tasks ──
 
     async fn fail_task_no_retry(&self, id: i64, error: &str) -> Result<()>;
@@ -414,4 +399,42 @@ pub trait Repository: Send + Sync + 'static {
         end_year: u16,
         end_month: u8,
     ) -> Result<Vec<UpstreamPackageDownloadRow>>;
+}
+
+pub async fn upload_and_commit_manifests(
+    repo: &dyn Repository,
+    package_id: i64,
+    fullname: &str,
+    tags: &HashMap<String, String>,
+    abbrev_bytes: &[u8],
+    full_bytes: &[u8],
+) -> Result<()> {
+    let abbrev_storage_key = format!("packages/{fullname}/abbreviated_manifests.json");
+    let full_storage_key = format!("packages/{fullname}/full_manifests.json");
+
+    repo.put_storage(&abbrev_storage_key, abbrev_bytes.to_vec())
+        .await?;
+    repo.put_storage(&full_storage_key, full_bytes.to_vec())
+        .await?;
+
+    let params = SyncManifestParams {
+        package_id,
+        tags: tags.clone(),
+        abbrev_manifest: PendingDist {
+            name: format!("{fullname}-abbrev-manifests"),
+            path: abbrev_storage_key,
+            size: abbrev_bytes.len() as i64,
+            shasum: None,
+            integrity: None,
+        },
+        full_manifest: PendingDist {
+            name: format!("{fullname}-full-manifests"),
+            path: full_storage_key,
+            size: full_bytes.len() as i64,
+            shasum: None,
+            integrity: None,
+        },
+    };
+
+    repo.sync_manifest_commit(params).await
 }

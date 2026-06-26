@@ -39,10 +39,9 @@ pub fn detect_install_script(ver: &PackageVersion) -> Option<bool> {
 }
 
 pub fn build_abbreviated_version(name: &str, ver: &PackageVersion) -> Vec<u8> {
-    let entry = build_abbreviated_version_entry(ver, None);
-    let mut map = serde_json::to_value(&entry).unwrap_or_default();
-    map["name"] = serde_json::Value::String(name.to_string());
-    serde_json::to_vec(&map).unwrap_or_default()
+    let mut entry = build_abbreviated_version_entry(ver, None);
+    entry.name = name.to_string();
+    serde_json::to_vec(&entry).unwrap_or_default()
 }
 
 pub fn build_abbreviated_version_entry(

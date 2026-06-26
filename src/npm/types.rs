@@ -20,7 +20,11 @@ pub struct Packument {
     pub maintainers: Option<Vec<Maintainer>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub readme: Option<String>,
-    #[serde(default, rename = "readmeFilename", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "readmeFilename",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub readme_filename: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keywords: Option<serde_json::Value>,

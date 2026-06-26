@@ -318,6 +318,7 @@ pub trait Repository: Send + Sync + 'static {
     // ── sync_tasks ──
 
     async fn enqueue_sync_task(&self, name: &str, source: &str) -> Result<Option<i64>>;
+    async fn bulk_enqueue_sync_tasks(&self, names: &[String], source: &str) -> Result<u64>;
     async fn claim_sync_task(&self) -> Result<Option<SyncTaskRow>>;
     async fn complete_sync_task(&self, id: i64, error: Option<&str>) -> Result<()>;
     async fn requeue_stale_tasks(&self, timeout_secs: u64) -> Result<u64>;

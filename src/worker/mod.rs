@@ -1,3 +1,4 @@
+pub mod bootstrap;
 pub mod changes_poller;
 pub mod cleanup;
 pub mod cleanup_storage;

@@ -24,6 +24,7 @@ enum Commands {
     Worker,
     CleanupStorage,
     ReindexSearch,
+    Bootstrap,
 }
 
 #[tokio::main]
@@ -49,6 +50,7 @@ async fn main() -> Result<()> {
         Commands::Worker => run_worker(cfg).await,
         Commands::CleanupStorage => run_cleanup_storage(cfg).await,
         Commands::ReindexSearch => run_reindex_search(cfg).await,
+        Commands::Bootstrap => run_bootstrap(cfg).await,
     }
 }
 
@@ -108,6 +110,12 @@ async fn run_reindex_search(config: config::Config) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("search is not enabled (configure [search] in proxide.toml)"))?;
     search.ensure_index().await?;
     proxide::search::reindex_all(&*state.repo, search).await
+}
+
+async fn run_bootstrap(config: config::Config) -> Result<()> {
+    let state = AppState::new(config).await?;
+    state.repo.migrate().await?;
+    worker::bootstrap::bootstrap_all(state.repo, &state.config, &state.http).await
 }
 
 async fn shutdown_signal() {

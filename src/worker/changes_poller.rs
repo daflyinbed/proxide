@@ -1,5 +1,5 @@
 use crate::config::Config;
-use crate::npm::types::ChangesResult;
+use crate::npm::types::{ChangesResult, UpdateSeqResponse};
 use crate::repository::Repository;
 use anyhow::{Context, Result};
 use std::sync::Arc;
@@ -33,11 +33,18 @@ async fn poll_once(
     config: &Config,
     client: &reqwest::Client,
 ) -> Result<()> {
-    let since = repo
-        .get_cursor()
-        .await?
-        .map(|c| c.since)
-        .unwrap_or_else(|| "0".to_string());
+    let since = match repo.get_cursor().await? {
+        Some(c) => c.since,
+        None => {
+            let initial = fetch_initial_since(config, client).await?;
+            log::info!(
+                action = "init_since";
+                "no cursor found, fetching initial since={initial} from update_seq_url={}",
+                config.worker.update_seq_url,
+            );
+            initial
+        }
+    };
 
     let url = format!("{}?since={since}", config.worker.changes_stream_url);
 
@@ -83,4 +90,22 @@ async fn poll_once(
     repo.upsert_cursor(&last_seq).await?;
 
     Ok(())
+}
+
+async fn fetch_initial_since(config: &Config, client: &reqwest::Client) -> Result<String> {
+    let url = &config.worker.update_seq_url;
+    let resp = client.get(url).send().await
+        .with_context(|| format!("failed to fetch update_seq from {url}"))?;
+
+    if !resp.status().is_success() {
+        anyhow::bail!("update_seq endpoint {url} returned {}", resp.status());
+    }
+
+    let body: UpdateSeqResponse = resp
+        .json()
+        .await
+        .with_context(|| format!("failed to parse update_seq response from {url}"))?;
+
+    let since = body.update_seq.saturating_sub(10);
+    Ok(since.to_string())
 }

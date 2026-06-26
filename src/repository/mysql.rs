@@ -540,6 +540,45 @@ impl Repository for MysqlRepository {
         Ok(Some(result.last_insert_id() as i64))
     }
 
+    async fn bulk_enqueue_sync_tasks(&self, names: &[String], source: &str) -> Result<u64> {
+        if names.is_empty() {
+            return Ok(0);
+        }
+
+        let mut total = 0u64;
+        const BATCH: usize = 500;
+
+        for chunk in names.chunks(BATCH) {
+            let placeholders: Vec<String> = (0..chunk.len())
+                .map(|i| {
+                    if i == 0 {
+                        format!("SELECT ? AS name, ? AS source")
+                    } else {
+                        "UNION ALL SELECT ?, ?".to_string()
+                    }
+                })
+                .collect();
+            let sql = format!(
+                "INSERT INTO sync_tasks (name, source, status) \
+                 SELECT t.name, t.source, 'pending' \
+                 FROM ({}) AS t \
+                 WHERE NOT EXISTS (\
+                     SELECT 1 FROM sync_tasks st WHERE st.name = t.name AND st.status = 'pending'\
+                 )",
+                placeholders.join(" ")
+            );
+
+            let mut query = sqlx::query(&sql);
+            for name in chunk {
+                query = query.bind(name).bind(source);
+            }
+            let result = query.execute(&self.pool).await?;
+            total += result.rows_affected();
+        }
+
+        Ok(total)
+    }
+
     async fn claim_sync_task(&self) -> Result<Option<SyncTaskRow>> {
         let mut tx = self.pool.begin().await?;
 

@@ -315,7 +315,7 @@ pub async fn publish_package_inner(
     }
 
     let manifest_data = serde_json::to_vec(&version_json).unwrap_or_default();
-    let manifest_storage_key = format!("packages/{fullname}/{version_str}/package.json");
+    let manifest_base_key = format!("packages/{fullname}/{version_str}/package.json");
 
     let abbrev_ver = PackageVersion {
         id: None,
@@ -452,25 +452,25 @@ pub async fn publish_package_inner(
     };
 
     let abbrev_data = build_abbreviated_version(&fullname, &abbrev_ver);
-    let abbrev_storage_key = format!("packages/{fullname}/{version_str}/abbreviated.json");
+    let abbrev_base_key = format!("packages/{fullname}/{version_str}/abbreviated.json");
 
     let readme_content = payload.readme.as_deref().unwrap_or("");
     let readme_data = readme_content.as_bytes().to_vec();
-    let readme_storage_key = format!("packages/{fullname}/{version_str}/readme.md");
+    let readme_base_key = format!("packages/{fullname}/{version_str}/readme.md");
 
-    state
+    let manifest_storage_key = state
         .repo
-        .put_storage(&manifest_storage_key, manifest_data.clone())
+        .put_storage_compressed(&manifest_base_key, manifest_data.clone())
         .await
         .map_err(WebError::CustomApiError)?;
-    state
+    let abbrev_storage_key = state
         .repo
-        .put_storage(&abbrev_storage_key, abbrev_data.clone())
+        .put_storage_compressed(&abbrev_base_key, abbrev_data.clone())
         .await
         .map_err(WebError::CustomApiError)?;
-    state
+    let readme_storage_key = state
         .repo
-        .put_storage(&readme_storage_key, readme_data.clone())
+        .put_storage_compressed(&readme_base_key, readme_data.clone())
         .await
         .map_err(WebError::CustomApiError)?;
 

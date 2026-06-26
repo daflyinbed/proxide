@@ -8,14 +8,18 @@ use object_store::path::Path;
 use object_store::{GetResult, WriteMultipart};
 use std::sync::Arc;
 
+const ZSTD_SUFFIX: &str = ".zst";
+
 #[derive(Debug, Clone)]
 pub struct Storage {
     inner: Arc<dyn ObjectStore>,
+    compress_json: bool,
+    zstd_level: i32,
 }
 
 impl Storage {
     pub fn new(config: &StorageConfig) -> Result<Self> {
-        let store: Arc<dyn ObjectStore> = match config {
+        let (store, compress_json, zstd_level) = match config {
             StorageConfig::S3(s3_cfg) => {
                 let mut builder = AmazonS3Builder::new()
                     .with_endpoint(&s3_cfg.endpoint)
@@ -32,15 +36,27 @@ impl Storage {
                 }
 
                 let store = builder.build().context("failed to build S3 client")?;
-                Arc::new(store)
+                (
+                    Arc::new(store) as Arc<dyn ObjectStore>,
+                    s3_cfg.compress_json,
+                    s3_cfg.zstd_level,
+                )
             }
             StorageConfig::Local(local_cfg) => {
                 let store = LocalFileSystem::new_with_prefix(&local_cfg.directory)
                     .context("failed to create local storage")?;
-                Arc::new(store)
+                (
+                    Arc::new(store) as Arc<dyn ObjectStore>,
+                    local_cfg.compress_json,
+                    local_cfg.zstd_level,
+                )
             }
         };
-        Ok(Self { inner: store })
+        Ok(Self {
+            inner: store,
+            compress_json,
+            zstd_level,
+        })
     }
 
     pub async fn get(&self, key: &str) -> Result<Vec<u8>> {
@@ -54,7 +70,13 @@ impl Storage {
             .bytes()
             .await
             .with_context(|| format!("failed to read object body: {key}"))?;
-        Ok(bytes.to_vec())
+        let bytes = bytes.to_vec();
+        if key.ends_with(ZSTD_SUFFIX) {
+            zstd::decode_all(&bytes[..])
+                .with_context(|| format!("failed to zstd-decompress object: {key}"))
+        } else {
+            Ok(bytes)
+        }
     }
 
     pub async fn get_result(&self, key: &str) -> Result<GetResult> {
@@ -72,6 +94,19 @@ impl Storage {
             .await
             .with_context(|| format!("failed to put object: {key}"))?;
         Ok(())
+    }
+
+    pub async fn put_compressed(&self, key: &str, data: Vec<u8>) -> Result<String> {
+        if self.compress_json {
+            let compressed = zstd::encode_all(&data[..], self.zstd_level)
+                .with_context(|| format!("failed to zstd-compress object: {key}"))?;
+            let actual_key = format!("{key}{ZSTD_SUFFIX}");
+            self.put(&actual_key, compressed).await?;
+            Ok(actual_key)
+        } else {
+            self.put(key, data).await?;
+            Ok(key.to_string())
+        }
     }
 
     pub async fn put_multipart(&self, key: &str) -> Result<WriteMultipart> {

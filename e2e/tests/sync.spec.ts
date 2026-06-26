@@ -148,7 +148,7 @@ describe("worker sync flow", () => {
     const workerConfig =
       `[database]\nuri = "mysql://root:root@127.0.0.1:3306/${DB_NAME}"\n\n` +
       `[server]\nport = 14873\nrootUrl = "${BASE_URL}"\n\n` +
-      `[storage.S3]\nendpoint = "http://127.0.0.1:9000"\naccessKeyId = "proxide"\nsecretAccessKey = "proxide123"\nbucketName = "proxide-e2e"\n\n` +
+      `[storage.S3]\nendpoint = "http://127.0.0.1:9000"\naccessKeyId = "proxide"\nsecretAccessKey = "proxide123"\nbucketName = "proxide-e2e"\ncompressJson = true\nzstdLevel = 3\n\n` +
       `[log]\nlevel = "info"\n\n` +
       `[worker]\nupstreamRegistry = "http://127.0.0.1:${upstreamPort}"\nchangesStreamUrl = "http://127.0.0.1:${upstreamPort}/_changes"\nconsumerCount = 1\nconsumerPollIntervalMs = 100\ncronIntervalSecs = 3600\n`;
 

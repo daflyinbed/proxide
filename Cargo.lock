@@ -2127,6 +2127,7 @@ dependencies = [
  "utoipa-scalar",
  "uuid",
  "wiremock",
+ "zstd",
 ]
 
 [[package]]

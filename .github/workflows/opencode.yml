@@ -28,6 +28,6 @@ jobs:
       - name: Run opencode
         uses: anomalyco/opencode/github@latest
         env:
-          KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
+          ZHIPU_API_KEY: ${{ secrets.ZHIPU_API_KEY }}
         with:
-          model: kimi-for-coding/k2p6
+          model: zhipuai-coding-plan/glm-5.2

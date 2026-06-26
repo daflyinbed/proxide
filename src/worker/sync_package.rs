@@ -234,6 +234,7 @@ pub async fn sync_package(
     let abbreviated_manifest = build_abbreviated_manifest(&packument);
 
     let abbrev_bytes = serde_json::to_vec(&abbreviated_manifest).unwrap_or_default();
+    packument.readme = Some(String::new());
     let full_bytes = serde_json::to_vec(&packument).unwrap_or_default();
 
     if let Err(db_err) = upload_and_commit_manifests(

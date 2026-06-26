@@ -531,7 +531,6 @@ pub async fn publish_package_inner(
             &fullname,
             description,
             &dist_tags,
-            readme_content,
         )
         .await?;
 
@@ -557,7 +556,6 @@ async fn refresh_manifests(
     fullname: &str,
     description: Option<&str>,
     dist_tags: &HashMap<String, String>,
-    readme: &str,
 ) -> WebResult<Packument> {
     let all_versions = state
         .repo
@@ -671,11 +669,7 @@ async fn refresh_manifests(
         } else {
             Some(maintainers_list)
         },
-        readme: if readme.is_empty() {
-            None
-        } else {
-            Some(readme.to_string())
-        },
+        readme: Some(String::new()),
         readme_filename,
         keywords,
         homepage,

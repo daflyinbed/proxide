@@ -1,3 +1,5 @@
+use sqlx::Row;
+
 pub mod mysql;
 
 use crate::npm::types::Maintainer;
@@ -16,7 +18,7 @@ pub struct PackageRow {
     pub full_dist_id: Option<i64>,
 }
 
-#[derive(Debug, Clone, sqlx::FromRow)]
+#[derive(Debug, Clone)]
 pub struct PackageVersionRow {
     pub id: i64,
     pub package_id: i64,
@@ -28,6 +30,26 @@ pub struct PackageVersionRow {
     pub publish_time: chrono::NaiveDateTime,
     pub is_pre_release: bool,
     pub padding_version: Option<String>,
+}
+
+impl<'r> sqlx::FromRow<'r, sqlx::mysql::MySqlRow> for PackageVersionRow {
+    fn from_row(row: &'r sqlx::mysql::MySqlRow) -> sqlx::Result<Self> {
+        Ok(Self {
+            id: row.try_get("id")?,
+            package_id: row.try_get("package_id")?,
+            version: row.try_get("version")?,
+            abbrev_dist_id: row.try_get("abbrev_dist_id")?,
+            manifest_dist_id: row.try_get("manifest_dist_id")?,
+            tar_dist_id: row.try_get("tar_dist_id")?,
+            readme_dist_id: row.try_get("readme_dist_id")?,
+            publish_time: row.try_get("publish_time")?,
+            is_pre_release: {
+                let v: i8 = row.try_get("is_pre_release")?;
+                v != 0
+            },
+            padding_version: row.try_get("padding_version")?,
+        })
+    }
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -46,6 +68,24 @@ pub struct DistRow {
     pub size: i64,
     pub shasum: Option<String>,
     pub integrity: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct VersionFileRow {
+    pub filepath: String,
+    pub content_type: String,
+    pub size: i64,
+    pub shasum: Option<String>,
+    pub storage_path: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewVersionFile {
+    pub storage_key: String,
+    pub size: i64,
+    pub shasum: Option<String>,
+    pub filepath: String,
+    pub content_type: String,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -294,6 +334,18 @@ pub trait Repository: Send + Sync + 'static {
     async fn get_dist_by_path(&self, path: &str) -> Result<Option<DistRow>>;
     async fn list_orphan_dists(&self) -> Result<Vec<DistRow>>;
     async fn delete_dists_by_ids(&self, ids: &[i64]) -> Result<u64>;
+
+    // ── package_version_files ──
+
+    async fn has_version_files(&self, version_id: i64) -> Result<bool>;
+    async fn get_version_file(
+        &self,
+        version_id: i64,
+        filepath: &str,
+    ) -> Result<Option<VersionFileRow>>;
+    async fn list_version_files(&self, version_id: i64) -> Result<Vec<VersionFileRow>>;
+    async fn insert_version_files(&self, version_id: i64, files: &[NewVersionFile]) -> Result<()>;
+    async fn get_version_file_dist_ids(&self, version_ids: &[i64]) -> Result<Vec<(i64, String)>>;
 
     // ── change_stream_cursors ──
 

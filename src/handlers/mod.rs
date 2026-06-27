@@ -1,7 +1,10 @@
 pub mod auth;
+pub mod cdn;
+pub mod data_api;
 pub mod downloads;
 pub mod fast_meta;
 pub mod home;
+pub mod jsdelivr_util;
 pub mod package_dispatch;
 pub mod publish;
 pub mod registry;

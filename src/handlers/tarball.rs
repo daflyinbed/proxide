@@ -75,8 +75,8 @@ async fn stream_storage_tarball(state: &AppState, storage_key: &str) -> WebResul
 }
 
 async fn wait_for_inflight_ready(inflight: &TarballInflight) -> WebResult<Option<u64>> {
+    let mut rx = inflight.subscribe();
     loop {
-        let notified = inflight.notify.notified();
         let snapshot = inflight.snapshot();
 
         if let Some(error) = snapshot.error {
@@ -87,7 +87,11 @@ async fn wait_for_inflight_ready(inflight: &TarballInflight) -> WebResult<Option
             return Ok(snapshot.content_length);
         }
 
-        notified.await;
+        if rx.changed().await.is_err() {
+            return Err(WebError::CustomApiError(anyhow::anyhow!(
+                "tarball inflight sender dropped"
+            )));
+        }
     }
 }
 
@@ -125,13 +129,12 @@ async fn stream_local_cache(
     inflight: Arc<TarballInflight>,
 ) -> io::Result<impl futures::Stream<Item = io::Result<Bytes>>> {
     let file = open_cache_reader(&inflight.file_path, 0).await?;
+    let rx = inflight.subscribe();
 
     Ok(stream::try_unfold(
-        (file, 0u64, inflight),
-        |(mut file, mut offset, inflight)| async move {
+        (file, 0u64, inflight, rx),
+        |(mut file, mut offset, inflight, mut rx)| async move {
             loop {
-                let notify = inflight.notify.clone();
-                let notified = notify.notified();
                 let snapshot = inflight.snapshot();
 
                 if offset < snapshot.bytes_written {
@@ -143,7 +146,7 @@ async fn stream_local_cache(
                     if bytes_read > 0 {
                         buffer.truncate(bytes_read);
                         offset += bytes_read as u64;
-                        return Ok(Some((Bytes::from(buffer), (file, offset, inflight))));
+                        return Ok(Some((Bytes::from(buffer), (file, offset, inflight, rx))));
                     }
 
                     file = open_cache_reader(&inflight.file_path, offset).await?;
@@ -158,7 +161,9 @@ async fn stream_local_cache(
                     return Ok(None);
                 }
 
-                notified.await;
+                if rx.changed().await.is_err() {
+                    return Err(io::Error::other("tarball inflight sender dropped"));
+                }
                 file = open_cache_reader(&inflight.file_path, offset).await?;
             }
         },
@@ -369,6 +374,15 @@ async fn run_tarball_producer(
                 .put(chunk.clone());
 
             bytes_written += chunk.len() as u64;
+            let max_tarball_size = state.config.cdn.max_tarball_size;
+            if bytes_written > max_tarball_size {
+                cache_file.flush().await.ok();
+                drop(std::mem::take(&mut upload));
+                let _ = fs::remove_file(&file_path).await;
+                return Err(TarballInflightError::Internal(format!(
+                    "tarball for {fullname}/-/{filename} exceeds cdn.maxTarballSize ({max_tarball_size})"
+                )));
+            }
             inflight.advance(bytes_written);
         }
 

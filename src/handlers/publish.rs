@@ -281,6 +281,12 @@ pub async fn publish_package_inner(
     let publish_time = chrono::Utc::now().naive_utc();
 
     let tar_storage_key = format!("packages/{fullname}/{version_str}/{attachment_filename}");
+    let max_tarball_size = state.config.cdn.max_tarball_size;
+    if tarball_bytes.len() as u64 > max_tarball_size {
+        return Err(WebError::BadRequest(format!(
+            "tarball for {fullname}@{version_str} exceeds cdn.maxTarballSize ({max_tarball_size})"
+        )));
+    }
     state
         .repo
         .put_storage(&tar_storage_key, tarball_bytes.clone())

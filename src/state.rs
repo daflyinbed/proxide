@@ -1,12 +1,13 @@
-use crate::{config::Config, repository::Repository, repository::mysql::MysqlRepository, search::SearchIndex};
+use crate::{
+    config::Config, repository::Repository, repository::mysql::MysqlRepository, search::SearchIndex,
+};
 use anyhow::Result;
 use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
-use parking_lot::Mutex;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
-use tokio::sync::Notify;
+use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -139,105 +140,87 @@ pub enum TarballInflightError {
     Internal(String),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct TarballInflightSnapshot {
     pub ready: bool,
     pub bytes_written: u64,
     pub content_length: Option<u64>,
     pub completed: bool,
     pub error: Option<TarballInflightError>,
-}
-
-#[derive(Debug, Default)]
-struct TarballInflightProgress {
-    ready: bool,
-    bytes_written: u64,
-    content_length: Option<u64>,
-    completed: bool,
-    reader_count: usize,
-    cleanup_started: bool,
-    error: Option<TarballInflightError>,
+    pub reader_count: usize,
+    pub cleanup_started: bool,
 }
 
 #[derive(Debug)]
 pub struct TarballInflight {
     pub file_path: PathBuf,
-    progress: Mutex<TarballInflightProgress>,
-    pub notify: Arc<Notify>,
+    tx: watch::Sender<TarballInflightSnapshot>,
 }
 
 impl TarballInflight {
     pub fn new(file_path: PathBuf) -> Self {
-        Self {
-            file_path,
-            progress: Mutex::new(TarballInflightProgress::default()),
-            notify: Arc::new(Notify::new()),
-        }
+        let (tx, _) = watch::channel(TarballInflightSnapshot::default());
+        Self { file_path, tx }
+    }
+
+    pub fn subscribe(&self) -> watch::Receiver<TarballInflightSnapshot> {
+        self.tx.subscribe()
     }
 
     pub fn mark_ready(&self, content_length: Option<u64>) {
-        let mut progress = self.progress.lock();
-        progress.ready = true;
-        progress.content_length = content_length;
-        drop(progress);
-        self.notify.notify_waiters();
+        self.tx.send_modify(|s| {
+            s.ready = true;
+            s.content_length = content_length;
+        });
     }
 
     pub fn advance(&self, bytes_written: u64) {
-        let mut progress = self.progress.lock();
-        progress.bytes_written = bytes_written;
-        drop(progress);
-        self.notify.notify_waiters();
+        self.tx.send_modify(|s| {
+            s.bytes_written = bytes_written;
+        });
     }
 
     pub fn finish(&self) {
-        let mut progress = self.progress.lock();
-        progress.completed = true;
-        progress.ready = true;
-        drop(progress);
-        self.notify.notify_waiters();
+        self.tx.send_modify(|s| {
+            s.completed = true;
+            s.ready = true;
+        });
     }
 
     pub fn fail(&self, error: TarballInflightError) {
-        let mut progress = self.progress.lock();
-        progress.error = Some(error);
-        progress.completed = true;
-        drop(progress);
-        self.notify.notify_waiters();
+        self.tx.send_modify(|s| {
+            s.error = Some(error);
+            s.completed = true;
+        });
     }
 
     pub fn add_reader(&self) {
-        let mut progress = self.progress.lock();
-        progress.reader_count += 1;
+        self.tx.send_modify(|s| {
+            s.reader_count += 1;
+        });
     }
 
     pub fn remove_reader(&self) {
-        let mut progress = self.progress.lock();
-        if progress.reader_count > 0 {
-            progress.reader_count -= 1;
-        }
-        drop(progress);
-        self.notify.notify_waiters();
+        self.tx.send_modify(|s| {
+            if s.reader_count > 0 {
+                s.reader_count -= 1;
+            }
+        });
     }
 
     pub fn try_start_cleanup(&self) -> bool {
-        let mut progress = self.progress.lock();
-        if progress.cleanup_started || !progress.completed || progress.reader_count > 0 {
-            return false;
-        }
-        progress.cleanup_started = true;
-        true
+        let mut result = false;
+        self.tx.send_modify(|s| {
+            if !s.cleanup_started && s.completed && s.reader_count == 0 {
+                s.cleanup_started = true;
+                result = true;
+            }
+        });
+        result
     }
 
     pub fn snapshot(&self) -> TarballInflightSnapshot {
-        let progress = self.progress.lock();
-        TarballInflightSnapshot {
-            ready: progress.ready,
-            bytes_written: progress.bytes_written,
-            content_length: progress.content_length,
-            completed: progress.completed,
-            error: progress.error.clone(),
-        }
+        self.tx.borrow().clone()
     }
 }
 
@@ -273,6 +256,52 @@ impl TarballInflightMap {
     }
 }
 
+#[derive(Clone, Default)]
+pub struct ExtractionInflightMap {
+    inner: Arc<DashMap<i64, watch::Sender<()>>>,
+}
+
+impl ExtractionInflightMap {
+    pub fn new() -> Self {
+        Self {
+            inner: Arc::new(DashMap::new()),
+        }
+    }
+
+    pub fn get_or_insert(&self, version_id: i64) -> (watch::Receiver<()>, bool) {
+        match self.inner.entry(version_id) {
+            Entry::Occupied(entry) => (entry.get().subscribe(), false),
+            Entry::Vacant(entry) => {
+                let (tx, rx) = watch::channel(());
+                entry.insert(tx);
+                (rx, true)
+            }
+        }
+    }
+
+    pub fn remove(&self, version_id: i64) {
+        self.inner.remove(&version_id);
+    }
+
+    pub fn guard(&self, version_id: i64) -> ExtractionGuard<'_> {
+        ExtractionGuard {
+            map: self,
+            version_id,
+        }
+    }
+}
+
+pub struct ExtractionGuard<'a> {
+    map: &'a ExtractionInflightMap,
+    version_id: i64,
+}
+
+impl Drop for ExtractionGuard<'_> {
+    fn drop(&mut self) {
+        self.map.remove(self.version_id);
+    }
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub repo: Arc<dyn Repository>,
@@ -283,6 +312,7 @@ pub struct AppState {
     pub tarball_downloads: TarballInflightMap,
     pub download_counters: Arc<DashMap<i64, AtomicU64>>,
     pub search: Option<Arc<SearchIndex>>,
+    pub extraction_inflight: ExtractionInflightMap,
 }
 
 impl AppState {
@@ -307,6 +337,7 @@ impl AppState {
             tarball_downloads: TarballInflightMap::new(),
             download_counters: Arc::new(DashMap::new()),
             search,
+            extraction_inflight: ExtractionInflightMap::new(),
         })
     }
 }

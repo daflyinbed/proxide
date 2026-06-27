@@ -1,11 +1,12 @@
 use crate::error::{WebError, WebResult};
-use crate::npm::types::{FastMetaFull, FastMetaResolved, FastMetaVersions, VersionMeta};
+use crate::npm::types::{
+    AbbreviatedPackument, FastMetaFull, FastMetaResolved, FastMetaVersions, Packument, VersionMeta,
+};
 use crate::repository::PackageRow;
 use crate::state::AppState;
 use axum::Json;
 use axum::extract::{Path, State};
 use semver::VersionReq;
-use serde_json::Value;
 use std::collections::HashMap;
 
 fn parse_specifier(pkg: &str) -> (String, String) {
@@ -17,11 +18,10 @@ fn parse_specifier(pkg: &str) -> (String, String) {
     (pkg.to_string(), "latest".to_string())
 }
 
-async fn load_packument(
+pub(crate) async fn load_abbreviated_packument(
     state: &AppState,
     fullname: &str,
-    use_full: bool,
-) -> WebResult<(PackageRow, Value)> {
+) -> WebResult<(PackageRow, AbbreviatedPackument)> {
     let pkg = state
         .repo
         .get_package_by_name(fullname)
@@ -29,12 +29,9 @@ async fn load_packument(
         .map_err(WebError::CustomApiError)?
         .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
 
-    let dist_id = if use_full {
-        pkg.full_dist_id
-    } else {
-        pkg.abbreviated_dist_id
-    }
-    .ok_or_else(|| WebError::CustomApiError(anyhow::anyhow!("manifest not synced")))?;
+    let dist_id = pkg
+        .abbreviated_dist_id
+        .ok_or_else(|| WebError::CustomApiError(anyhow::anyhow!("manifest not synced")))?;
 
     let (data, _) = state
         .repo
@@ -42,7 +39,34 @@ async fn load_packument(
         .await
         .map_err(WebError::CustomApiError)?;
 
-    let packument: Value =
+    let packument: AbbreviatedPackument =
+        serde_json::from_slice(&data).map_err(|e| WebError::CustomApiError(e.into()))?;
+
+    Ok((pkg, packument))
+}
+
+pub(crate) async fn load_full_packument(
+    state: &AppState,
+    fullname: &str,
+) -> WebResult<(PackageRow, Packument)> {
+    let pkg = state
+        .repo
+        .get_package_by_name(fullname)
+        .await
+        .map_err(WebError::CustomApiError)?
+        .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
+
+    let dist_id = pkg
+        .full_dist_id
+        .ok_or_else(|| WebError::CustomApiError(anyhow::anyhow!("manifest not synced")))?;
+
+    let (data, _) = state
+        .repo
+        .get_content(dist_id)
+        .await
+        .map_err(WebError::CustomApiError)?;
+
+    let packument: Packument =
         serde_json::from_slice(&data).map_err(|e| WebError::CustomApiError(e.into()))?;
 
     Ok((pkg, packument))
@@ -53,15 +77,17 @@ pub async fn resolve_version(
     Path(pkg): Path<String>,
 ) -> WebResult<Json<FastMetaResolved>> {
     let (fullname, specifier) = parse_specifier(&pkg);
-    let (_, packument) = load_packument(&state, &fullname, false).await?;
+    let (_, packument) = load_abbreviated_packument(&state, &fullname).await?;
 
-    let dist_tags = extract_dist_tags(&packument);
-    let versions = extract_version_list(&packument);
-
-    let resolved_version = resolve_specifier(&specifier, &dist_tags, &versions)
+    let versions: Vec<String> = packument.versions.keys().cloned().collect();
+    let resolved_version = resolve_specifier(&specifier, &packument.dist_tags, &versions)
         .ok_or_else(|| WebError::NotFound(format!("{fullname}@{specifier} not resolved")))?;
 
-    let published_at = get_time_field(packument.get("time"), &resolved_version);
+    let published_at = packument
+        .time
+        .as_ref()
+        .and_then(|t| t.get(&resolved_version))
+        .cloned();
 
     Ok(Json(FastMetaResolved {
         name: fullname,
@@ -77,10 +103,10 @@ pub async fn get_versions(
     Path(pkg): Path<String>,
 ) -> WebResult<Json<FastMetaVersions>> {
     let (fullname, specifier) = parse_specifier(&pkg);
-    let (_, packument) = load_packument(&state, &fullname, false).await?;
+    let (_, packument) = load_abbreviated_packument(&state, &fullname).await?;
 
-    let dist_tags = extract_dist_tags(&packument);
-    let all_versions = extract_version_list(&packument);
+    let dist_tags = packument.dist_tags.clone();
+    let all_versions: Vec<String> = packument.versions.keys().cloned().collect();
 
     let filtered = if specifier == "*" || specifier == "latest" {
         all_versions
@@ -102,13 +128,12 @@ pub async fn get_full(
     Path(pkg): Path<String>,
 ) -> WebResult<Json<FastMetaFull>> {
     let (fullname, _) = parse_specifier(&pkg);
-    let (_, packument) = load_packument(&state, &fullname, true).await?;
+    let (_, packument) = load_full_packument(&state, &fullname).await?;
 
-    let dist_tags = extract_dist_tags(&packument);
+    let dist_tags = packument.dist_tags.clone();
     let versions_meta = extract_versions_meta(&packument);
-    let time_obj = packument.get("time");
-    let time_created = get_time_field(time_obj, "created");
-    let time_modified = get_time_field(time_obj, "modified");
+    let time_created = packument.time.get("created").cloned();
+    let time_modified = packument.time.get("modified").cloned();
 
     Ok(Json(FastMetaFull {
         name: fullname,
@@ -120,64 +145,26 @@ pub async fn get_full(
     }))
 }
 
-fn extract_dist_tags(packument: &Value) -> HashMap<String, String> {
+fn extract_versions_meta(packument: &Packument) -> HashMap<String, VersionMeta> {
     packument
-        .get("dist-tags")
-        .and_then(|v| v.as_object())
-        .map(|obj| {
-            obj.iter()
-                .filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_string())))
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn extract_version_list(packument: &Value) -> Vec<String> {
-    packument
-        .get("versions")
-        .and_then(|v| v.as_object())
-        .map(|obj| obj.keys().cloned().collect())
-        .unwrap_or_default()
-}
-
-fn extract_versions_meta(packument: &Value) -> HashMap<String, VersionMeta> {
-    let Some(versions) = packument.get("versions").and_then(|v| v.as_object()) else {
-        return HashMap::new();
-    };
-    versions
+        .versions
         .iter()
-        .filter_map(|(ver, data)| Some((ver.clone(), build_version_meta(packument, ver, data)?)))
+        .map(|(ver, pv)| {
+            (
+                ver.clone(),
+                VersionMeta {
+                    time: packument.time.get(ver).cloned(),
+                    engines: pv.engines.clone(),
+                    deprecated: pv.deprecated.clone(),
+                    integrity: pv.dist.integrity.clone(),
+                    provenance: None,
+                },
+            )
+        })
         .collect()
 }
 
-fn build_version_meta(packument: &Value, ver: &str, data: &Value) -> Option<VersionMeta> {
-    let time = packument
-        .get("time")
-        .and_then(|t| t.get(ver))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    let engines = data
-        .get("engines")
-        .and_then(|e| serde_json::from_value(e.clone()).ok());
-    let deprecated = data
-        .get("deprecated")
-        .and_then(|d| d.as_str())
-        .map(|s| s.to_string());
-    let integrity = data
-        .get("dist")
-        .and_then(|d| d.get("integrity"))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    Some(VersionMeta {
-        time,
-        engines,
-        deprecated,
-        integrity,
-        provenance: None,
-    })
-}
-
-fn resolve_specifier(
+pub(crate) fn resolve_specifier(
     specifier: &str,
     dist_tags: &HashMap<String, String>,
     versions: &[String],
@@ -220,11 +207,4 @@ fn filter_versions_by_range(range: &str, versions: &[String]) -> Vec<String> {
     } else {
         versions.to_vec()
     }
-}
-
-fn get_time_field(time_obj: Option<&Value>, key: &str) -> Option<String> {
-    time_obj
-        .and_then(|t| t.get(key))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
 }

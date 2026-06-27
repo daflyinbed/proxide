@@ -44,10 +44,15 @@ pub fn build_router(state: AppState) -> Router {
             get(handlers::downloads::downloads_range),
         );
 
+    let jsdelivr_npm = Router::new().route("/{*rest}", get(handlers::cdn::serve_file));
+    let jsdelivr_api = Router::new().route("/{*rest}", get(handlers::data_api::version_files));
+
     Router::new()
         .route("/-/ping", get(handlers::home::ping))
         .nest("/npm", npm)
         .nest("/fast", fast)
         .nest("/api", api)
+        .nest("/jsdelivr/npm", jsdelivr_npm)
+        .nest("/jsdelivr/api/npm", jsdelivr_api)
         .with_state(state)
 }

@@ -1,0 +1,64 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT pvf.filepath AS `filepath`,\n                      pvf.content_type AS `content_type`,\n                      d.size AS `size`,\n                      d.shasum AS `shasum`,\n                      d.path AS `storage_path`\n               FROM package_version_files pvf\n               JOIN dists d ON d.id = pvf.dist_id\n               WHERE pvf.package_version_id = ? AND pvf.filepath = ?\n               LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "filepath",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL | NO_DEFAULT_VALUE",
+          "max_size": 3000
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "content_type",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL",
+          "max_size": 1020
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "size",
+        "type_info": {
+          "type": "LongLong",
+          "flags": "NOT_NULL",
+          "max_size": 20
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "shasum",
+        "type_info": {
+          "type": "VarString",
+          "flags": "",
+          "max_size": 512
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "storage_path",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL | NO_DEFAULT_VALUE",
+          "max_size": 4096
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "34642139c9c50be37a956b4415a0dccb5205e145e9be11385a19f17f0811d7c3"
+}

@@ -474,8 +474,15 @@ impl Repository for MysqlRepository {
     }
 
     async fn insert_version_files(&self, version_id: i64, files: &[NewVersionFile]) -> Result<()> {
+        const DISTS_NAME_MAX: usize = 512;
         let mut tx = self.pool.begin().await?;
         for f in files {
+            if f.filepath.chars().count() > DISTS_NAME_MAX {
+                anyhow::bail!(
+                    "filepath for version {version_id} exceeds {DISTS_NAME_MAX} chars: {}",
+                    f.filepath
+                );
+            }
             let dist_result = sqlx::query!(
                 r#"INSERT INTO dists (name, path, size, shasum, integrity) VALUES (?, ?, ?, ?, NULL)"#,
                 f.filepath,

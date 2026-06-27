@@ -231,13 +231,19 @@ impl SearchConfig {
 pub struct CdnConfig {
     pub enabled: bool,
     pub max_tarball_size: u64,
+    pub max_unpacked_size: u64,
+}
+
+fn default_max_unpacked_size() -> u64 {
+    209_715_200
 }
 
 impl Default for CdnConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            max_tarball_size: 52_428_800,
+            max_tarball_size: 104_857_600,
+            max_unpacked_size: default_max_unpacked_size(),
         }
     }
 }

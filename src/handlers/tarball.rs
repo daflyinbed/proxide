@@ -374,6 +374,15 @@ async fn run_tarball_producer(
                 .put(chunk.clone());
 
             bytes_written += chunk.len() as u64;
+            let max_tarball_size = state.config.cdn.max_tarball_size;
+            if bytes_written > max_tarball_size {
+                cache_file.flush().await.ok();
+                drop(std::mem::take(&mut upload));
+                let _ = fs::remove_file(&file_path).await;
+                return Err(TarballInflightError::Internal(format!(
+                    "tarball for {fullname}/-/{filename} exceeds cdn.maxTarballSize ({max_tarball_size})"
+                )));
+            }
             inflight.advance(bytes_written);
         }
 

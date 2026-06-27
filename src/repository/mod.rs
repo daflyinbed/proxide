@@ -48,7 +48,7 @@ pub struct DistRow {
     pub integrity: Option<String>,
 }
 
-#[derive(Debug, Clone, sqlx::FromRow)]
+#[derive(Debug, Clone)]
 pub struct VersionFileRow {
     pub filepath: String,
     pub content_type: String,

@@ -421,10 +421,10 @@ impl Repository for MysqlRepository {
     // ── package_version_files ──
 
     async fn has_version_files(&self, version_id: i64) -> Result<bool> {
-        let row: Option<(i64,)> = sqlx::query_as(
+        let row = sqlx::query_scalar!(
             "SELECT 1 FROM package_version_files WHERE package_version_id = ? LIMIT 1",
+            version_id
         )
-        .bind(version_id)
         .fetch_optional(&self.pool)
         .await?;
         Ok(row.is_some())
@@ -435,7 +435,8 @@ impl Repository for MysqlRepository {
         version_id: i64,
         filepath: &str,
     ) -> Result<Option<VersionFileRow>> {
-        let row = sqlx::query_as::<_, VersionFileRow>(
+        let row = sqlx::query_as!(
+            VersionFileRow,
             r#"SELECT pvf.filepath AS `filepath`,
                       pvf.content_type AS `content_type`,
                       d.size AS `size`,
@@ -445,16 +446,17 @@ impl Repository for MysqlRepository {
                JOIN dists d ON d.id = pvf.dist_id
                WHERE pvf.package_version_id = ? AND pvf.filepath = ?
                LIMIT 1"#,
+            version_id,
+            filepath
         )
-        .bind(version_id)
-        .bind(filepath)
         .fetch_optional(&self.pool)
         .await?;
         Ok(row)
     }
 
     async fn list_version_files(&self, version_id: i64) -> Result<Vec<VersionFileRow>> {
-        let rows = sqlx::query_as::<_, VersionFileRow>(
+        let rows = sqlx::query_as!(
+            VersionFileRow,
             r#"SELECT pvf.filepath AS `filepath`,
                       pvf.content_type AS `content_type`,
                       d.size AS `size`,
@@ -464,8 +466,8 @@ impl Repository for MysqlRepository {
                JOIN dists d ON d.id = pvf.dist_id
                WHERE pvf.package_version_id = ?
                ORDER BY pvf.filepath"#,
+            version_id
         )
-        .bind(version_id)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows)

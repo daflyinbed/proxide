@@ -107,7 +107,7 @@ pub(crate) async fn ensure_version_files_single_flight(
             return Ok(());
         }
 
-        let (notify, is_leader) = state.extraction_inflight.get_or_insert(version_id);
+        let (mut rx, is_leader) = state.extraction_inflight.get_or_insert(version_id);
         if is_leader {
             let result = extract::ensure_version_files(
                 state,
@@ -117,14 +117,9 @@ pub(crate) async fn ensure_version_files_single_flight(
             )
             .await;
             state.extraction_inflight.remove(version_id);
-            notify.notify_waiters();
             return result;
         } else {
-            let _ = tokio::time::timeout(
-                std::time::Duration::from_secs(5),
-                notify.notified(),
-            )
-            .await;
+            let _ = rx.changed().await;
         }
     }
 }

@@ -127,6 +127,14 @@ pub(crate) async fn ensure_version_files_single_flight(
         let (mut rx, is_leader) = state.extraction_inflight.get_or_insert(version_id);
         if is_leader {
             let _guard = state.extraction_inflight.guard(version_id);
+            if state
+                .repo
+                .has_version_files(version_id)
+                .await
+                .map_err(WebError::CustomApiError)?
+            {
+                return Ok(());
+            }
             return extract::ensure_version_files(
                 state,
                 fullname,

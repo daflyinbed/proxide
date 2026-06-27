@@ -126,7 +126,11 @@ pub(crate) async fn ensure_version_files_single_flight(
             notify.notify_waiters();
             return result;
         } else {
-            notify.notified().await;
+            let _ = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                notify.notified(),
+            )
+            .await;
         }
     }
 }

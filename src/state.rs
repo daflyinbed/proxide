@@ -282,6 +282,24 @@ impl ExtractionInflightMap {
     pub fn remove(&self, version_id: i64) {
         self.inner.remove(&version_id);
     }
+
+    pub fn guard(&self, version_id: i64) -> ExtractionGuard<'_> {
+        ExtractionGuard {
+            map: self,
+            version_id,
+        }
+    }
+}
+
+pub struct ExtractionGuard<'a> {
+    map: &'a ExtractionInflightMap,
+    version_id: i64,
+}
+
+impl Drop for ExtractionGuard<'_> {
+    fn drop(&mut self) {
+        self.map.remove(self.version_id);
+    }
 }
 
 #[derive(Clone)]

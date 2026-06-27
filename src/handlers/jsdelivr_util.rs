@@ -15,12 +15,29 @@ pub(crate) fn parse_pkg_spec_path(rest: &str) -> (String, String, String) {
         .decode_utf8_lossy()
         .to_string();
 
-    if let Some(at) = s
+    if s.is_empty() {
+        return (String::new(), "latest".to_string(), String::new());
+    }
+
+    let spec_end = if s.starts_with('@') {
+        match s.find('/') {
+            Some(first) => s[first + 1..]
+                .find('/')
+                .map(|second| first + 1 + second)
+                .unwrap_or(s.len()),
+            None => s.len(),
+        }
+    } else {
+        s.find('/').unwrap_or(s.len())
+    };
+
+    let at = s[..spec_end]
         .char_indices()
         .skip(1)
         .find(|(_, c)| *c == '@')
-        .map(|(i, _)| i)
-    {
+        .map(|(i, _)| i);
+
+    if let Some(at) = at {
         let fullname = s[..at].to_string();
         let after = &s[at + 1..];
         if let Some(slash) = after.find('/') {
@@ -109,15 +126,14 @@ pub(crate) async fn ensure_version_files_single_flight(
 
         let (mut rx, is_leader) = state.extraction_inflight.get_or_insert(version_id);
         if is_leader {
-            let result = extract::ensure_version_files(
+            let _guard = state.extraction_inflight.guard(version_id);
+            return extract::ensure_version_files(
                 state,
                 fullname,
                 &resolved.version_row,
                 &resolved.tarball_filename,
             )
             .await;
-            state.extraction_inflight.remove(version_id);
-            return result;
         } else {
             let _ = rx.changed().await;
         }
@@ -253,6 +269,14 @@ mod tests {
         assert_eq!(
             parse_pkg_spec_path("lodash@1.0.0/foo@bar.js"),
             ("lodash".to_string(), "1.0.0".to_string(), "foo@bar.js".to_string())
+        );
+    }
+
+    #[test]
+    fn latest_with_file_containing_at_sign() {
+        assert_eq!(
+            parse_pkg_spec_path("lodash/foo@bar.js"),
+            ("lodash".to_string(), "latest".to_string(), "foo@bar.js".to_string())
         );
     }
 

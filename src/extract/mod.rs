@@ -6,6 +6,7 @@ use crate::state::AppState;
 use anyhow::Result;
 use base64::Engine;
 use flate2::read::GzDecoder;
+use futures::StreamExt;
 use sha2::{Digest, Sha256};
 use std::io::Cursor;
 use std::io::Read;
@@ -35,13 +36,13 @@ pub async fn ensure_version_files(
         )));
     }
 
-    let entries = {
-        let tarball_bytes = tarball_bytes.clone();
-        tokio::task::spawn_blocking(move || extract_entries(tarball_bytes))
-            .await
-            .map_err(|e| WebError::CustomApiError(anyhow::anyhow!("extraction join failed: {e}")))?
-            .map_err(WebError::CustomApiError)?
-    };
+    let max_unpacked_size = state.config.cdn.max_unpacked_size;
+    let entries = tokio::task::spawn_blocking(move || {
+        extract_entries(tarball_bytes, max_unpacked_size)
+    })
+    .await
+    .map_err(|e| WebError::CustomApiError(anyhow::anyhow!("extraction join failed: {e}")))?
+    .map_err(WebError::CustomApiError)?;
 
     let version_id = version.id;
     let mut new_files = Vec::with_capacity(entries.len());
@@ -127,11 +128,36 @@ async fn acquire_tarball(
             resp.status()
         )));
     }
-    let bytes = resp
-        .bytes()
-        .await
-        .map_err(|e| WebError::CustomApiError(anyhow::anyhow!("tarball read failed: {e:#}")))?
-        .to_vec();
+
+    let limit = state.config.cdn.max_tarball_size;
+    if let Some(len) = resp.content_length()
+        && len > limit
+    {
+        return Err(WebError::BadRequest(format!(
+            "tarball for {fullname}/-/{tarball_filename} exceeds cdn.maxTarballSize ({len} > {limit})"
+        )));
+    }
+
+    let mut bytes = Vec::new();
+    let mut total: u64 = 0;
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk_result) = stream.next().await {
+        let chunk = chunk_result
+            .map_err(|e| WebError::CustomApiError(anyhow::anyhow!("tarball read failed: {e:#}")))?;
+        total += chunk.len() as u64;
+        if total > limit {
+            return Err(WebError::BadRequest(format!(
+                "tarball for {fullname}/-/{tarball_filename} exceeds cdn.maxTarballSize ({limit})"
+            )));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+
+    if bytes.len() as u64 > limit {
+        return Err(WebError::BadRequest(format!(
+            "tarball for {fullname}/-/{tarball_filename} exceeds cdn.maxTarballSize ({limit})"
+        )));
+    }
 
     state
         .repo
@@ -165,10 +191,11 @@ async fn acquire_tarball(
     Ok(bytes)
 }
 
-fn extract_entries(tarball_bytes: Vec<u8>) -> Result<Vec<ExtractedFile>> {
+fn extract_entries(tarball_bytes: Vec<u8>, max_unpacked_size: u64) -> Result<Vec<ExtractedFile>> {
     let decoder = GzDecoder::new(Cursor::new(tarball_bytes));
     let mut archive = Archive::new(decoder);
     let mut out = Vec::new();
+    let mut total: u64 = 0;
 
     for entry in archive.entries()? {
         let mut entry = entry?;
@@ -184,8 +211,20 @@ fn extract_entries(tarball_bytes: Vec<u8>) -> Result<Vec<ExtractedFile>> {
         if rel.split('/').any(|seg| seg == ".." || seg.is_empty()) {
             continue;
         }
+        let declared_size = entry.header().size().unwrap_or(0);
+        if total.saturating_add(declared_size) > max_unpacked_size {
+            anyhow::bail!(
+                "unpacked size exceeds cdn.maxUnpackedSize ({max_unpacked_size}) at {rel}"
+            );
+        }
         let mut bytes = Vec::new();
         entry.read_to_end(&mut bytes)?;
+        total = total.saturating_add(bytes.len() as u64);
+        if total > max_unpacked_size {
+            anyhow::bail!(
+                "unpacked size exceeds cdn.maxUnpackedSize ({max_unpacked_size}) at {rel}"
+            );
+        }
         let size = bytes.len() as i64;
         let hash = base64::engine::general_purpose::STANDARD.encode(Sha256::digest(&bytes));
         let content_type = content_type::guess(rel);

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use utoipa::ToSchema;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Packument {
@@ -227,19 +228,19 @@ pub struct ChangeRev {
     pub rev: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct RegistryInfo {
     pub db_name: String,
     pub doc_count: i64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct SyncResponse {
     pub ok: bool,
     pub log: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct FastMetaResolved {
     pub name: String,
     pub specifier: String,
@@ -250,7 +251,7 @@ pub struct FastMetaResolved {
     pub last_synced: Option<i64>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct FastMetaVersions {
     pub name: String,
     pub specifier: String,
@@ -260,7 +261,7 @@ pub struct FastMetaVersions {
     pub last_synced: Option<i64>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct FastMetaFull {
     pub name: String,
     pub dist_tags: HashMap<String, String>,
@@ -273,7 +274,7 @@ pub struct FastMetaFull {
     pub last_synced: Option<i64>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct VersionMeta {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub time: Option<String>,
@@ -287,7 +288,7 @@ pub struct VersionMeta {
     pub provenance: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct PublishPayload {
     pub name: String,
     #[serde(default)]
@@ -301,7 +302,7 @@ pub struct PublishPayload {
     pub readme: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct PublishVersion {
     pub name: String,
     pub version: String,
@@ -312,10 +313,11 @@ pub struct PublishVersion {
     #[serde(rename = "_id", default)]
     pub id: Option<String>,
     #[serde(flatten)]
+    #[schema(value_type = HashMap<String, serde_json::Value>)]
     pub other: serde_json::Map<String, serde_json::Value>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, ToSchema)]
 pub struct PublishDist {
     #[serde(default)]
     pub shasum: Option<String>,
@@ -323,7 +325,7 @@ pub struct PublishDist {
     pub integrity: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct PublishAttachment {
     #[serde(rename = "content_type", default)]
     pub content_type: Option<String>,
@@ -333,13 +335,13 @@ pub struct PublishAttachment {
     pub length: usize,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct PublishResponse {
     pub ok: bool,
     pub rev: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct LoginPayload {
     pub name: String,
     pub password: String,
@@ -355,7 +357,7 @@ pub struct LoginPayload {
     pub date: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct LoginResponse {
     pub ok: bool,
     pub id: String,

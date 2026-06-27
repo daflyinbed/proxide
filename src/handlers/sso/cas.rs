@@ -6,12 +6,28 @@ use axum::response::{Html, IntoResponse, Response};
 use quick_xml::Reader;
 use quick_xml::events::Event;
 use serde::Deserialize;
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct CasCallbackQuery {
     pub ticket: Option<String>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/auth/cas/callback/session/{sessionId}",
+    tag = "auth",
+    params(
+        ("sessionId" = String, Path, description = "Login session ID"),
+        ("ticket" = Option<String>, Query, description = "CAS service ticket"),
+    ),
+    responses(
+        (status = OK, description = "CAS authentication success HTML page", content_type = "text/html"),
+        (status = BAD_REQUEST, body = crate::error::ApiErrorDetail, description = "Missing ticket parameter"),
+        (status = UNAUTHORIZED, body = crate::error::ApiErrorDetail, description = "CAS authentication failed"),
+        (status = NOT_FOUND, body = crate::error::ApiErrorDetail, description = "Session not found"),
+    )
+)]
 pub async fn cas_callback(
     State(state): State<AppState>,
     Path(session_id): Path<String>,

@@ -1,4 +1,4 @@
-use crate::error::{WebError, WebResult};
+use crate::error::{ApiErrorDetail, WebError, WebResult};
 use crate::repository::PackageVersionRow;
 use crate::state::{AppState, TarballInflight, TarballInflightError};
 use axum::body::Body;
@@ -478,6 +478,20 @@ async fn run_tarball_producer(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/npm/{fullname}/-/{filename}",
+    tag = "tarball",
+    params(
+        ("fullname" = String, Path, description = "Full package name"),
+        ("filename" = String, Path, description = "Tarball filename, e.g. `lodash-4.17.21.tgz`"),
+    ),
+    responses(
+        (status = OK, description = "Tarball binary stream", content_type = "application/octet-stream"),
+        (status = BAD_REQUEST, body = ApiErrorDetail, description = "Not a tarball file"),
+        (status = NOT_FOUND, body = ApiErrorDetail, description = "Package / version / tarball not found"),
+    )
+)]
 pub async fn download_tarball_inner(
     state: &AppState,
     fullname: &str,

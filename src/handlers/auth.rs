@@ -1,4 +1,4 @@
-use crate::error::{WebError, WebResult};
+use crate::error::{ApiErrorDetail, WebError, WebResult};
 use crate::middleware::auth::{
     compute_password_integrity, generate_salt, hash_token, verify_password,
 };
@@ -8,6 +8,21 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 
+#[utoipa::path(
+    put,
+    path = "/npm/-/user/org.couchdb.user:{name}",
+    tag = "auth",
+    request_body = LoginPayload,
+    params(
+        ("name" = String, Path, description = "Username"),
+    ),
+    responses(
+        (status = CREATED, body = LoginResponse, description = "Login succeeded"),
+        (status = BAD_REQUEST, body = ApiErrorDetail, description = "Invalid request"),
+        (status = UNAUTHORIZED, body = ApiErrorDetail, description = "Invalid credentials"),
+        (status = FORBIDDEN, body = ApiErrorDetail, description = "Legacy login disabled, use CAS"),
+    )
+)]
 pub async fn login(
     State(state): State<AppState>,
     Path(name): Path<String>,

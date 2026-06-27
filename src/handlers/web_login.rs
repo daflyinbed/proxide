@@ -1,24 +1,35 @@
-use crate::error::{WebError, WebResult};
+use crate::error::{ApiErrorDetail, WebError, WebResult};
 use crate::state::{AppState, LoginSession};
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 const SESSION_TTL_SECS: i64 = 300;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct WebLoginResponse {
     pub login_url: String,
     pub done_url: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct LoginRequestBody {
     pub hostname: Option<String>,
 }
 
+#[utoipa::path(
+    post,
+    path = "/npm/-/v1/login",
+    tag = "auth",
+    request_body = LoginRequestBody,
+    responses(
+        (status = OK, body = WebLoginResponse, description = "Login session created with CAS login URL"),
+        (status = BAD_REQUEST, body = ApiErrorDetail, description = "Web login not enabled"),
+    )
+)]
 pub async fn init_login(
     State(state): State<AppState>,
     Json(_body): Json<LoginRequestBody>,
@@ -49,6 +60,19 @@ pub async fn init_login(
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/npm/-/v1/login/done/session/{sessionId}",
+    tag = "auth",
+    params(
+        ("sessionId" = String, Path, description = "Login session ID"),
+    ),
+    responses(
+        (status = OK, description = "Login complete, returns token JSON", content_type = "application/json"),
+        (status = ACCEPTED, description = "Still processing, poll again (Retry-After: 5)"),
+        (status = UNAUTHORIZED, body = ApiErrorDetail, description = "Session not found or expired"),
+    )
+)]
 pub async fn poll_done(
     State(state): State<AppState>,
     Path(session_id): Path<String>,

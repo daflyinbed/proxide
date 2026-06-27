@@ -1,4 +1,4 @@
-use crate::error::{WebError, WebResult};
+use crate::error::{ApiErrorDetail, WebError, WebResult};
 use crate::middleware::auth::{AuthContext, is_admin};
 use crate::npm::types::*;
 use crate::npm::{
@@ -84,6 +84,23 @@ fn validate_package_name(name: &str) -> WebResult<()> {
     Ok(())
 }
 
+#[utoipa::path(
+    put,
+    path = "/npm/{fullname}",
+    tag = "publish",
+    request_body = PublishPayload,
+    params(
+        ("fullname" = String, Path, description = "Full package name"),
+    ),
+    responses(
+        (status = OK, body = PublishResponse, description = "Publish succeeded"),
+        (status = BAD_REQUEST, body = ApiErrorDetail, description = "Invalid payload"),
+        (status = UNAUTHORIZED, body = ApiErrorDetail, description = "Authentication required"),
+        (status = FORBIDDEN, body = ApiErrorDetail, description = "Not authorized to publish"),
+        (status = CONFLICT, body = ApiErrorDetail, description = "Version already exists or package is locked"),
+    ),
+    security(("bearerAuth" = []))
+)]
 #[allow(clippy::too_many_arguments)]
 pub async fn publish_package_inner(
     state: &AppState,

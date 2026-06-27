@@ -1,17 +1,18 @@
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::npm::split_scope_name;
 use crate::npm::types::{Maintainer, Packument, Person};
 use crate::repository::{PackageDownloadRow, UpstreamPackageDownloadRow};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct SearchDocument {
     pub id: String,
     pub package: PackageDoc,
     pub downloads: DownloadsDoc,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PackageDoc {
     pub name: String,
     pub version: String,
@@ -46,7 +47,7 @@ pub struct PackageDoc {
     pub publish_time: Option<i64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct MaintainerDoc {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -55,7 +56,7 @@ pub struct MaintainerDoc {
     pub username: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct AuthorDoc {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -67,7 +68,7 @@ pub struct AuthorDoc {
     pub username: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct NpmUserDoc {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -75,7 +76,7 @@ pub struct NpmUserDoc {
     pub email: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct DownloadsDoc {
     pub upstream: u64,
     pub local: u64,

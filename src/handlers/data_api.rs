@@ -9,14 +9,29 @@ use axum::extract::{Path, Query, State};
 use axum::response::{IntoResponse, Redirect, Response};
 use serde::Serialize;
 use std::collections::BTreeMap;
+use utoipa::ToSchema;
 
 const CACHE_META: &str = "public, s-maxage=600, max-age=60";
 
-#[derive(Debug, Default, serde::Deserialize)]
+#[derive(Debug, Default, serde::Deserialize, utoipa::IntoParams)]
 pub struct StructureQuery {
     pub structure: Option<String>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/jsdelivr/api/npm/{rest}",
+    tag = "cdn",
+    params(
+        ("rest" = String, Path, description = "`{pkg}@{version}` — e.g. `lodash@4.17.21`"),
+        StructureQuery,
+    ),
+    responses(
+        (status = OK, description = "File tree (or flat list with `?structure=flat`)", content_type = "application/json"),
+        (status = MOVED_PERMANENTLY, description = "Redirect to resolved version"),
+        (status = NOT_FOUND, body = crate::error::ApiErrorDetail, description = "Package not found"),
+    )
+)]
 pub async fn version_files(
     State(state): State<AppState>,
     Path(rest): Path<String>,
@@ -79,14 +94,14 @@ fn flat_file(f: &VersionFileRow) -> FlatFile {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 struct FlatFile {
     name: String,
     hash: String,
     size: i64,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 struct TreeNode {
     #[serde(rename = "type")]
     node_type: &'static str,

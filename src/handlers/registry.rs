@@ -1,4 +1,4 @@
-use crate::error::{WebError, WebResult};
+use crate::error::{ApiErrorDetail, WebError, WebResult};
 use crate::npm::types::RegistryInfo;
 use crate::state::AppState;
 use axum::Json;
@@ -34,6 +34,14 @@ async fn load_manifest_json(
     Ok((json, shasum))
 }
 
+#[utoipa::path(
+    get,
+    path = "/npm/",
+    tag = "registry",
+    responses(
+        (status = OK, body = RegistryInfo, description = "Registry metadata"),
+    )
+)]
 pub async fn registry_root(State(state): State<AppState>) -> WebResult<Json<RegistryInfo>> {
     let count = state
         .repo
@@ -46,6 +54,18 @@ pub async fn registry_root(State(state): State<AppState>) -> WebResult<Json<Regi
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/npm/{fullname}",
+    tag = "registry",
+    params(
+        ("fullname" = String, Path, description = "Full package name, e.g. `lodash` or `@babel/core`"),
+    ),
+    responses(
+        (status = OK, description = "Package packument (full or abbreviated depending on Accept header)", content_type = "application/json"),
+        (status = NOT_FOUND, body = ApiErrorDetail, description = "Package not found"),
+    )
+)]
 pub async fn get_package_inner(
     state: &AppState,
     headers: &HeaderMap,
@@ -79,6 +99,19 @@ pub async fn get_package_inner(
     Ok(Json(json).into_response())
 }
 
+#[utoipa::path(
+    get,
+    path = "/npm/{fullname}/{version}",
+    tag = "registry",
+    params(
+        ("fullname" = String, Path, description = "Full package name"),
+        ("version" = String, Path, description = "Semver version"),
+    ),
+    responses(
+        (status = OK, description = "Version manifest", content_type = "application/json"),
+        (status = NOT_FOUND, body = ApiErrorDetail, description = "Package or version not found"),
+    )
+)]
 pub async fn get_package_version_inner(
     state: &AppState,
     fullname: &str,

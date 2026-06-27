@@ -1,15 +1,16 @@
-use crate::error::{WebError, WebResult};
+use crate::error::{ApiErrorDetail, WebError, WebResult};
 use crate::search::SearchDocument;
 use crate::state::AppState;
 use axum::Json;
 use axum::extract::{Query, State};
 use serde::{Deserialize, Serialize};
+use utoipa::{IntoParams, ToSchema};
 
 const DEFAULT_SIZE: usize = 20;
 const MAX_SIZE: usize = 250;
 const MAX_FROM: usize = 10000;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, IntoParams)]
 pub struct SearchQuery {
     pub text: String,
     #[serde(default)]
@@ -22,12 +23,23 @@ fn default_size() -> usize {
     DEFAULT_SIZE
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct SearchResponse {
     pub objects: Vec<SearchDocument>,
     pub total: usize,
 }
 
+#[utoipa::path(
+    get,
+    path = "/npm/-/v1/search",
+    tag = "search",
+    params(SearchQuery),
+    responses(
+        (status = OK, body = SearchResponse, description = "Search results"),
+        (status = BAD_REQUEST, body = ApiErrorDetail, description = "text is required"),
+        (status = NOT_IMPLEMENTED, body = ApiErrorDetail, description = "Search not enabled"),
+    )
+)]
 pub async fn search_packages(
     State(state): State<AppState>,
     Query(q): Query<SearchQuery>,

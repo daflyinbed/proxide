@@ -1,4 +1,4 @@
-use crate::error::{WebError, WebResult};
+use crate::error::{ApiErrorDetail, WebError, WebResult};
 use crate::repository::{PackageDownloadRow, UpstreamPackageDownloadRow};
 use crate::state::AppState;
 use axum::extract::Path;
@@ -6,8 +6,9 @@ use axum::Json;
 use chrono::{Datelike, NaiveDate};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use utoipa::ToSchema;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DownloadsPoint {
     pub downloads: u64,
@@ -16,7 +17,7 @@ pub struct DownloadsPoint {
     pub end: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DownloadsRange {
     pub package: String,
@@ -25,7 +26,7 @@ pub struct DownloadsRange {
     pub downloads: Vec<DayDownloads>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DayDownloads {
     pub day: String,
@@ -294,6 +295,19 @@ async fn ensure_upstream_cache(
     Ok(())
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/downloads/point/{rest}",
+    tag = "downloads",
+    params(
+        ("rest" = String, Path, description = "`{range}/{fullname}` — e.g. `last-week/lodash`, `2024-01-01:2024-06-30/@babel/core`"),
+    ),
+    responses(
+        (status = OK, body = DownloadsPoint, description = "Total download count for the range"),
+        (status = BAD_REQUEST, body = ApiErrorDetail, description = "Invalid range"),
+        (status = NOT_FOUND, body = ApiErrorDetail, description = "Package not found"),
+    )
+)]
 pub async fn downloads_point(
     axum::extract::State(state): axum::extract::State<AppState>,
     Path(rest): Path<String>,
@@ -363,6 +377,19 @@ pub async fn downloads_point(
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/downloads/range/{rest}",
+    tag = "downloads",
+    params(
+        ("rest" = String, Path, description = "`{range}/{fullname}` — e.g. `last-month/lodash`, `2024-01-01:2024-06-30/@babel/core`"),
+    ),
+    responses(
+        (status = OK, body = DownloadsRange, description = "Per-day download counts for the range"),
+        (status = BAD_REQUEST, body = ApiErrorDetail, description = "Invalid range"),
+        (status = NOT_FOUND, body = ApiErrorDetail, description = "Package not found"),
+    )
+)]
 pub async fn downloads_range(
     axum::extract::State(state): axum::extract::State<AppState>,
     Path(rest): Path<String>,

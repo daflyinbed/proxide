@@ -72,6 +72,18 @@ pub(crate) async fn load_full_packument(
     Ok((pkg, packument))
 }
 
+#[utoipa::path(
+    get,
+    path = "/fast/resolve/{pkg}",
+    tag = "fast-meta",
+    params(
+        ("pkg" = String, Path, description = "Package spec, e.g. `lodash@4.17.21` or `@babel/core@latest`"),
+    ),
+    responses(
+        (status = OK, body = FastMetaResolved, description = "Resolved version"),
+        (status = NOT_FOUND, body = crate::error::ApiErrorDetail, description = "Package or specifier not resolved"),
+    )
+)]
 pub async fn resolve_version(
     State(state): State<AppState>,
     Path(pkg): Path<String>,
@@ -98,6 +110,18 @@ pub async fn resolve_version(
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/fast/versions/{pkg}",
+    tag = "fast-meta",
+    params(
+        ("pkg" = String, Path, description = "Package spec, e.g. `lodash@^4` or `@babel/core`"),
+    ),
+    responses(
+        (status = OK, body = FastMetaVersions, description = "Matching versions"),
+        (status = NOT_FOUND, body = crate::error::ApiErrorDetail, description = "Package not found"),
+    )
+)]
 pub async fn get_versions(
     State(state): State<AppState>,
     Path(pkg): Path<String>,
@@ -123,6 +147,18 @@ pub async fn get_versions(
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/fast/full/{pkg}",
+    tag = "fast-meta",
+    params(
+        ("pkg" = String, Path, description = "Package name, e.g. `lodash` or `@babel/core`"),
+    ),
+    responses(
+        (status = OK, body = FastMetaFull, description = "Full package metadata"),
+        (status = NOT_FOUND, body = crate::error::ApiErrorDetail, description = "Package not found"),
+    )
+)]
 pub async fn get_full(
     State(state): State<AppState>,
     Path(pkg): Path<String>,

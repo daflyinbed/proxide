@@ -513,6 +513,9 @@ impl Repository for MysqlRepository {
         if version_ids.is_empty() {
             return Ok(Vec::new());
         }
+        // sqlx::query! / query_as! require a fixed SQL string at compile time.
+        // The IN clause here contains one placeholder per runtime version id,
+        // so the query must be assembled dynamically.
         let placeholders: Vec<String> = version_ids.iter().map(|_| "?".to_string()).collect();
         let sql = format!(
             "SELECT d.id, d.path FROM package_version_files pvf JOIN dists d ON d.id = pvf.dist_id WHERE pvf.package_version_id IN ({})",

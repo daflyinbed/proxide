@@ -1,8 +1,6 @@
 use crate::error::{WebError, WebResult};
 use crate::extract;
-use crate::handlers::fast_meta::{
-    extract_dist_tags, extract_version_list, load_packument, resolve_specifier,
-};
+use crate::handlers::fast_meta::{load_abbreviated_packument, resolve_specifier};
 use crate::repository::PackageVersionRow;
 use crate::state::AppState;
 
@@ -65,12 +63,10 @@ pub(crate) async fn resolve_version(
     fullname: &str,
     spec: &str,
 ) -> WebResult<ResolvedVersion> {
-    let (pkg, packument) = load_packument(state, fullname, false).await?;
+    let (pkg, packument) = load_abbreviated_packument(state, fullname).await?;
 
-    let dist_tags = extract_dist_tags(&packument);
-    let versions = extract_version_list(&packument);
-
-    let resolved = resolve_specifier(spec, &dist_tags, &versions)
+    let versions: Vec<String> = packument.versions.keys().cloned().collect();
+    let resolved = resolve_specifier(spec, &packument.dist_tags, &versions)
         .ok_or_else(|| WebError::NotFound(format!("{fullname}@{spec} not resolved")))?;
 
     let version_row = state
@@ -80,15 +76,13 @@ pub(crate) async fn resolve_version(
         .map_err(WebError::CustomApiError)?
         .ok_or_else(|| WebError::NotFound(format!("{fullname}@{resolved} not found")))?;
 
-    let tarball_filename = packument
-        .get("versions")
-        .and_then(|v| v.get(&resolved))
-        .and_then(|v| v.get("dist"))
-        .and_then(|d| d.get("tarball"))
-        .and_then(|t| t.as_str())
-        .and_then(|url| url.rsplit('/').next())
-        .map(|s| s.to_string())
-        .ok_or_else(|| WebError::NotFound(format!("no tarball for {fullname}@{resolved}")))?;
+    let tarball_url = &packument
+        .versions
+        .get(&resolved)
+        .ok_or_else(|| WebError::NotFound(format!("no tarball for {fullname}@{resolved}")))?
+        .dist
+        .tarball;
+    let tarball_filename = tarball_url.rsplit('/').next().unwrap_or(tarball_url).to_string();
 
     Ok(ResolvedVersion {
         version_row,

@@ -1,3 +1,5 @@
+use sqlx::Row;
+
 pub mod mysql;
 
 use crate::npm::types::Maintainer;
@@ -16,7 +18,7 @@ pub struct PackageRow {
     pub full_dist_id: Option<i64>,
 }
 
-#[derive(Debug, Clone, sqlx::FromRow)]
+#[derive(Debug, Clone)]
 pub struct PackageVersionRow {
     pub id: i64,
     pub package_id: i64,
@@ -28,6 +30,26 @@ pub struct PackageVersionRow {
     pub publish_time: chrono::NaiveDateTime,
     pub is_pre_release: bool,
     pub padding_version: Option<String>,
+}
+
+impl<'r> sqlx::FromRow<'r, sqlx::mysql::MySqlRow> for PackageVersionRow {
+    fn from_row(row: &'r sqlx::mysql::MySqlRow) -> sqlx::Result<Self> {
+        Ok(Self {
+            id: row.try_get("id")?,
+            package_id: row.try_get("package_id")?,
+            version: row.try_get("version")?,
+            abbrev_dist_id: row.try_get("abbrev_dist_id")?,
+            manifest_dist_id: row.try_get("manifest_dist_id")?,
+            tar_dist_id: row.try_get("tar_dist_id")?,
+            readme_dist_id: row.try_get("readme_dist_id")?,
+            publish_time: row.try_get("publish_time")?,
+            is_pre_release: {
+                let v: i8 = row.try_get("is_pre_release")?;
+                v != 0
+            },
+            padding_version: row.try_get("padding_version")?,
+        })
+    }
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]

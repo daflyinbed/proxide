@@ -9,6 +9,8 @@ const TARBALL_BASE64 =
   "+2OgkK2Q8DssFPi/IHpU9fz3/+xj5NjDf8QFE39VmE4JDfzPCBn4P4X6/f88f/Pu47zomiPk2Lv/dOv8" +
   "h+P/34/D/p9CL+Kp67mrGDRo0KBBp9ZPsETQegASAAA=";
 
+export const TARBALL_BYTES = Buffer.from(TARBALL_BASE64, "base64");
+
 const TARBALL_LENGTH = 512;
 
 export interface PublishPayloadOpts {

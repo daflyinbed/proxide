@@ -318,7 +318,7 @@ impl Repository for MysqlRepository {
         }
         let placeholders: Vec<String> = keep_versions.iter().map(|_| "?".to_string()).collect();
         let sql = format!(
-            "SELECT id, package_id, version, abbrev_dist_id, manifest_dist_id, tar_dist_id, readme_dist_id, publish_time, is_pre_release as \"is_pre_release: bool\", padding_version FROM package_versions WHERE package_id = ? AND version NOT IN ({})",
+            "SELECT id, package_id, version, abbrev_dist_id, manifest_dist_id, tar_dist_id, readme_dist_id, publish_time, is_pre_release, padding_version FROM package_versions WHERE package_id = ? AND version NOT IN ({})",
             placeholders.join(",")
         );
         let mut query = sqlx::query_as::<_, PackageVersionRow>(&sql).bind(package_id);
@@ -397,7 +397,8 @@ impl Repository for MysqlRepository {
                FROM dists d
                LEFT JOIN packages p ON p.abbreviated_dist_id = d.id OR p.full_dist_id = d.id
                LEFT JOIN package_versions pv ON pv.abbrev_dist_id = d.id OR pv.manifest_dist_id = d.id OR pv.tar_dist_id = d.id OR pv.readme_dist_id = d.id
-               WHERE p.id IS NULL AND pv.id IS NULL"#
+               LEFT JOIN package_version_files pvf ON pvf.dist_id = d.id
+               WHERE p.id IS NULL AND pv.id IS NULL AND pvf.id IS NULL"#
         )
         .fetch_all(&self.pool)
         .await?;

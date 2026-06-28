@@ -1,7 +1,10 @@
 use crate::handlers;
+use crate::openapi::ApiDoc;
 use crate::state::AppState;
 use axum::Router;
 use axum::routing::{get, post, put};
+use utoipa::OpenApi;
+use utoipa_scalar::{Scalar, Servable};
 
 pub fn build_router(state: AppState) -> Router {
     let npm = Router::new()
@@ -49,6 +52,7 @@ pub fn build_router(state: AppState) -> Router {
 
     Router::new()
         .route("/-/ping", get(handlers::home::ping))
+        .merge(Scalar::with_url("/docs", ApiDoc::openapi()))
         .nest("/npm", npm)
         .nest("/fast", fast)
         .nest("/api", api)

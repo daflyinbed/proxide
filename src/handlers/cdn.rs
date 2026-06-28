@@ -13,6 +13,20 @@ use reqwest::StatusCode;
 const CACHE_FILE: &str = "public, max-age=31536000";
 const ZSTD_SUFFIX: &str = ".zst";
 
+#[utoipa::path(
+    get,
+    tag = "cdn",
+    path = "/jsdelivr/npm/{rest}",
+    params(
+        ("rest" = String, Path, description = "Package spec and file path, e.g. lodash@4.17.21/lodash.js"),
+    ),
+    responses(
+        (status = OK, description = "File content (binary stream)"),
+        (status = TEMPORARY_REDIRECT, description = "Redirect to resolved version"),
+        (status = NOT_FOUND, body = crate::error::ApiErrorDetail),
+        (status = INTERNAL_SERVER_ERROR, body = crate::error::ApiErrorDetail),
+    ),
+)]
 pub async fn serve_file(
     State(state): State<AppState>,
     Path(rest): Path<String>,

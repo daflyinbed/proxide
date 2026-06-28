@@ -8,6 +8,22 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 
+#[utoipa::path(
+    put,
+    tag = "auth",
+    path = "/npm/-/user/org.couchdb.user:{name}",
+    request_body = LoginPayload,
+    params(
+        ("name" = String, Path, description = "CouchDB user name"),
+    ),
+    responses(
+        (status = CREATED, description = "Login successful", body = LoginResponse),
+        (status = BAD_REQUEST, body = crate::error::ApiErrorDetail),
+        (status = UNAUTHORIZED, body = crate::error::ApiErrorDetail),
+        (status = FORBIDDEN, body = crate::error::ApiErrorDetail),
+        (status = INTERNAL_SERVER_ERROR, body = crate::error::ApiErrorDetail),
+    ),
+)]
 pub async fn login(
     State(state): State<AppState>,
     Path(name): Path<String>,

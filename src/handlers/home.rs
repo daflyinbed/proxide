@@ -6,7 +6,12 @@ use utoipa::ToSchema;
 pub struct Ping {}
 
 #[debug_handler]
-#[utoipa::path(get, path = "/-/ping", responses((status = OK, body = Ping)))]
+#[utoipa::path(
+    get,
+    tag = "misc",
+    path = "/-/ping",
+    responses((status = OK, body = Ping)),
+)]
 pub async fn ping() -> Json<Ping> {
     Json(Ping {})
 }

@@ -54,15 +54,9 @@ pub fn build_abbreviated_version_entry(
         .then_some(true)
         .or_else(|| detect_install_script(ver));
 
-    let libc = ver
-        .other
-        .get("libc")
-        .and_then(|v| serde_json::from_value(v.clone()).ok());
-    let workspaces = ver.other.get("workspaces").cloned();
-    let accept_dependencies = ver
-        .other
-        .get("acceptDependencies")
-        .and_then(|v| serde_json::from_value(v.clone()).ok());
+    let libc = ver.libc.clone();
+    let workspaces = ver.workspaces.clone();
+    let accept_dependencies = ver.accept_dependencies.clone();
 
     let publish_time = publish_time_str.and_then(|t| {
         chrono::NaiveDateTime::parse_from_str(t, "%Y-%m-%dT%H:%M:%S%.f")

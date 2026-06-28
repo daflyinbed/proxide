@@ -5,7 +5,6 @@ use axum::Json;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::IntoResponse;
-
 const ABBREVIATED_ACCEPT: &str = "application/vnd.npm.install-v1+json";
 
 fn is_abbreviated_request(headers: &HeaderMap) -> bool {
@@ -34,6 +33,15 @@ async fn load_manifest_json(
     Ok((json, shasum))
 }
 
+#[utoipa::path(
+    get,
+    tag = "registry",
+    path = "/npm/",
+    responses(
+        (status = OK, description = "Registry info", body = RegistryInfo),
+        (status = INTERNAL_SERVER_ERROR, body = crate::error::ApiErrorDetail),
+    ),
+)]
 pub async fn registry_root(State(state): State<AppState>) -> WebResult<Json<RegistryInfo>> {
     let count = state
         .repo

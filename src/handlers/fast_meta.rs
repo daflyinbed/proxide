@@ -72,6 +72,19 @@ pub(crate) async fn load_full_packument(
     Ok((pkg, packument))
 }
 
+#[utoipa::path(
+    get,
+    tag = "fast-meta",
+    path = "/fast/resolve/{pkg}",
+    params(
+        ("pkg" = String, Path, description = "Package name with optional @version specifier"),
+    ),
+    responses(
+        (status = OK, description = "Resolved version info", body = FastMetaResolved),
+        (status = NOT_FOUND, body = crate::error::ApiErrorDetail),
+        (status = INTERNAL_SERVER_ERROR, body = crate::error::ApiErrorDetail),
+    ),
+)]
 pub async fn resolve_version(
     State(state): State<AppState>,
     Path(pkg): Path<String>,
@@ -98,6 +111,19 @@ pub async fn resolve_version(
     }))
 }
 
+#[utoipa::path(
+    get,
+    tag = "fast-meta",
+    path = "/fast/versions/{pkg}",
+    params(
+        ("pkg" = String, Path, description = "Package name with optional @version specifier"),
+    ),
+    responses(
+        (status = OK, description = "Matching versions", body = FastMetaVersions),
+        (status = NOT_FOUND, body = crate::error::ApiErrorDetail),
+        (status = INTERNAL_SERVER_ERROR, body = crate::error::ApiErrorDetail),
+    ),
+)]
 pub async fn get_versions(
     State(state): State<AppState>,
     Path(pkg): Path<String>,
@@ -123,6 +149,19 @@ pub async fn get_versions(
     }))
 }
 
+#[utoipa::path(
+    get,
+    tag = "fast-meta",
+    path = "/fast/full/{pkg}",
+    params(
+        ("pkg" = String, Path, description = "Package name"),
+    ),
+    responses(
+        (status = OK, description = "Full package metadata", body = FastMetaFull),
+        (status = NOT_FOUND, body = crate::error::ApiErrorDetail),
+        (status = INTERNAL_SERVER_ERROR, body = crate::error::ApiErrorDetail),
+    ),
+)]
 pub async fn get_full(
     State(state): State<AppState>,
     Path(pkg): Path<String>,

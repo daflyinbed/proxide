@@ -1,6 +1,6 @@
 {
   "db_name": "MySQL",
-  "query": "SELECT id, token_key, name, user_id, is_readonly as \"is_readonly: bool\", allowed_scopes, cidr_whitelist, expired_at, created_at, last_used_at FROM tokens WHERE token_key = ?",
+  "query": "SELECT id, token_key, name, user_id, is_readonly as \"is_readonly: bool\", allowed_scopes, cidr_whitelist, expired_at, created_at, updated_at, last_used_at FROM tokens WHERE user_id = ? ORDER BY id DESC",
   "describe": {
     "columns": [
       {
@@ -86,6 +86,15 @@
       },
       {
         "ordinal": 9,
+        "name": "updated_at",
+        "type_info": {
+          "type": "Datetime",
+          "flags": "NOT_NULL | BINARY",
+          "max_size": 19
+        }
+      },
+      {
+        "ordinal": 10,
         "name": "last_used_at",
         "type_info": {
           "type": "Datetime",
@@ -107,8 +116,9 @@
       true,
       true,
       false,
+      false,
       true
     ]
   },
-  "hash": "61b4e00b2c37913945440540317d9589a3b32e5ecdc43b470bd5fc88333842a7"
+  "hash": "25e00e2702738fc27144d78bd1d9ef0442c9873c17c906e472e998131eda7cb5"
 }

@@ -908,7 +908,7 @@ impl Repository for MysqlRepository {
     async fn find_token_by_key(&self, token_key: &str) -> Result<Option<TokenRow>> {
         let row = sqlx::query_as!(
             TokenRow,
-            r#"SELECT id, token_key, name, user_id, is_readonly as "is_readonly: bool", allowed_scopes, cidr_whitelist, expired_at, created_at, last_used_at FROM tokens WHERE token_key = ?"#,
+            r#"SELECT id, token_key, name, user_id, is_readonly as "is_readonly: bool", allowed_scopes, cidr_whitelist, expired_at, created_at, updated_at, last_used_at FROM tokens WHERE token_key = ?"#,
             token_key
         )
         .fetch_optional(&self.pool)
@@ -919,7 +919,7 @@ impl Repository for MysqlRepository {
     async fn list_tokens_by_user(&self, user_id: i64) -> Result<Vec<TokenRow>> {
         let rows = sqlx::query_as!(
             TokenRow,
-            r#"SELECT id, token_key, name, user_id, is_readonly as "is_readonly: bool", allowed_scopes, cidr_whitelist, expired_at, created_at, last_used_at FROM tokens WHERE user_id = ? ORDER BY id DESC"#,
+            r#"SELECT id, token_key, name, user_id, is_readonly as "is_readonly: bool", allowed_scopes, cidr_whitelist, expired_at, created_at, updated_at, last_used_at FROM tokens WHERE user_id = ? ORDER BY id DESC"#,
             user_id
         )
         .fetch_all(&self.pool)

@@ -39,7 +39,7 @@ fn token_object(row: &TokenRow, masked: bool) -> TokenObject {
         cidr_whitelist: parse_cidrs(&row.cidr_whitelist),
         readonly: row.is_readonly,
         created: Some(to_iso(row.created_at)),
-        updated: Some(to_iso(row.created_at)),
+        updated: Some(to_iso(row.updated_at)),
         last_used_at: to_iso_opt(row.last_used_at),
     }
 }
@@ -150,11 +150,12 @@ pub async fn create_token(
 ) -> WebResult<Json<TokenObject>> {
     let auth = validate_auth(&state, &headers).await?;
 
-    if let (Some(salt), Some(integrity)) = (auth.user.password_salt.as_deref(), auth.user.password_integrity.as_deref()) {
-        let password = body.password.as_deref().unwrap_or("");
-        if !verify_password(salt, integrity, password) {
-            return Err(WebError::Unauthorized("Invalid password".to_string()));
-        }
+    let (Some(salt), Some(integrity)) = (auth.user.password_salt.as_deref(), auth.user.password_integrity.as_deref())
+        else { return Err(WebError::Forbidden("Password verification unavailable for this account".to_string())); };
+
+    let password = body.password.as_deref().unwrap_or("");
+    if !verify_password(salt, integrity, password) {
+        return Err(WebError::Unauthorized("Invalid password".to_string()));
     }
 
     let cidr = body.cidr_whitelist.unwrap_or_default();

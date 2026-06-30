@@ -47,6 +47,9 @@ pub async fn validate_auth_any(state: &AppState, headers: &HeaderMap) -> WebResu
         .map_err(WebError::CustomApiError)?
         .ok_or_else(|| WebError::Unauthorized("Invalid token".to_string()))?;
 
+    // TODO: enforce cidr_whitelist — resolve client IP (X-Forwarded-For / ConnectInfo)
+    // and match against token_row.cidr_whitelist. Mirrors cnpmcore which also stores
+    // the field without enforcing; enabling here would be an enhancement over both.
     if let Some(expired) = token_row.expired_at
         && expired < chrono::Utc::now().naive_utc()
     {

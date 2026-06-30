@@ -76,7 +76,7 @@ pub async fn cas_callback(
 
     state
         .repo
-        .create_token(&token_key, "web-login", user_id, false, None, None)
+        .create_token(&token_key, "web-login", user_id, false, None, None, None)
         .await
         .map_err(WebError::CustomApiError)?;
 

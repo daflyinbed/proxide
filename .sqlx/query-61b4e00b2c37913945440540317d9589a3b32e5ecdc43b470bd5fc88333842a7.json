@@ -1,6 +1,6 @@
 {
   "db_name": "MySQL",
-  "query": "SELECT id, token_key, name, user_id, is_readonly as \"is_readonly: bool\", allowed_scopes, expired_at FROM tokens WHERE token_key = ?",
+  "query": "SELECT id, token_key, name, user_id, is_readonly as \"is_readonly: bool\", allowed_scopes, cidr_whitelist, expired_at, created_at, last_used_at FROM tokens WHERE token_key = ?",
   "describe": {
     "columns": [
       {
@@ -59,7 +59,34 @@
       },
       {
         "ordinal": 6,
+        "name": "cidr_whitelist",
+        "type_info": {
+          "type": "Blob",
+          "flags": "BLOB",
+          "max_size": 262140
+        }
+      },
+      {
+        "ordinal": 7,
         "name": "expired_at",
+        "type_info": {
+          "type": "Datetime",
+          "flags": "BINARY",
+          "max_size": 19
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "created_at",
+        "type_info": {
+          "type": "Datetime",
+          "flags": "NOT_NULL | BINARY",
+          "max_size": 19
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "last_used_at",
         "type_info": {
           "type": "Datetime",
           "flags": "BINARY",
@@ -77,8 +104,11 @@
       false,
       false,
       true,
+      true,
+      true,
+      false,
       true
     ]
   },
-  "hash": "f4690e8035e6ccfc1cc4e3248594d7b6affc09826bc1dffaff55d7f9565ae7c9"
+  "hash": "61b4e00b2c37913945440540317d9589a3b32e5ecdc43b470bd5fc88333842a7"
 }

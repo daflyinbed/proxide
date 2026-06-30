@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO tokens (token_key, name, user_id, is_readonly, allowed_scopes, cidr_whitelist, expired_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "48cea3566b51a6ed34849ad2e294478bd770e3e9a99c321b22f33475bc537fd4"
+}

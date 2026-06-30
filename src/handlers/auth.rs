@@ -85,7 +85,7 @@ pub async fn login(
 
     state
         .repo
-        .create_token(&token_key, "default", user_id, false, None, None)
+        .create_token(&token_key, "default", user_id, false, None, None, None)
         .await
         .map_err(WebError::CustomApiError)?;
 

@@ -12,4 +12,5 @@ pub mod search;
 pub mod sso;
 pub mod sync;
 pub mod tarball;
+pub mod tokens;
 pub mod web_login;

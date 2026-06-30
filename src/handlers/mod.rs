@@ -1,3 +1,4 @@
+pub mod access;
 pub mod auth;
 pub mod cdn;
 pub mod data_api;
@@ -6,6 +7,7 @@ pub mod fast_meta;
 pub mod home;
 pub mod jsdelivr_util;
 pub mod package_dispatch;
+pub mod profile;
 pub mod publish;
 pub mod registry;
 pub mod search;

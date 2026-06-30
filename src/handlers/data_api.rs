@@ -64,20 +64,15 @@ pub async fn version_files(
 
     let flat = matches!(query.structure.as_deref(), Some("flat"));
 
-    let body = if flat {
-        serde_json::json!({
-            "type": "npm",
-            "name": fullname,
-            "version": resolved.resolved,
-            "files": files.iter().map(flat_file).collect::<Vec<_>>(),
-        })
-    } else {
-        serde_json::json!({
-            "type": "npm",
-            "name": fullname,
-            "version": resolved.resolved,
-            "files": build_tree(&files),
-        })
+    let body = VersionFilesResponse {
+        kind: "npm",
+        name: fullname,
+        version: resolved.resolved,
+        files: if flat {
+            VersionFiles::Flat(files.iter().map(flat_file).collect())
+        } else {
+            VersionFiles::Tree(build_tree(&files))
+        },
     };
 
     let mut response = Json(body).into_response();
@@ -113,6 +108,22 @@ struct TreeNode {
     hash: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     size: Option<i64>,
+}
+
+#[derive(Serialize, ToSchema)]
+struct VersionFilesResponse {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    name: String,
+    version: String,
+    files: VersionFiles,
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(untagged)]
+enum VersionFiles {
+    Flat(Vec<FlatFile>),
+    Tree(Vec<TreeNode>),
 }
 
 enum BuilderNode {

@@ -805,6 +805,16 @@ pub struct TokenListResponse {
     pub urls: serde_json::Value,
 }
 
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct UserProfile {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    pub email_verified: bool,
+    pub created: String,
+    pub updated: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

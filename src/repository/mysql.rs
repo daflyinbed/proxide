@@ -840,7 +840,7 @@ impl Repository for MysqlRepository {
     async fn get_user_by_name(&self, name: &str) -> Result<Option<UserRow>> {
         let row = sqlx::query_as!(
             UserRow,
-            r#"SELECT id, name, email, upstream_name, password_salt, password_integrity FROM users WHERE name = ? AND upstream_name = ''"#,
+            r#"SELECT id, name, email, upstream_name, password_salt, password_integrity, created_at FROM users WHERE name = ? AND upstream_name = ''"#,
             name
         )
         .fetch_optional(&self.pool)
@@ -851,7 +851,7 @@ impl Repository for MysqlRepository {
     async fn get_user_by_id(&self, id: i64) -> Result<Option<UserRow>> {
         let row = sqlx::query_as!(
             UserRow,
-            r#"SELECT id, name, email, upstream_name, password_salt, password_integrity FROM users WHERE id = ?"#,
+            r#"SELECT id, name, email, upstream_name, password_salt, password_integrity, created_at FROM users WHERE id = ?"#,
             id
         )
         .fetch_optional(&self.pool)
@@ -894,7 +894,7 @@ impl Repository for MysqlRepository {
         .await?;
         let row = sqlx::query_as!(
             UserRow,
-            r#"SELECT id, name, email, upstream_name, password_salt, password_integrity FROM users WHERE name = ? AND upstream_name = ?"#,
+            r#"SELECT id, name, email, upstream_name, password_salt, password_integrity, created_at FROM users WHERE name = ? AND upstream_name = ?"#,
             name,
             upstream_name
         )
@@ -1041,6 +1041,19 @@ impl Repository for MysqlRepository {
                 email: r.email,
             })
             .collect())
+    }
+
+    async fn list_packages_by_user_id(&self, user_id: i64) -> Result<Vec<PackageRow>> {
+        let rows = sqlx::query_as!(
+            PackageRow,
+            r#"SELECT p.id, p.name, p.scope, p.description, p.source, p.abbreviated_dist_id, p.full_dist_id
+               FROM packages p JOIN maintainers m ON m.package_id = p.id
+               WHERE m.user_id = ? ORDER BY p.id"#,
+            user_id
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
     }
 
     // ── sync_tasks ──

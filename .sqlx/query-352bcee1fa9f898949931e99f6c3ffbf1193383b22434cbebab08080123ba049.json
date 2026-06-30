@@ -1,6 +1,6 @@
 {
   "db_name": "MySQL",
-  "query": "SELECT id, name, email, upstream_name, password_salt, password_integrity FROM users WHERE name = ? AND upstream_name = ?",
+  "query": "SELECT id, name, email, upstream_name, password_salt, password_integrity, created_at FROM users WHERE name = ? AND upstream_name = ?",
   "describe": {
     "columns": [
       {
@@ -56,6 +56,15 @@
           "flags": "",
           "max_size": 2048
         }
+      },
+      {
+        "ordinal": 6,
+        "name": "created_at",
+        "type_info": {
+          "type": "Datetime",
+          "flags": "NOT_NULL | BINARY",
+          "max_size": 19
+        }
       }
     ],
     "parameters": {
@@ -67,8 +76,9 @@
       true,
       false,
       true,
-      true
+      true,
+      false
     ]
   },
-  "hash": "70473ab57ddca6bb830763dcd207833e54dd7f56d1801d51ab58944c56a4fa39"
+  "hash": "352bcee1fa9f898949931e99f6c3ffbf1193383b22434cbebab08080123ba049"
 }

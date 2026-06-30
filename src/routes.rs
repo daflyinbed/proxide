@@ -17,6 +17,9 @@ pub fn build_router(state: AppState) -> axum::Router {
         .routes(routes!(handlers::tokens::logout))
         .routes(routes!(handlers::tokens::list_tokens, handlers::tokens::create_token))
         .routes(routes!(handlers::tokens::revoke_token))
+        .routes(routes!(handlers::profile::get_profile, handlers::profile::update_profile))
+        .routes(routes!(handlers::access::list_collaborators))
+        .routes(routes!(handlers::access::list_packages_by_user))
         .fallback(handlers::package_dispatch::dispatch);
 
     let fast = OpenApiRouter::new()
@@ -64,7 +67,10 @@ mod tests {
             .routes(routes!(handlers::tokens::whoami))
             .routes(routes!(handlers::tokens::logout))
             .routes(routes!(handlers::tokens::list_tokens, handlers::tokens::create_token))
-            .routes(routes!(handlers::tokens::revoke_token));
+            .routes(routes!(handlers::tokens::revoke_token))
+            .routes(routes!(handlers::profile::get_profile, handlers::profile::update_profile))
+            .routes(routes!(handlers::access::list_collaborators))
+            .routes(routes!(handlers::access::list_packages_by_user));
         let fast = OpenApiRouter::new()
             .routes(routes!(handlers::fast_meta::resolve_version))
             .routes(routes!(handlers::fast_meta::get_versions))
@@ -105,6 +111,9 @@ mod tests {
             "/npm/-/v1/search",
             "/npm/-/npm/v1/tokens",
             "/npm/-/npm/v1/tokens/token/{key}",
+            "/npm/-/npm/v1/user",
+            "/npm/-/package/{fullname}/collaborators",
+            "/npm/-/org/{username}/package",
             "/npm/{fullname}",
             "/npm/{fullname}/{version}",
             "/npm/{fullname}/-/{filename}",

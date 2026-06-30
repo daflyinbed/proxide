@@ -760,9 +760,6 @@ pub struct LoginResponse {
     pub token: String,
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Token & identity types
-// ═══════════════════════════════════════════════════════════════════════════
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct WhoAmIResponse {

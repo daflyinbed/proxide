@@ -171,6 +171,21 @@ mod tests {
     }
 }
 
+pub async fn dispatch(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    req: Request,
+) -> WebResult<Response> {
+    let method = req.method().clone();
+    match method {
+        axum::http::Method::GET => dispatch_get(State(state), headers, req).await,
+        axum::http::Method::PUT => dispatch_put(State(state), headers, req).await,
+        _ => Err(WebError::MethodNotAllowed(format!(
+            "method {method} not supported"
+        ))),
+    }
+}
+
 pub async fn dispatch_get(
     State(state): State<AppState>,
     headers: HeaderMap,

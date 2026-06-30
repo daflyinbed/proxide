@@ -5,20 +5,31 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 const SESSION_TTL_SECS: i64 = 300;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct WebLoginResponse {
     pub login_url: String,
     pub done_url: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct LoginRequestBody {
     pub hostname: Option<String>,
 }
 
+#[utoipa::path(
+    post,
+    tag = "auth",
+    path = "/-/v1/login",
+    request_body = LoginRequestBody,
+    responses(
+        (status = OK, description = "Login session created", body = WebLoginResponse),
+        (status = BAD_REQUEST, body = crate::error::ApiErrorDetail),
+    ),
+)]
 pub async fn init_login(
     State(state): State<AppState>,
     Json(_body): Json<LoginRequestBody>,
@@ -49,6 +60,19 @@ pub async fn init_login(
     }))
 }
 
+#[utoipa::path(
+    get,
+    tag = "auth",
+    path = "/-/v1/login/done/session/{sessionId}",
+    params(
+        ("sessionId" = String, Path, description = "Login session ID"),
+    ),
+    responses(
+        (status = OK, description = "Login completed, returns token"),
+        (status = ACCEPTED, description = "Login still processing"),
+        (status = UNAUTHORIZED, body = crate::error::ApiErrorDetail),
+    ),
+)]
 pub async fn poll_done(
     State(state): State<AppState>,
     Path(session_id): Path<String>,

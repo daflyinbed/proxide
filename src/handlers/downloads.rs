@@ -6,8 +6,9 @@ use axum::Json;
 use chrono::{Datelike, NaiveDate};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use utoipa::ToSchema;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DownloadsPoint {
     pub downloads: u64,
@@ -16,7 +17,7 @@ pub struct DownloadsPoint {
     pub end: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DownloadsRange {
     pub package: String,
@@ -25,7 +26,7 @@ pub struct DownloadsRange {
     pub downloads: Vec<DayDownloads>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DayDownloads {
     pub day: String,
@@ -294,6 +295,20 @@ async fn ensure_upstream_cache(
     Ok(())
 }
 
+#[utoipa::path(
+    get,
+    tag = "downloads",
+    path = "/downloads/point/{*rest}",
+    params(
+        ("rest" = String, Path, description = "{range}/{package}, e.g. last-week/lodash or 2024-01-01:2024-03-01/@babel/core"),
+    ),
+    responses(
+        (status = OK, description = "Total download count", body = DownloadsPoint),
+        (status = BAD_REQUEST, body = crate::error::ApiErrorDetail),
+        (status = NOT_FOUND, body = crate::error::ApiErrorDetail),
+        (status = INTERNAL_SERVER_ERROR, body = crate::error::ApiErrorDetail),
+    ),
+)]
 pub async fn downloads_point(
     axum::extract::State(state): axum::extract::State<AppState>,
     Path(rest): Path<String>,
@@ -363,6 +378,20 @@ pub async fn downloads_point(
     }))
 }
 
+#[utoipa::path(
+    get,
+    tag = "downloads",
+    path = "/downloads/range/{*rest}",
+    params(
+        ("rest" = String, Path, description = "{range}/{package}, e.g. last-week/lodash or 2024-01-01:2024-03-01/@babel/core"),
+    ),
+    responses(
+        (status = OK, description = "Daily download counts", body = DownloadsRange),
+        (status = BAD_REQUEST, body = crate::error::ApiErrorDetail),
+        (status = NOT_FOUND, body = crate::error::ApiErrorDetail),
+        (status = INTERNAL_SERVER_ERROR, body = crate::error::ApiErrorDetail),
+    ),
+)]
 pub async fn downloads_range(
     axum::extract::State(state): axum::extract::State<AppState>,
     Path(rest): Path<String>,

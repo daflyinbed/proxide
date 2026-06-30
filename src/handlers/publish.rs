@@ -234,10 +234,7 @@ pub async fn publish_package_inner(
     let description = payload
         .description
         .as_deref()
-        .or(package_version
-            .other
-            .get("description")
-            .and_then(|v| v.as_str()))
+        .or(package_version.description.as_deref())
         .map(|s| if s.len() > 10240 { &s[..10240] } else { s });
 
     let (package_id, existing_source) = state
@@ -327,38 +324,25 @@ pub async fn publish_package_inner(
         id: None,
         name: fullname.clone(),
         version: version_str.clone(),
+        description: package_version.description.clone(),
+        keywords: package_version.keywords.clone(),
+        homepage: package_version.homepage.clone(),
+        license: package_version.license.clone(),
+        repository: package_version.repository.clone(),
+        author: package_version.author.clone(),
+        bugs: package_version.bugs.clone(),
+        contributors: package_version.contributors.clone(),
+        readme_filename: package_version.readme_filename.clone(),
         deprecated: package_version.deprecated.clone(),
-        dependencies: package_version
-            .other
-            .get("dependencies")
-            .and_then(|v| serde_json::from_value(v.clone()).ok())
-            .unwrap_or_default(),
-        dev_dependencies: package_version
-            .other
-            .get("devDependencies")
-            .and_then(|v| serde_json::from_value(v.clone()).ok())
-            .unwrap_or_default(),
-        optional_dependencies: package_version
-            .other
-            .get("optionalDependencies")
-            .and_then(|v| serde_json::from_value(v.clone()).ok())
-            .unwrap_or_default(),
-        peer_dependencies: package_version
-            .other
-            .get("peerDependencies")
-            .and_then(|v| serde_json::from_value(v.clone()).ok())
-            .unwrap_or_default(),
-        peer_dependencies_meta: package_version
-            .other
-            .get("peerDependenciesMeta")
-            .and_then(|v| serde_json::from_value(v.clone()).ok())
-            .unwrap_or_default(),
-        bundle_dependencies: package_version
-            .other
-            .get("bundleDependencies")
-            .and_then(|v| serde_json::from_value(v.clone()).ok()),
-        bin: package_version.other.get("bin").cloned(),
-        directories: package_version.other.get("directories").cloned(),
+        dependencies: package_version.dependencies.clone(),
+        dev_dependencies: package_version.dev_dependencies.clone(),
+        optional_dependencies: package_version.optional_dependencies.clone(),
+        peer_dependencies: package_version.peer_dependencies.clone(),
+        peer_dependencies_meta: package_version.peer_dependencies_meta.clone(),
+        bundle_dependencies: package_version.bundle_dependencies.clone(),
+        bin: package_version.bin.clone(),
+        directories: package_version.directories.clone(),
+        man: package_version.man.clone(),
         dist: Dist {
             shasum: Some(shasum.clone()),
             tarball: format!(
@@ -370,24 +354,15 @@ pub async fn publish_package_inner(
             unpacked_size: None,
             npm_signature: None,
         },
-        engines: package_version
-            .other
-            .get("engines")
-            .and_then(|v| serde_json::from_value(v.clone()).ok()),
-        _has_shrinkwrap: package_version
-            .other
-            .get("_hasShrinkwrap")
-            .and_then(|v| v.as_bool()),
+        engines: package_version.engines.clone(),
         has_install_script: None,
-        funding: package_version.other.get("funding").cloned(),
-        cpu: package_version
-            .other
-            .get("cpu")
-            .and_then(|v| serde_json::from_value(v.clone()).ok()),
-        os: package_version
-            .other
-            .get("os")
-            .and_then(|v| serde_json::from_value(v.clone()).ok()),
+        _has_shrinkwrap: package_version._has_shrinkwrap,
+        funding: package_version.funding.clone(),
+        cpu: package_version.cpu.clone(),
+        os: package_version.os.clone(),
+        libc: package_version.libc.clone(),
+        workspaces: package_version.workspaces.clone(),
+        accept_dependencies: package_version.accept_dependencies.clone(),
         _npm_user: Some(Person {
             name: Some(auth.user.name.clone()),
             email: auth.user.email.clone(),
@@ -395,66 +370,29 @@ pub async fn publish_package_inner(
         }),
         _npm_version: None,
         _node_version: None,
-        main: package_version
-            .other
-            .get("main")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        module: package_version
-            .other
-            .get("module")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        types: package_version
-            .other
-            .get("types")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        typings: package_version
-            .other
-            .get("typings")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        exports: package_version.other.get("exports").cloned(),
-        scripts: package_version
-            .other
-            .get("scripts")
-            .and_then(|v| serde_json::from_value(v.clone()).ok()),
-        other: serde_json::Map::from_iter(
-            package_version
-                .other
-                .iter()
-                .filter(|(k, _)| {
-                    !matches!(
-                        k.as_str(),
-                        "name"
-                            | "version"
-                            | "deprecated"
-                            | "dependencies"
-                            | "devDependencies"
-                            | "optionalDependencies"
-                            | "peerDependencies"
-                            | "peerDependenciesMeta"
-                            | "bundleDependencies"
-                            | "bin"
-                            | "directories"
-                            | "engines"
-                            | "_hasShrinkwrap"
-                            | "funding"
-                            | "cpu"
-                            | "os"
-                            | "main"
-                            | "module"
-                            | "types"
-                            | "typings"
-                            | "exports"
-                            | "scripts"
-                            | "description"
-                            | "dist"
-                    )
-                })
-                .map(|(k, v)| (k.clone(), v.clone())),
-        ),
+        main: package_version.main.clone(),
+        module: package_version.module.clone(),
+        types: package_version.types.clone(),
+        typings: package_version.typings.clone(),
+        module_type: package_version.module_type.clone(),
+        browser: package_version.browser.clone(),
+        exports: package_version.exports.clone(),
+        imports: package_version.imports.clone(),
+        scripts: package_version.scripts.clone(),
+        config: package_version.config.clone(),
+        files: package_version.files.clone(),
+        publish_config: package_version.publish_config.clone(),
+        is_private: package_version.is_private,
+        prefer_global: package_version.prefer_global,
+        git_head: package_version.git_head.clone(),
+        types_versions: package_version.types_versions.clone(),
+        side_effects: package_version.side_effects.clone(),
+        unpkg: package_version.unpkg.clone(),
+        jsdelivr: package_version.jsdelivr.clone(),
+        jsnext_main: package_version.jsnext_main.clone(),
+        package_manager: package_version.package_manager.clone(),
+        overrides: package_version.overrides.clone(),
+        resolutions: package_version.resolutions.clone(),
     };
 
     let abbrev_data = build_abbreviated_version(&fullname, &abbrev_ver);
@@ -617,27 +555,15 @@ async fn refresh_manifests(
 
     let (author, keywords, homepage, license, repository, bugs, contributors, readme_filename) =
         if let Some(latest) = latest_version {
-            let author = latest.other.get("author").cloned();
-            let keywords = latest.other.get("keywords").cloned();
-            let homepage = latest.other.get("homepage").cloned();
-            let license = latest.other.get("license").cloned();
-            let repository = latest.other.get("repository").cloned();
-            let bugs = latest.other.get("bugs").cloned();
-            let contributors = latest.other.get("contributors").cloned();
-            let readme_filename = latest
-                .other
-                .get("readmeFilename")
-                .and_then(|v| v.as_str())
-                .map(String::from);
             (
-                author,
-                keywords,
-                homepage,
-                license,
-                repository,
-                bugs,
-                contributors,
-                readme_filename,
+                latest.author.clone(),
+                latest.keywords.clone(),
+                latest.homepage.clone(),
+                latest.license.clone(),
+                latest.repository.clone(),
+                latest.bugs.clone(),
+                latest.contributors.clone(),
+                latest.readme_filename.clone(),
             )
         } else {
             (None, None, None, None, None, None, None, None)
@@ -685,7 +611,6 @@ async fn refresh_manifests(
         bugs,
         contributors,
         users: None,
-        other: Default::default(),
     };
     let full_manifest_bytes = serde_json::to_vec(&full_manifest).unwrap_or_default();
 

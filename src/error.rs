@@ -1,6 +1,7 @@
 use axum::{Json, response::IntoResponse};
 use reqwest::StatusCode;
 use serde::Serialize;
+use utoipa::ToSchema;
 
 #[derive(thiserror::Error, Debug)]
 pub enum WebError {
@@ -24,9 +25,12 @@ pub enum WebError {
 
     #[error("[NOT_IMPLEMENTED] {0}")]
     NotImplemented(String),
+
+    #[error("[METHOD_NOT_ALLOWED] {0}")]
+    MethodNotAllowed(String),
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ApiErrorDetail {
     error: String,
 }
@@ -49,6 +53,7 @@ impl WebError {
             Self::Forbidden(..) => StatusCode::FORBIDDEN,
             Self::Conflict(..) => StatusCode::CONFLICT,
             Self::NotImplemented(..) => StatusCode::NOT_IMPLEMENTED,
+            Self::MethodNotAllowed(..) => StatusCode::METHOD_NOT_ALLOWED,
         }
     }
 }

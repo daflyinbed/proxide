@@ -4,6 +4,7 @@ pub mod extract;
 pub mod handlers;
 pub mod middleware;
 pub mod npm;
+pub mod openapi;
 pub mod repository;
 pub mod routes;
 pub mod search;

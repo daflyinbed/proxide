@@ -4,6 +4,18 @@ use crate::state::AppState;
 use axum::Json;
 use axum::extract::{Path, State};
 
+#[utoipa::path(
+    put,
+    tag = "registry",
+    path = "/-/package/{fullname}/syncs",
+    params(
+        ("fullname" = String, Path, description = "Full package name"),
+    ),
+    responses(
+        (status = OK, description = "Sync task enqueued", body = SyncResponse),
+        (status = INTERNAL_SERVER_ERROR, body = crate::error::ApiErrorDetail),
+    ),
+)]
 pub async fn trigger_sync(
     State(state): State<AppState>,
     Path(fullname): Path<String>,

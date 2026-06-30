@@ -1,17 +1,18 @@
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::npm::split_scope_name;
-use crate::npm::types::{Maintainer, Packument, Person};
+use crate::npm::types::{Author, License, Maintainer, Packument, Person, StringOrList};
 use crate::repository::{PackageDownloadRow, UpstreamPackageDownloadRow};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct SearchDocument {
     pub id: String,
     pub package: PackageDoc,
     pub downloads: DownloadsDoc,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PackageDoc {
     pub name: String,
     pub version: String,
@@ -46,7 +47,7 @@ pub struct PackageDoc {
     pub publish_time: Option<i64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct MaintainerDoc {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -55,7 +56,7 @@ pub struct MaintainerDoc {
     pub username: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct AuthorDoc {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -67,7 +68,7 @@ pub struct AuthorDoc {
     pub username: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct NpmUserDoc {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -75,7 +76,7 @@ pub struct NpmUserDoc {
     pub email: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct DownloadsDoc {
     pub upstream: u64,
     pub local: u64,
@@ -102,7 +103,7 @@ pub fn build_search_document(
         .as_ref()
         .map(|ms| ms.iter().map(maintainer_to_doc).collect())
         .unwrap_or_default();
-    let author = packument.author.as_ref().and_then(value_to_author_doc);
+    let author = packument.author.as_ref().and_then(author_to_doc);
 
     let date = latest_version.and_then(|v| packument.time.get(v)).cloned();
     let created = packument.time.get("created").cloned();
@@ -183,24 +184,15 @@ fn sum_local_row_downloads(row: &PackageDownloadRow) -> u64 {
     ])
 }
 
-fn extract_keywords(value: &Option<serde_json::Value>) -> Vec<String> {
-    match value {
-        Some(serde_json::Value::Array(arr)) => arr
-            .iter()
-            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-            .collect(),
-        Some(serde_json::Value::String(s)) => vec![s.clone()],
-        _ => Vec::new(),
-    }
+fn extract_keywords(value: &Option<StringOrList>) -> Vec<String> {
+    value.as_ref().map(|v| v.to_vec()).unwrap_or_default()
 }
 
-fn extract_license(value: &Option<serde_json::Value>) -> Option<String> {
+fn extract_license(value: &Option<License>) -> Option<String> {
     match value {
-        Some(serde_json::Value::String(s)) => Some(s.clone()),
-        Some(serde_json::Value::Object(obj)) => {
-            obj.get("type").and_then(|v| v.as_str()).map(|s| s.to_string())
-        }
-        _ => None,
+        Some(License::Spdx(s)) => Some(s.clone()),
+        Some(License::Object { typ, .. }) => typ.clone(),
+        None => None,
     }
 }
 
@@ -219,24 +211,20 @@ fn person_to_npm_user(p: &Person) -> NpmUserDoc {
     }
 }
 
-fn value_to_author_doc(value: &serde_json::Value) -> Option<AuthorDoc> {
-    match value {
-        serde_json::Value::String(s) => Some(AuthorDoc {
+fn author_to_doc(author: &Author) -> Option<AuthorDoc> {
+    match author {
+        Author::Person(p) => Some(AuthorDoc {
+            name: p.name.clone(),
+            email: p.email.clone(),
+            url: p.url.clone(),
+            username: p.name.clone(),
+        }),
+        Author::Name(s) => Some(AuthorDoc {
             name: Some(s.clone()),
             email: None,
             url: None,
             username: Some(s.clone()),
         }),
-        serde_json::Value::Object(obj) => {
-            let name = obj.get("name").and_then(|v| v.as_str()).map(|s| s.to_string());
-            Some(AuthorDoc {
-                username: name.clone(),
-                name,
-                email: obj.get("email").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                url: obj.get("url").and_then(|v| v.as_str()).map(|s| s.to_string()),
-            })
-        }
-        _ => None,
     }
 }
 

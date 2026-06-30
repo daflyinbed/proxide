@@ -4,12 +4,13 @@ use crate::state::AppState;
 use axum::Json;
 use axum::extract::{Query, State};
 use serde::{Deserialize, Serialize};
+use utoipa::{IntoParams, ToSchema};
 
 const DEFAULT_SIZE: usize = 20;
 const MAX_SIZE: usize = 250;
 const MAX_FROM: usize = 10000;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, IntoParams)]
 pub struct SearchQuery {
     pub text: String,
     #[serde(default)]
@@ -22,12 +23,23 @@ fn default_size() -> usize {
     DEFAULT_SIZE
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct SearchResponse {
     pub objects: Vec<SearchDocument>,
     pub total: usize,
 }
 
+#[utoipa::path(
+    get,
+    tag = "search",
+    path = "/-/v1/search",
+    params(SearchQuery),
+    responses(
+        (status = OK, description = "Search results", body = SearchResponse),
+        (status = BAD_REQUEST, body = crate::error::ApiErrorDetail),
+        (status = NOT_IMPLEMENTED, body = crate::error::ApiErrorDetail),
+    ),
+)]
 pub async fn search_packages(
     State(state): State<AppState>,
     Query(q): Query<SearchQuery>,

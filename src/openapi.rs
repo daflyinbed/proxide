@@ -72,7 +72,6 @@ fn _download_tarball() {}
         (status = CONFLICT, body = ApiErrorDetail),
         (status = INTERNAL_SERVER_ERROR, body = ApiErrorDetail),
     ),
-    security(("bearerAuth" = [])),
 )]
 #[allow(dead_code)]
 fn _publish_package() {}

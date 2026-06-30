@@ -180,7 +180,7 @@ pub async fn dispatch(
     match method {
         axum::http::Method::GET => dispatch_get(State(state), headers, req).await,
         axum::http::Method::PUT => dispatch_put(State(state), headers, req).await,
-        _ => Err(WebError::NotFound(format!(
+        _ => Err(WebError::MethodNotAllowed(format!(
             "method {method} not supported"
         ))),
     }

@@ -25,6 +25,9 @@ pub enum WebError {
 
     #[error("[NOT_IMPLEMENTED] {0}")]
     NotImplemented(String),
+
+    #[error("[METHOD_NOT_ALLOWED] {0}")]
+    MethodNotAllowed(String),
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -50,6 +53,7 @@ impl WebError {
             Self::Forbidden(..) => StatusCode::FORBIDDEN,
             Self::Conflict(..) => StatusCode::CONFLICT,
             Self::NotImplemented(..) => StatusCode::NOT_IMPLEMENTED,
+            Self::MethodNotAllowed(..) => StatusCode::METHOD_NOT_ALLOWED,
         }
     }
 }

@@ -11,7 +11,7 @@ use axum::http::StatusCode;
 #[utoipa::path(
     put,
     tag = "auth",
-    path = "/npm/-/user/org.couchdb.user:{name}",
+    path = "/-/user/org.couchdb.user:{name}",
     request_body = LoginPayload,
     params(
         ("name" = String, Path, description = "CouchDB user name"),

@@ -7,7 +7,7 @@ use axum::extract::{Path, State};
 #[utoipa::path(
     put,
     tag = "registry",
-    path = "/npm/-/package/{fullname}/syncs",
+    path = "/-/package/{fullname}/syncs",
     params(
         ("fullname" = String, Path, description = "Full package name"),
     ),

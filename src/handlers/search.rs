@@ -32,7 +32,7 @@ pub struct SearchResponse {
 #[utoipa::path(
     get,
     tag = "search",
-    path = "/npm/-/v1/search",
+    path = "/-/v1/search",
     params(SearchQuery),
     responses(
         (status = OK, description = "Search results", body = SearchResponse),

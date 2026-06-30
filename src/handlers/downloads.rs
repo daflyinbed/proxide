@@ -298,7 +298,7 @@ async fn ensure_upstream_cache(
 #[utoipa::path(
     get,
     tag = "downloads",
-    path = "/api/downloads/point/{rest}",
+    path = "/downloads/point/{*rest}",
     params(
         ("rest" = String, Path, description = "{range}/{package}, e.g. last-week/lodash or 2024-01-01:2024-03-01/@babel/core"),
     ),
@@ -381,7 +381,7 @@ pub async fn downloads_point(
 #[utoipa::path(
     get,
     tag = "downloads",
-    path = "/api/downloads/range/{rest}",
+    path = "/downloads/range/{*rest}",
     params(
         ("rest" = String, Path, description = "{range}/{package}, e.g. last-week/lodash or 2024-01-01:2024-03-01/@babel/core"),
     ),

@@ -36,7 +36,7 @@ async fn load_manifest_json(
 #[utoipa::path(
     get,
     tag = "registry",
-    path = "/npm/",
+    path = "/",
     responses(
         (status = OK, description = "Registry info", body = RegistryInfo),
         (status = INTERNAL_SERVER_ERROR, body = crate::error::ApiErrorDetail),

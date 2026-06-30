@@ -16,7 +16,7 @@ const ZSTD_SUFFIX: &str = ".zst";
 #[utoipa::path(
     get,
     tag = "cdn",
-    path = "/jsdelivr/npm/{rest}",
+    path = "/{*rest}",
     params(
         ("rest" = String, Path, description = "Package spec and file path, e.g. lodash@4.17.21/lodash.js"),
     ),

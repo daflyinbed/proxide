@@ -21,7 +21,7 @@ pub struct StructureQuery {
 #[utoipa::path(
     get,
     tag = "cdn",
-    path = "/jsdelivr/api/npm/{rest}",
+    path = "/{*rest}",
     params(
         ("rest" = String, Path, description = "Package spec, e.g. lodash@4.17.21"),
         StructureQuery,

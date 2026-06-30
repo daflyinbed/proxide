@@ -75,7 +75,7 @@ pub(crate) async fn load_full_packument(
 #[utoipa::path(
     get,
     tag = "fast-meta",
-    path = "/fast/resolve/{pkg}",
+    path = "/resolve/{pkg}",
     params(
         ("pkg" = String, Path, description = "Package name with optional @version specifier"),
     ),
@@ -114,7 +114,7 @@ pub async fn resolve_version(
 #[utoipa::path(
     get,
     tag = "fast-meta",
-    path = "/fast/versions/{pkg}",
+    path = "/versions/{pkg}",
     params(
         ("pkg" = String, Path, description = "Package name with optional @version specifier"),
     ),
@@ -152,7 +152,7 @@ pub async fn get_versions(
 #[utoipa::path(
     get,
     tag = "fast-meta",
-    path = "/fast/full/{pkg}",
+    path = "/full/{pkg}",
     params(
         ("pkg" = String, Path, description = "Package name"),
     ),

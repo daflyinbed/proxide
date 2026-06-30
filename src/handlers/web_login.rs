@@ -23,7 +23,7 @@ pub struct LoginRequestBody {
 #[utoipa::path(
     post,
     tag = "auth",
-    path = "/npm/-/v1/login",
+    path = "/-/v1/login",
     request_body = LoginRequestBody,
     responses(
         (status = OK, description = "Login session created", body = WebLoginResponse),
@@ -63,7 +63,7 @@ pub async fn init_login(
 #[utoipa::path(
     get,
     tag = "auth",
-    path = "/npm/-/v1/login/done/session/{sessionId}",
+    path = "/-/v1/login/done/session/{sessionId}",
     params(
         ("sessionId" = String, Path, description = "Login session ID"),
     ),

@@ -16,7 +16,7 @@ pub struct CasCallbackQuery {
 #[utoipa::path(
     get,
     tag = "auth",
-    path = "/api/auth/cas/callback/session/{sessionId}",
+    path = "/auth/cas/callback/session/{sessionId}",
     params(
         ("sessionId" = String, Path, description = "Login session ID"),
         CasCallbackQuery,

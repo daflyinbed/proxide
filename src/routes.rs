@@ -1,62 +1,112 @@
 use crate::handlers;
 use crate::openapi::ApiDoc;
 use crate::state::AppState;
-use axum::Router;
-use axum::routing::{get, post, put};
 use utoipa::OpenApi;
+use utoipa_axum::{routes, router::OpenApiRouter};
 use utoipa_scalar::{Scalar, Servable};
 
-pub fn build_router(state: AppState) -> Router {
-    let npm = Router::new()
-        .route("/", get(handlers::registry::registry_root))
-        .route(
-            "/-/user/org.couchdb.user:{name}",
-            put(handlers::auth::login),
-        )
-        .route("/-/v1/login", post(handlers::web_login::init_login))
-        .route(
-            "/-/v1/login/done/session/{sessionId}",
-            get(handlers::web_login::poll_done),
-        )
-        .route(
-            "/-/package/{fullname}/syncs",
-            put(handlers::sync::trigger_sync),
-        )
-        .route("/-/v1/search", get(handlers::search::search_packages))
-        .fallback(
-            get(handlers::package_dispatch::dispatch_get)
-                .put(handlers::package_dispatch::dispatch_put),
-        );
+pub fn build_router(state: AppState) -> axum::Router {
+    let npm = OpenApiRouter::new()
+        .routes(routes!(handlers::registry::registry_root))
+        .routes(routes!(handlers::auth::login))
+        .routes(routes!(handlers::web_login::init_login))
+        .routes(routes!(handlers::web_login::poll_done))
+        .routes(routes!(handlers::sync::trigger_sync))
+        .routes(routes!(handlers::search::search_packages))
+        .fallback(handlers::package_dispatch::dispatch);
 
-    let fast = Router::new()
-        .route("/resolve/{pkg}", get(handlers::fast_meta::resolve_version))
-        .route("/versions/{pkg}", get(handlers::fast_meta::get_versions))
-        .route("/full/{pkg}", get(handlers::fast_meta::get_full));
+    let fast = OpenApiRouter::new()
+        .routes(routes!(handlers::fast_meta::resolve_version))
+        .routes(routes!(handlers::fast_meta::get_versions))
+        .routes(routes!(handlers::fast_meta::get_full));
 
-    let api = Router::new()
-        .route(
-            "/auth/cas/callback/session/{sessionId}",
-            get(handlers::sso::cas::cas_callback),
-        )
-        .route(
-            "/downloads/point/{*rest}",
-            get(handlers::downloads::downloads_point),
-        )
-        .route(
-            "/downloads/range/{*rest}",
-            get(handlers::downloads::downloads_range),
-        );
+    let api = OpenApiRouter::new()
+        .routes(routes!(handlers::sso::cas::cas_callback))
+        .routes(routes!(handlers::downloads::downloads_point))
+        .routes(routes!(handlers::downloads::downloads_range));
 
-    let jsdelivr_npm = Router::new().route("/{*rest}", get(handlers::cdn::serve_file));
-    let jsdelivr_api = Router::new().route("/{*rest}", get(handlers::data_api::version_files));
+    let jsdelivr_npm = OpenApiRouter::new().routes(routes!(handlers::cdn::serve_file));
+    let jsdelivr_api = OpenApiRouter::new().routes(routes!(handlers::data_api::version_files));
 
-    Router::new()
-        .route("/-/ping", get(handlers::home::ping))
-        .merge(Scalar::with_url("/docs", ApiDoc::openapi()))
+    let router = OpenApiRouter::with_openapi(ApiDoc::openapi())
+        .routes(routes!(handlers::home::ping))
         .nest("/npm", npm)
         .nest("/fast", fast)
         .nest("/api", api)
         .nest("/jsdelivr/npm", jsdelivr_npm)
-        .nest("/jsdelivr/api/npm", jsdelivr_api)
+        .nest("/jsdelivr/api/npm", jsdelivr_api);
+
+    let (router, openapi) = router.split_for_parts();
+    router
+        .merge(Scalar::with_url("/docs", openapi))
         .with_state(state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use utoipa::OpenApi;
+
+    fn collect_paths() -> Vec<String> {
+        let mut router = OpenApiRouter::with_openapi(ApiDoc::openapi())
+            .routes(routes!(handlers::home::ping));
+        let npm = OpenApiRouter::new()
+            .routes(routes!(handlers::registry::registry_root))
+            .routes(routes!(handlers::auth::login))
+            .routes(routes!(handlers::web_login::init_login))
+            .routes(routes!(handlers::web_login::poll_done))
+            .routes(routes!(handlers::sync::trigger_sync))
+            .routes(routes!(handlers::search::search_packages));
+        let fast = OpenApiRouter::new()
+            .routes(routes!(handlers::fast_meta::resolve_version))
+            .routes(routes!(handlers::fast_meta::get_versions))
+            .routes(routes!(handlers::fast_meta::get_full));
+        let api = OpenApiRouter::new()
+            .routes(routes!(handlers::sso::cas::cas_callback))
+            .routes(routes!(handlers::downloads::downloads_point))
+            .routes(routes!(handlers::downloads::downloads_range));
+        let jsdelivr_npm = OpenApiRouter::new().routes(routes!(handlers::cdn::serve_file));
+        let jsdelivr_api = OpenApiRouter::new().routes(routes!(handlers::data_api::version_files));
+        router = router
+            .nest("/npm", npm)
+            .nest("/fast", fast)
+            .nest("/api", api)
+            .nest("/jsdelivr/npm", jsdelivr_npm)
+            .nest("/jsdelivr/api/npm", jsdelivr_api);
+        router
+            .to_openapi()
+            .paths
+            .paths
+            .keys()
+            .cloned()
+            .collect()
+    }
+
+    #[test]
+    fn openapi_paths_resolved_with_nest_prefix() {
+        let paths = collect_paths();
+        let expected = [
+            "/-/ping",
+            "/npm",
+            "/npm/-/user/org.couchdb.user:{name}",
+            "/npm/-/v1/login",
+            "/npm/-/v1/login/done/session/{sessionId}",
+            "/npm/-/package/{fullname}/syncs",
+            "/npm/-/v1/search",
+            "/npm/{fullname}",
+            "/npm/{fullname}/{version}",
+            "/npm/{fullname}/-/{filename}",
+            "/fast/resolve/{pkg}",
+            "/fast/versions/{pkg}",
+            "/fast/full/{pkg}",
+            "/api/auth/cas/callback/session/{sessionId}",
+            "/api/downloads/point/{*rest}",
+            "/api/downloads/range/{*rest}",
+            "/jsdelivr/npm/{*rest}",
+            "/jsdelivr/api/npm/{*rest}",
+        ];
+        for e in expected {
+            assert!(paths.contains(&e.to_string()), "missing OpenAPI path: {e}\ngot: {paths:?}");
+        }
+    }
 }

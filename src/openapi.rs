@@ -81,7 +81,6 @@ fn _publish_package() {}
 #[openapi(
     info(
         title = "Proxide",
-        version = "0.1.0",
         description = "NPM registry mirror API",
         license(
             name = "MIT",

@@ -27,7 +27,7 @@ pub async fn validate_auth(state: &AppState, headers: &HeaderMap) -> WebResult<A
 
     if ctx.token.is_readonly {
         return Err(WebError::Forbidden(
-            "Read-only token cannot publish".to_string(),
+            "Read-only token cannot perform this operation".to_string(),
         ));
     }
 

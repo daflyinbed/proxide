@@ -66,7 +66,8 @@ pub async fn get_package_inner(
         .map_err(WebError::CustomApiError)?
         .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
 
-    let dist_id = if is_abbreviated_request(headers) {
+    let abbreviated = is_abbreviated_request(headers);
+    let dist_id = if abbreviated {
         pkg.abbreviated_dist_id
     } else {
         pkg.full_dist_id
@@ -75,16 +76,25 @@ pub async fn get_package_inner(
 
     let (json, shasum) = load_manifest_json(state, dist_id).await?;
     // todo(review): compare cache-control with cnpmcore
-    if let Some(shasum) = shasum {
+    let mut response = if let Some(shasum) = shasum {
         let etag = format!("W/\"{shasum}\"");
-        return Ok((
+        (
             [("etag", etag), ("cache-control", "max-age=300".to_string())],
             Json(json),
         )
-            .into_response());
+            .into_response()
+    } else {
+        Json(json).into_response()
+    };
+
+    if abbreviated {
+        response.headers_mut().insert(
+            "content-type",
+            ABBREVIATED_ACCEPT.parse().unwrap(),
+        );
     }
 
-    Ok(Json(json).into_response())
+    Ok(response)
 }
 
 pub async fn get_package_version_inner(

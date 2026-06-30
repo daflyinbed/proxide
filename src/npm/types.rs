@@ -144,7 +144,9 @@ pub enum BrowserOverride {
 #[serde(untagged)]
 pub enum ExportsTarget {
     Path(String),
+    #[schema(no_recursion)]
     Conditions(BTreeMap<String, ExportsTarget>),
+    #[schema(no_recursion)]
     Alternatives(Vec<ExportsTarget>),
     Null,
 }
@@ -181,7 +183,7 @@ pub struct PublishConfig {
 // Packument (full packument document)
 // ═══════════════════════════════════════════════════════════════════════════
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct Packument {
     #[serde(rename = "_id", default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
@@ -228,7 +230,7 @@ pub struct Packument {
 // PackageVersion (per-version manifest inside a packument)
 // ═══════════════════════════════════════════════════════════════════════════
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct PackageVersion {
     #[serde(rename = "_id", default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
@@ -389,7 +391,7 @@ pub struct PeerDepMeta {
 // Abbreviated packument (application/vnd.npm.install-v1+json)
 // ═══════════════════════════════════════════════════════════════════════════
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AbbreviatedPackument {
     pub name: String,
@@ -403,7 +405,7 @@ pub struct AbbreviatedPackument {
     pub time: Option<HashMap<String, String>>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AbbreviatedVersion {
     pub name: String,

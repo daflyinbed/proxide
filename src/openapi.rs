@@ -1,7 +1,7 @@
 use utoipa::OpenApi;
 
 use crate::error::ApiErrorDetail;
-use crate::npm::types::{PublishAttachment, PublishDist, PublishResponse};
+use crate::npm::types::{AbbreviatedPackument, Packument, PublishAttachment, PublishDist, PublishResponse};
 
 #[utoipa::path(
     get,
@@ -9,9 +9,11 @@ use crate::npm::types::{PublishAttachment, PublishDist, PublishResponse};
     path = "/npm/{fullname}",
     params(
         ("fullname" = String, Path, description = "Package full name, e.g. lodash or @babel/core"),
+        ("Accept" = String, Header, description = "Send application/vnd.npm.install-v1+json for the abbreviated packument"),
     ),
     responses(
-        (status = OK, description = "Package packument (full or abbreviated manifest)", body = serde_json::Value, content_type = "application/json"),
+        (status = OK, description = "Full packument", body = Packument, content_type = "application/json"),
+        (status = OK, description = "Abbreviated packument", body = AbbreviatedPackument, content_type = "application/vnd.npm.install-v1+json"),
         (status = NOT_FOUND, body = ApiErrorDetail),
         (status = INTERNAL_SERVER_ERROR, body = ApiErrorDetail),
     ),

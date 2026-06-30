@@ -103,6 +103,7 @@ struct TreeNode {
     node_type: &'static str,
     name: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[schema(no_recursion)]
     files: Vec<TreeNode>,
     #[serde(skip_serializing_if = "Option::is_none")]
     hash: Option<String>,

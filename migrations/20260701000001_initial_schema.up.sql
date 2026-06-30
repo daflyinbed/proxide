@@ -91,8 +91,10 @@ CREATE TABLE tokens (
     user_id         BIGINT       NOT NULL,
     is_readonly     BOOLEAN      NOT NULL DEFAULT FALSE,
     allowed_scopes  TEXT         DEFAULT NULL,
+    cidr_whitelist  TEXT         DEFAULT NULL,
     expired_at      DATETIME     DEFAULT NULL,
     created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     last_used_at    DATETIME     DEFAULT NULL,
     KEY idx_user_id (user_id),
     CONSTRAINT fk_token_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -188,4 +190,19 @@ CREATE TABLE upstream_package_downloads (
     UNIQUE KEY uk_pkg_ym (package_id, year, month),
     KEY idx_ym (year, month),
     CONSTRAINT fk_upd_package FOREIGN KEY (package_id) REFERENCES packages(id) ON DELETE CASCADE
+);
+
+CREATE TABLE package_version_files (
+    id                 BIGINT AUTO_INCREMENT PRIMARY KEY,
+    package_version_id BIGINT        NOT NULL,
+    dist_id            BIGINT        NOT NULL,
+    filepath           VARCHAR(750)  NOT NULL,
+    content_type       VARCHAR(255)  NOT NULL DEFAULT 'application/octet-stream',
+    created_at         DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_pv_filepath (package_version_id, filepath),
+    INDEX idx_pv (package_version_id),
+    CONSTRAINT fk_pvf_version FOREIGN KEY (package_version_id)
+        REFERENCES package_versions(id) ON DELETE CASCADE,
+    CONSTRAINT fk_pvf_dist FOREIGN KEY (dist_id)
+        REFERENCES dists(id) ON DELETE CASCADE
 );

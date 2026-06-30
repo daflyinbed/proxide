@@ -1,3 +1,4 @@
+DROP TABLE IF EXISTS package_version_files;
 DROP TABLE IF EXISTS upstream_package_downloads;
 DROP TABLE IF EXISTS package_downloads;
 DROP TABLE IF EXISTS maintainers;

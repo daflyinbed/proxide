@@ -27,7 +27,7 @@ pub struct StructureQuery {
         StructureQuery,
     ),
     responses(
-        (status = OK, description = "Version file listing (tree or flat JSON)"),
+        (status = OK, description = "Version file listing (tree or flat JSON)", body = VersionFilesResponse),
         (status = TEMPORARY_REDIRECT, description = "Redirect to resolved version"),
         (status = NOT_FOUND, body = crate::error::ApiErrorDetail),
         (status = INTERNAL_SERVER_ERROR, body = crate::error::ApiErrorDetail),

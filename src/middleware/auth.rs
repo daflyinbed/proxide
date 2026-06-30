@@ -23,6 +23,18 @@ pub fn hash_token(raw: &str) -> String {
 }
 
 pub async fn validate_auth(state: &AppState, headers: &HeaderMap) -> WebResult<AuthContext> {
+    let ctx = validate_auth_any(state, headers).await?;
+
+    if ctx.token.is_readonly {
+        return Err(WebError::Forbidden(
+            "Read-only token cannot perform this operation".to_string(),
+        ));
+    }
+
+    Ok(ctx)
+}
+
+pub async fn validate_auth_any(state: &AppState, headers: &HeaderMap) -> WebResult<AuthContext> {
     let raw_token = extract_bearer_token(headers)
         .ok_or_else(|| WebError::Unauthorized("Login first".to_string()))?;
 
@@ -35,12 +47,9 @@ pub async fn validate_auth(state: &AppState, headers: &HeaderMap) -> WebResult<A
         .map_err(WebError::CustomApiError)?
         .ok_or_else(|| WebError::Unauthorized("Invalid token".to_string()))?;
 
-    if token_row.is_readonly {
-        return Err(WebError::Forbidden(
-            "Read-only token cannot publish".to_string(),
-        ));
-    }
-
+    // TODO: enforce cidr_whitelist — resolve client IP (X-Forwarded-For / ConnectInfo)
+    // and match against token_row.cidr_whitelist. Mirrors cnpmcore which also stores
+    // the field without enforcing; enabling here would be an enhancement over both.
     if let Some(expired) = token_row.expired_at
         && expired < chrono::Utc::now().naive_utc()
     {

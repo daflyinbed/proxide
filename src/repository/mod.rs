@@ -106,7 +106,11 @@ pub struct TokenRow {
     pub user_id: i64,
     pub is_readonly: bool,
     pub allowed_scopes: Option<String>,
+    pub cidr_whitelist: Option<String>,
     pub expired_at: Option<chrono::NaiveDateTime>,
+    pub created_at: chrono::NaiveDateTime,
+    pub updated_at: chrono::NaiveDateTime,
+    pub last_used_at: Option<chrono::NaiveDateTime>,
 }
 
 #[derive(Debug, Clone)]
@@ -388,6 +392,9 @@ pub trait Repository: Send + Sync + 'static {
     // ── tokens ──
 
     async fn find_token_by_key(&self, token_key: &str) -> Result<Option<TokenRow>>;
+    async fn list_tokens_by_user(&self, user_id: i64) -> Result<Vec<TokenRow>>;
+    async fn delete_token_by_id(&self, id: i64) -> Result<()>;
+    #[allow(clippy::too_many_arguments)]
     async fn create_token(
         &self,
         token_key: &str,
@@ -395,6 +402,7 @@ pub trait Repository: Send + Sync + 'static {
         user_id: i64,
         is_readonly: bool,
         allowed_scopes: Option<&str>,
+        cidr_whitelist: Option<&str>,
         expired_at: Option<chrono::NaiveDateTime>,
     ) -> Result<i64>;
     async fn touch_token(&self, id: i64) -> Result<()>;

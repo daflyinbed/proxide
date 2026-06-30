@@ -760,6 +760,51 @@ pub struct LoginResponse {
     pub token: String,
 }
 
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct WhoAmIResponse {
+    pub username: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct OkResponse {
+    pub ok: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+pub struct TokenCreateRequest {
+    #[serde(default)]
+    pub password: Option<String>,
+    #[serde(default)]
+    pub readonly: bool,
+    #[serde(default)]
+    pub automation: bool,
+    #[serde(default)]
+    pub cidr_whitelist: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct TokenObject {
+    pub token: String,
+    pub key: String,
+    pub cidr_whitelist: Vec<String>,
+    pub readonly: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "lastUsedAt")]
+    pub last_used_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct TokenListResponse {
+    pub objects: Vec<TokenObject>,
+    pub total: u64,
+    #[serde(default)]
+    pub urls: serde_json::Value,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

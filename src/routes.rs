@@ -13,6 +13,10 @@ pub fn build_router(state: AppState) -> axum::Router {
         .routes(routes!(handlers::web_login::poll_done))
         .routes(routes!(handlers::sync::trigger_sync))
         .routes(routes!(handlers::search::search_packages))
+        .routes(routes!(handlers::tokens::whoami))
+        .routes(routes!(handlers::tokens::logout))
+        .routes(routes!(handlers::tokens::list_tokens, handlers::tokens::create_token))
+        .routes(routes!(handlers::tokens::revoke_token))
         .fallback(handlers::package_dispatch::dispatch);
 
     let fast = OpenApiRouter::new()
@@ -56,7 +60,11 @@ mod tests {
             .routes(routes!(handlers::web_login::init_login))
             .routes(routes!(handlers::web_login::poll_done))
             .routes(routes!(handlers::sync::trigger_sync))
-            .routes(routes!(handlers::search::search_packages));
+            .routes(routes!(handlers::search::search_packages))
+            .routes(routes!(handlers::tokens::whoami))
+            .routes(routes!(handlers::tokens::logout))
+            .routes(routes!(handlers::tokens::list_tokens, handlers::tokens::create_token))
+            .routes(routes!(handlers::tokens::revoke_token));
         let fast = OpenApiRouter::new()
             .routes(routes!(handlers::fast_meta::resolve_version))
             .routes(routes!(handlers::fast_meta::get_versions))
@@ -89,10 +97,14 @@ mod tests {
             "/-/ping",
             "/npm",
             "/npm/-/user/org.couchdb.user:{name}",
+            "/npm/-/user/token/{token}",
+            "/npm/-/whoami",
             "/npm/-/v1/login",
             "/npm/-/v1/login/done/session/{sessionId}",
             "/npm/-/package/{fullname}/syncs",
             "/npm/-/v1/search",
+            "/npm/-/npm/v1/tokens",
+            "/npm/-/npm/v1/tokens/token/{key}",
             "/npm/{fullname}",
             "/npm/{fullname}/{version}",
             "/npm/{fullname}/-/{filename}",

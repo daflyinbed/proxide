@@ -232,15 +232,15 @@ pub async fn remove_dist_tag(
     let fullname = fullname.trim().to_string();
     let tag = tag.trim().to_string();
 
+    validate_dist_tag(&tag)?;
+
+    let auth = validate_auth(&state, &headers).await?;
+
     if tag == "latest" {
         return Err(WebError::Forbidden(
             "Can't remove the \"latest\" tag".to_string(),
         ));
     }
-
-    validate_dist_tag(&tag)?;
-
-    let auth = validate_auth(&state, &headers).await?;
 
     let pkg = state
         .repo

@@ -292,6 +292,14 @@ pub trait Repository: Send + Sync + 'static {
         full_dist_id: Option<i64>,
     ) -> Result<()>;
     async fn set_package_access(&self, package_id: i64, access: &str) -> Result<()>;
+    async fn upsert_package_for_publish(
+        &self,
+        name: &str,
+        scope: Option<&str>,
+        description: Option<&str>,
+        user_id: i64,
+        access: Option<&str>,
+    ) -> Result<(i64, Option<String>)>;
     async fn count_packages(&self) -> Result<i64>;
 
     // ── package_versions ──

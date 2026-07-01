@@ -244,9 +244,35 @@ pub async fn publish_package_inner(
         .or(package_version.description.as_deref())
         .map(|s| if s.len() > 10240 { &s[..10240] } else { s });
 
+    let pkg_exists = pkg.is_some();
+    let (desired_access, package_access): (Option<&str>, &str) =
+        if !pkg_exists && scope.is_some() {
+            let want_public = package_version
+                .publish_config
+                .as_ref()
+                .and_then(|c| c.access.as_deref())
+                == Some("public");
+            let access = if want_public { "public" } else { "restricted" };
+            (
+                if access == "restricted" { Some(access) } else { None },
+                access,
+            )
+        } else {
+            (
+                None,
+                pkg.as_ref().map(|p| p.access.as_str()).unwrap_or("public"),
+            )
+        };
+
     let (package_id, existing_source) = state
         .repo
-        .upsert_package(&fullname, scope, description, None)
+        .upsert_package_for_publish(
+            &fullname,
+            scope,
+            description,
+            auth.user.id,
+            desired_access,
+        )
         .await
         .map_err(WebError::CustomApiError)?;
 
@@ -255,32 +281,6 @@ pub async fn publish_package_inner(
             "package {fullname} was synced from upstream ({source}), local publish is not allowed"
         )));
     }
-
-    state
-        .repo
-        .save_maintainer(package_id, auth.user.id)
-        .await
-        .map_err(WebError::CustomApiError)?;
-
-    let pkg_exists = pkg.is_some();
-    let package_access: &str = if !pkg_exists && scope.is_some() {
-        let want_public = package_version
-            .publish_config
-            .as_ref()
-            .and_then(|c| c.access.as_deref())
-            == Some("public");
-        let access = if want_public { "public" } else { "restricted" };
-        if access == "restricted" {
-            state
-                .repo
-                .set_package_access(package_id, access)
-                .await
-                .map_err(WebError::CustomApiError)?;
-        }
-        access
-    } else {
-        pkg.as_ref().map(|p| p.access.as_str()).unwrap_or("public")
-    };
     if !dist_tags.contains_key("latest") {
         let needs_latest = if pkg_exists {
             let existing_tags = state

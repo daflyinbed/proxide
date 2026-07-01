@@ -217,6 +217,55 @@ impl Repository for MysqlRepository {
         Ok(())
     }
 
+    async fn upsert_package_for_publish(
+        &self,
+        name: &str,
+        scope: Option<&str>,
+        description: Option<&str>,
+        user_id: i64,
+        access: Option<&str>,
+    ) -> Result<(i64, Option<String>)> {
+        let mut tx = self.pool.begin().await?;
+
+        sqlx::query!(
+            r#"INSERT INTO packages (name, scope, description, source) VALUES (?, ?, ?, NULL) ON DUPLICATE KEY UPDATE description = IF(VALUES(description) IS NULL, description, VALUES(description)), source = IF(source IS NULL, VALUES(source), source)"#,
+            name,
+            scope,
+            description,
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        let row = sqlx::query!(r#"SELECT id, source FROM packages WHERE name = ?"#, name)
+            .fetch_one(&mut *tx)
+            .await?;
+        let package_id = row.id as i64;
+        let existing_source = row.source;
+
+        if existing_source.is_none() {
+            sqlx::query!(
+                r#"INSERT IGNORE INTO maintainers (package_id, user_id) VALUES (?, ?)"#,
+                package_id,
+                user_id,
+            )
+            .execute(&mut *tx)
+            .await?;
+
+            if let Some(access) = access {
+                sqlx::query!(
+                    r#"UPDATE packages SET access = ? WHERE id = ?"#,
+                    access,
+                    package_id,
+                )
+                .execute(&mut *tx)
+                .await?;
+            }
+        }
+
+        tx.commit().await?;
+        Ok((package_id, existing_source))
+    }
+
     async fn count_packages(&self) -> Result<i64> {
         let row = sqlx::query!(r#"SELECT COUNT(*) AS `count` FROM packages"#)
             .fetch_one(&self.pool)

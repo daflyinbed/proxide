@@ -70,6 +70,23 @@ async fn load_tag_map(state: &AppState, package_id: i64) -> WebResult<HashMap<St
     Ok(tags.into_iter().map(|t| (t.tag, t.version)).collect())
 }
 
+const MAX_TAG_LEN: usize = 214;
+
+pub(crate) fn validate_dist_tag(tag: &str) -> WebResult<()> {
+    if tag.is_empty() {
+        return Err(WebError::BadRequest("tag is empty".to_string()));
+    }
+    if tag.len() > MAX_TAG_LEN {
+        return Err(WebError::BadRequest("tag cannot exceed 214 characters".to_string()));
+    }
+    if semver::VersionReq::parse(tag).is_ok() {
+        return Err(WebError::BadRequest(format!(
+            "tag \"{tag}\" must not be a valid semver range"
+        )));
+    }
+    Ok(())
+}
+
 #[utoipa::path(
     get,
     tag = "registry",
@@ -126,12 +143,7 @@ pub async fn set_dist_tag(
     let tag = tag.trim().to_string();
     let version = version.trim().to_string();
 
-    if tag.is_empty() {
-        return Err(WebError::BadRequest("tag is empty".to_string()));
-    }
-    if tag.len() > 214 {
-        return Err(WebError::BadRequest("tag cannot exceed 214 characters".to_string()));
-    }
+    validate_dist_tag(&tag)?;
     if semver::Version::parse(&version).is_err() {
         return Err(WebError::BadRequest(format!("invalid version: {version}")));
     }
@@ -226,9 +238,7 @@ pub async fn remove_dist_tag(
         ));
     }
 
-    if tag.is_empty() {
-        return Err(WebError::BadRequest("tag is empty".to_string()));
-    }
+    validate_dist_tag(&tag)?;
 
     let auth = validate_auth(&state, &headers).await?;
 

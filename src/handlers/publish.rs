@@ -141,6 +141,10 @@ pub async fn publish_package_inner(
         return Err(WebError::BadRequest("dist-tags is empty".to_string()));
     }
 
+    for tag in &tag_names {
+        crate::handlers::dist_tags::validate_dist_tag(tag)?;
+    }
+
     let tag_version = dist_tags[&tag_names[0]].clone();
     if tag_version != package_version.version {
         return Err(WebError::BadRequest(format!(

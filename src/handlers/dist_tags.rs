@@ -143,12 +143,12 @@ pub async fn set_dist_tag(
     let tag = tag.trim().to_string();
     let version = version.trim().to_string();
 
+    let auth = validate_auth(&state, &headers).await?;
+
     validate_dist_tag(&tag)?;
     if semver::Version::parse(&version).is_err() {
         return Err(WebError::BadRequest(format!("invalid version: {version}")));
     }
-
-    let auth = validate_auth(&state, &headers).await?;
 
     let pkg = state
         .repo
@@ -232,9 +232,9 @@ pub async fn remove_dist_tag(
     let fullname = fullname.trim().to_string();
     let tag = tag.trim().to_string();
 
-    validate_dist_tag(&tag)?;
-
     let auth = validate_auth(&state, &headers).await?;
+
+    validate_dist_tag(&tag)?;
 
     if tag == "latest" {
         return Err(WebError::Forbidden(

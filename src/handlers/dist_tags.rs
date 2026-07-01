@@ -38,6 +38,15 @@ async fn ensure_tag_write_access(
     Ok(())
 }
 
+fn ensure_local_package(source: Option<&str>, fullname: &str) -> WebResult<()> {
+    if let Some(s) = source {
+        return Err(WebError::Forbidden(format!(
+            "package {fullname} was synced from upstream ({s}), dist-tag mutation is not allowed"
+        )));
+    }
+    Ok(())
+}
+
 fn lock_package<'a>(state: &'a AppState, fullname: &str) -> WebResult<UnlockGuard<'a>> {
     if !state.package_lock.try_lock(fullname, LockOwner::Publish) {
         let owner = state.package_lock.get_owner(fullname);
@@ -133,6 +142,7 @@ pub async fn set_dist_tag(
         .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
 
     ensure_tag_write_access(&state, &auth, &fullname, pkg.id).await?;
+    ensure_local_package(pkg.source.as_deref(), &fullname)?;
 
     let _unlock = lock_package(&state, &fullname)?;
 
@@ -149,6 +159,12 @@ pub async fn set_dist_tag(
     }
 
     let mut tags = load_tag_map(&state, pkg.id).await?;
+    if tags.get(&tag) == Some(&version) {
+        return Ok(Json(PublishResponse {
+            ok: true,
+            rev: format!("{}-{}", pkg.id, version),
+        }));
+    }
     tags.insert(tag.clone(), version.clone());
 
     let full_manifest = refresh_manifests(
@@ -220,11 +236,17 @@ pub async fn remove_dist_tag(
         .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
 
     ensure_tag_write_access(&state, &auth, &fullname, pkg.id).await?;
+    ensure_local_package(pkg.source.as_deref(), &fullname)?;
 
     let _unlock = lock_package(&state, &fullname)?;
 
     let mut tags = load_tag_map(&state, pkg.id).await?;
-    tags.remove(&tag);
+    if tags.remove(&tag).is_none() {
+        return Ok(Json(PublishResponse {
+            ok: true,
+            rev: format!("{}-{}", pkg.id, tag),
+        }));
+    }
 
     let full_manifest = refresh_manifests(
         &state,

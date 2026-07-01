@@ -49,10 +49,13 @@ fn ensure_local_package(source: Option<&str>, fullname: &str) -> WebResult<()> {
 
 fn lock_package<'a>(state: &'a AppState, fullname: &str) -> WebResult<UnlockGuard<'a>> {
     if !state.package_lock.try_lock(fullname, LockOwner::Publish) {
-        let owner = state.package_lock.get_owner(fullname);
+        let owner = state
+            .package_lock
+            .get_owner(fullname)
+            .map(|o| o.to_string())
+            .unwrap_or_else(|| "modified by another request".to_string());
         return Err(WebError::Conflict(format!(
-            "package {fullname} is currently being {}",
-            owner.map(|o| o.to_string()).unwrap_or_default()
+            "package {fullname} is currently being {owner}"
         )));
     }
     Ok(UnlockGuard::new(&state.package_lock, fullname.to_string()))
@@ -83,9 +86,10 @@ pub async fn list_dist_tags(
     State(state): State<AppState>,
     Path(fullname): Path<String>,
 ) -> WebResult<Json<HashMap<String, String>>> {
+    let fullname = fullname.trim();
     let pkg = state
         .repo
-        .get_package_by_name(&fullname)
+        .get_package_by_name(fullname)
         .await
         .map_err(WebError::CustomApiError)?
         .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;

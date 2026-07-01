@@ -188,10 +188,13 @@ pub async fn publish_package_inner(
     let integrity = compute_integrity_sha512(&tarball_bytes);
 
     if !state.package_lock.try_lock(&fullname, LockOwner::Publish) {
-        let owner = state.package_lock.get_owner(&fullname);
+        let owner = state
+            .package_lock
+            .get_owner(&fullname)
+            .map(|o| o.to_string())
+            .unwrap_or_else(|| "modified by another request".to_string());
         return Err(WebError::Conflict(format!(
-            "package {fullname} is currently being {}",
-            owner.map(|o| o.to_string()).unwrap_or_default()
+            "package {fullname} is currently being {owner}"
         )));
     }
 

@@ -141,6 +141,10 @@ pub async fn publish_package_inner(
         return Err(WebError::BadRequest("dist-tags is empty".to_string()));
     }
 
+    for tag in &tag_names {
+        crate::handlers::dist_tags::validate_dist_tag(tag)?;
+    }
+
     let tag_version = dist_tags[&tag_names[0]].clone();
     if tag_version != package_version.version {
         return Err(WebError::BadRequest(format!(
@@ -188,10 +192,13 @@ pub async fn publish_package_inner(
     let integrity = compute_integrity_sha512(&tarball_bytes);
 
     if !state.package_lock.try_lock(&fullname, LockOwner::Publish) {
-        let owner = state.package_lock.get_owner(&fullname);
+        let owner = state
+            .package_lock
+            .get_owner(&fullname)
+            .map(|o| o.to_string())
+            .unwrap_or_else(|| "modified by another request".to_string());
         return Err(WebError::Conflict(format!(
-            "package {fullname} is currently being {}",
-            owner.map(|o| o.to_string()).unwrap_or_default()
+            "package {fullname} is currently being {owner}"
         )));
     }
 
@@ -494,7 +501,7 @@ pub async fn publish_package_inner(
     }))
 }
 
-async fn refresh_manifests(
+pub(crate) async fn refresh_manifests(
     state: &AppState,
     package_id: i64,
     fullname: &str,

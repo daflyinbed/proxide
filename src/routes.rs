@@ -12,6 +12,8 @@ pub fn build_router(state: AppState) -> axum::Router {
         .routes(routes!(handlers::web_login::init_login))
         .routes(routes!(handlers::web_login::poll_done))
         .routes(routes!(handlers::sync::trigger_sync))
+        .routes(routes!(handlers::dist_tags::list_dist_tags))
+        .routes(routes!(handlers::dist_tags::set_dist_tag, handlers::dist_tags::remove_dist_tag))
         .routes(routes!(handlers::search::search_packages))
         .routes(routes!(handlers::tokens::whoami))
         .routes(routes!(handlers::tokens::logout))
@@ -63,6 +65,8 @@ mod tests {
             .routes(routes!(handlers::web_login::init_login))
             .routes(routes!(handlers::web_login::poll_done))
             .routes(routes!(handlers::sync::trigger_sync))
+            .routes(routes!(handlers::dist_tags::list_dist_tags))
+            .routes(routes!(handlers::dist_tags::set_dist_tag, handlers::dist_tags::remove_dist_tag))
             .routes(routes!(handlers::search::search_packages))
             .routes(routes!(handlers::tokens::whoami))
             .routes(routes!(handlers::tokens::logout))
@@ -108,6 +112,8 @@ mod tests {
             "/npm/-/v1/login",
             "/npm/-/v1/login/done/session/{sessionId}",
             "/npm/-/package/{fullname}/syncs",
+            "/npm/-/package/{fullname}/dist-tags",
+            "/npm/-/package/{fullname}/dist-tags/{tag}",
             "/npm/-/v1/search",
             "/npm/-/npm/v1/tokens",
             "/npm/-/npm/v1/tokens/token/{key}",

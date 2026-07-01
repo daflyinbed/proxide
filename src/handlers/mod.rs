@@ -2,6 +2,7 @@ pub mod access;
 pub mod auth;
 pub mod cdn;
 pub mod data_api;
+pub mod dist_tags;
 pub mod downloads;
 pub mod fast_meta;
 pub mod home;

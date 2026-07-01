@@ -55,7 +55,7 @@ export async function publishPackage(
   token: string,
   name: string,
   version: string,
-  opts?: { description?: string; keywords?: string[]; author?: string },
+  opts?: { description?: string; keywords?: string[]; author?: string; access?: string },
 ): Promise<{ res: Response; body: any }> {
   const payload = buildPublishPayload(name, version, opts);
   const { res, body } = await apiJson(packagePath(name), {

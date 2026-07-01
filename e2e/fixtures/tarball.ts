@@ -17,6 +17,7 @@ export interface PublishPayloadOpts {
   description?: string;
   keywords?: string[];
   author?: string;
+  access?: string;
 }
 
 export function buildPublishPayload(
@@ -47,6 +48,9 @@ export function buildPublishPayload(
   }
   if (opts?.author) {
     versionEntry.author = opts.author;
+  }
+  if (opts?.access) {
+    versionEntry.publishConfig = { access: opts.access };
   }
 
   return {

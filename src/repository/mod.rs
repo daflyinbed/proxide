@@ -14,6 +14,7 @@ pub struct PackageRow {
     pub scope: Option<String>,
     pub description: Option<String>,
     pub source: Option<String>,
+    pub access: String,
     pub abbreviated_dist_id: Option<i64>,
     pub full_dist_id: Option<i64>,
 }
@@ -290,6 +291,7 @@ pub trait Repository: Send + Sync + 'static {
         abbreviated_dist_id: Option<i64>,
         full_dist_id: Option<i64>,
     ) -> Result<()>;
+    async fn set_package_access(&self, package_id: i64, access: &str) -> Result<()>;
     async fn count_packages(&self) -> Result<i64>;
 
     // ── package_versions ──

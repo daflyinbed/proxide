@@ -1,6 +1,6 @@
 {
   "db_name": "MySQL",
-  "query": "SELECT p.id, p.name, p.scope, p.description, p.source, p.abbreviated_dist_id, p.full_dist_id\n               FROM packages p JOIN maintainers m ON m.package_id = p.id\n               WHERE m.user_id = ? ORDER BY p.id",
+  "query": "SELECT id, name, scope, description, source, access, abbreviated_dist_id, full_dist_id FROM packages WHERE name = ?",
   "describe": {
     "columns": [
       {
@@ -50,6 +50,15 @@
       },
       {
         "ordinal": 5,
+        "name": "access",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL",
+          "max_size": 64
+        }
+      },
+      {
+        "ordinal": 6,
         "name": "abbreviated_dist_id",
         "type_info": {
           "type": "LongLong",
@@ -58,7 +67,7 @@
         }
       },
       {
-        "ordinal": 6,
+        "ordinal": 7,
         "name": "full_dist_id",
         "type_info": {
           "type": "LongLong",
@@ -76,9 +85,10 @@
       true,
       true,
       true,
+      false,
       true,
       true
     ]
   },
-  "hash": "ebd3bedd86db9e736e18418000f02983c0305d9030e9edb4f1a22b5ae64a93dc"
+  "hash": "5584c7a78f38fa777002288c6ae438b0ce8d77b4d0f0103219ee9d13c4eb251a"
 }

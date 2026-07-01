@@ -146,7 +146,7 @@ impl Repository for MysqlRepository {
     async fn get_package_by_name(&self, name: &str) -> Result<Option<PackageRow>> {
         let row = sqlx::query_as!(
             PackageRow,
-            r#"SELECT id, name, scope, description, source, abbreviated_dist_id, full_dist_id FROM packages WHERE name = ?"#,
+            r#"SELECT id, name, scope, description, source, access, abbreviated_dist_id, full_dist_id FROM packages WHERE name = ?"#,
             name
         )
         .fetch_optional(&self.pool)
@@ -157,7 +157,7 @@ impl Repository for MysqlRepository {
     async fn list_packages(&self, offset: i64, limit: i64) -> Result<Vec<PackageRow>> {
         let rows = sqlx::query_as!(
             PackageRow,
-            r#"SELECT id, name, scope, description, source, abbreviated_dist_id, full_dist_id
+            r#"SELECT id, name, scope, description, source, access, abbreviated_dist_id, full_dist_id
                FROM packages ORDER BY id LIMIT ? OFFSET ?"#,
             limit,
             offset
@@ -199,6 +199,17 @@ impl Repository for MysqlRepository {
             r#"UPDATE packages SET abbreviated_dist_id = ?, full_dist_id = ? WHERE id = ?"#,
             abbreviated_dist_id,
             full_dist_id,
+            package_id
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn set_package_access(&self, package_id: i64, access: &str) -> Result<()> {
+        sqlx::query!(
+            r#"UPDATE packages SET access = ? WHERE id = ?"#,
+            access,
             package_id
         )
         .execute(&self.pool)
@@ -1046,7 +1057,7 @@ impl Repository for MysqlRepository {
     async fn list_packages_by_user_id(&self, user_id: i64) -> Result<Vec<PackageRow>> {
         let rows = sqlx::query_as!(
             PackageRow,
-            r#"SELECT p.id, p.name, p.scope, p.description, p.source, p.abbreviated_dist_id, p.full_dist_id
+            r#"SELECT p.id, p.name, p.scope, p.description, p.source, p.access, p.abbreviated_dist_id, p.full_dist_id
                FROM packages p JOIN maintainers m ON m.package_id = p.id
                WHERE m.user_id = ? ORDER BY p.id"#,
             user_id

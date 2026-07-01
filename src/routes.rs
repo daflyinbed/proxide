@@ -21,6 +21,8 @@ pub fn build_router(state: AppState) -> axum::Router {
         .routes(routes!(handlers::tokens::revoke_token))
         .routes(routes!(handlers::profile::get_profile, handlers::profile::update_profile))
         .routes(routes!(handlers::access::list_collaborators))
+        .routes(routes!(handlers::access::get_visibility))
+        .routes(routes!(handlers::access::set_access))
         .routes(routes!(handlers::access::list_packages_by_user))
         .fallback(handlers::package_dispatch::dispatch);
 
@@ -74,6 +76,8 @@ mod tests {
             .routes(routes!(handlers::tokens::revoke_token))
             .routes(routes!(handlers::profile::get_profile, handlers::profile::update_profile))
             .routes(routes!(handlers::access::list_collaborators))
+            .routes(routes!(handlers::access::get_visibility))
+            .routes(routes!(handlers::access::set_access))
             .routes(routes!(handlers::access::list_packages_by_user));
         let fast = OpenApiRouter::new()
             .routes(routes!(handlers::fast_meta::resolve_version))
@@ -119,6 +123,8 @@ mod tests {
             "/npm/-/npm/v1/tokens/token/{key}",
             "/npm/-/npm/v1/user",
             "/npm/-/package/{fullname}/collaborators",
+            "/npm/-/package/{fullname}/visibility",
+            "/npm/-/package/{fullname}/access",
             "/npm/-/org/{username}/package",
             "/npm/{fullname}",
             "/npm/{fullname}/{version}",

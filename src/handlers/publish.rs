@@ -263,6 +263,20 @@ pub async fn publish_package_inner(
         .map_err(WebError::CustomApiError)?;
 
     let pkg_exists = pkg.is_some();
+    if !pkg_exists && scope.is_some() {
+        let want_public = package_version
+            .publish_config
+            .as_ref()
+            .and_then(|c| c.access.as_deref())
+            == Some("public");
+        if !want_public {
+            state
+                .repo
+                .set_package_access(package_id, "restricted")
+                .await
+                .map_err(WebError::CustomApiError)?;
+        }
+    }
     if !dist_tags.contains_key("latest") {
         let needs_latest = if pkg_exists {
             let existing_tags = state

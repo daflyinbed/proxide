@@ -494,7 +494,7 @@ pub async fn publish_package_inner(
     }))
 }
 
-async fn refresh_manifests(
+pub(crate) async fn refresh_manifests(
     state: &AppState,
     package_id: i64,
     fullname: &str,

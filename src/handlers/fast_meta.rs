@@ -1,4 +1,5 @@
 use crate::error::{WebError, WebResult};
+use crate::middleware::auth::ensure_package_readable;
 use crate::npm::types::{
     AbbreviatedPackument, FastMetaFull, FastMetaResolved, FastMetaVersions, Packument, VersionMeta,
 };
@@ -6,6 +7,7 @@ use crate::repository::PackageRow;
 use crate::state::AppState;
 use axum::Json;
 use axum::extract::{Path, State};
+use axum::http::HeaderMap;
 use semver::VersionReq;
 use std::collections::HashMap;
 
@@ -87,10 +89,13 @@ pub(crate) async fn load_full_packument(
 )]
 pub async fn resolve_version(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(pkg): Path<String>,
 ) -> WebResult<Json<FastMetaResolved>> {
     let (fullname, specifier) = parse_specifier(&pkg);
-    let (_, packument) = load_abbreviated_packument(&state, &fullname).await?;
+    let (pkg_row, packument) = load_abbreviated_packument(&state, &fullname).await?;
+
+    ensure_package_readable(&state, &headers, &pkg_row).await?;
 
     let versions: Vec<String> = packument.versions.keys().cloned().collect();
     let resolved_version = resolve_specifier(&specifier, &packument.dist_tags, &versions)
@@ -126,10 +131,13 @@ pub async fn resolve_version(
 )]
 pub async fn get_versions(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(pkg): Path<String>,
 ) -> WebResult<Json<FastMetaVersions>> {
     let (fullname, specifier) = parse_specifier(&pkg);
-    let (_, packument) = load_abbreviated_packument(&state, &fullname).await?;
+    let (pkg_row, packument) = load_abbreviated_packument(&state, &fullname).await?;
+
+    ensure_package_readable(&state, &headers, &pkg_row).await?;
 
     let dist_tags = packument.dist_tags.clone();
     let all_versions: Vec<String> = packument.versions.keys().cloned().collect();
@@ -164,10 +172,13 @@ pub async fn get_versions(
 )]
 pub async fn get_full(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(pkg): Path<String>,
 ) -> WebResult<Json<FastMetaFull>> {
     let (fullname, _) = parse_specifier(&pkg);
-    let (_, packument) = load_full_packument(&state, &fullname).await?;
+    let (pkg_row, packument) = load_full_packument(&state, &fullname).await?;
+
+    ensure_package_readable(&state, &headers, &pkg_row).await?;
 
     let dist_tags = packument.dist_tags.clone();
     let versions_meta = extract_versions_meta(&packument);

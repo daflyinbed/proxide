@@ -1,6 +1,7 @@
 use crate::error::{WebError, WebResult};
 use crate::middleware::auth::{check_scope_access, is_admin, validate_auth};
 use crate::npm::split_scope_name;
+use crate::npm::types::Packument;
 use crate::state::AppState;
 use axum::Json;
 use axum::extract::{Path, State};
@@ -177,6 +178,12 @@ pub async fn set_access(
         )));
     }
 
+    if pkg.scope.is_none() && normalized != "public" {
+        return Err(WebError::BadRequest(
+            "unscoped packages are always public; restricted access requires a scope".to_string(),
+        ));
+    }
+
     let (scope, _name) = split_scope_name(&fullname);
     if !is_admin(&auth.user, &state.config.auth.admins) {
         check_scope_access(
@@ -202,6 +209,31 @@ pub async fn set_access(
         .set_package_access(pkg.id, normalized)
         .await
         .map_err(WebError::CustomApiError)?;
+
+    if let Some(idx) = &state.search
+        && let Some(full_dist_id) = pkg.full_dist_id
+    {
+        let reindex_result: Result<(), anyhow::Error> = async {
+            let (bytes, _) = state.repo.get_content(full_dist_id).await?;
+            let packument: Packument = serde_json::from_slice(&bytes)?;
+            crate::search::upsert_search_document(
+                &*state.repo,
+                idx,
+                pkg.id,
+                normalized,
+                &packument,
+            )
+            .await;
+            Ok(())
+        }
+        .await;
+        if let Err(e) = reindex_result {
+            log::warn!(
+                action = "set_access";
+                "name={fullname} failed to refresh search index: {e:#}"
+            );
+        }
+    }
 
     log::info!(
         action = "set_access";

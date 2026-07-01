@@ -199,11 +199,11 @@ pub async fn dispatch_get(
             registry::get_package_inner(&state, &headers, &fullname).await
         }
         PackageRoute::Version { fullname, version } => {
-            let json = registry::get_package_version_inner(&state, &fullname, &version).await?;
+            let json = registry::get_package_version_inner(&state, &headers, &fullname, &version).await?;
             Ok(json.into_response())
         }
         PackageRoute::Tarball { fullname, filename } => {
-            tarball::download_tarball_inner(&state, &fullname, &filename).await
+            tarball::download_tarball_inner(&state, &headers, &fullname, &filename).await
         }
     }
 }

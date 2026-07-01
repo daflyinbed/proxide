@@ -1,8 +1,10 @@
 use crate::error::{WebError, WebResult};
+use crate::middleware::auth::{is_admin, validate_auth_any};
 use crate::search::SearchDocument;
 use crate::state::AppState;
 use axum::Json;
 use axum::extract::{Query, State};
+use axum::http::HeaderMap;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
@@ -42,6 +44,7 @@ pub struct SearchResponse {
 )]
 pub async fn search_packages(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(q): Query<SearchQuery>,
 ) -> WebResult<Json<SearchResponse>> {
     let text = q.text.trim();
@@ -61,8 +64,18 @@ pub async fn search_packages(
         q.size.min(MAX_SIZE)
     };
 
+    let is_admin_user = match validate_auth_any(&state, &headers).await {
+        Ok(auth) => is_admin(&auth.user, &state.config.auth.admins),
+        Err(_) => false,
+    };
+    let filter = if is_admin_user {
+        None
+    } else {
+        Some(r#"access = "public""#)
+    };
+
     let results = idx
-        .search(text, from, size)
+        .search(text, from, size, filter)
         .await
         .map_err(WebError::CustomApiError)?;
 

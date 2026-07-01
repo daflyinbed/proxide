@@ -111,6 +111,7 @@ impl SearchIndex {
                 "package.scope",
                 "package.deprecated",
                 "package.created",
+                "access",
             ])
             .with_sortable_attributes([
                 "downloads.upstream",
@@ -164,13 +165,15 @@ impl SearchIndex {
         text: &str,
         offset: usize,
         limit: usize,
+        filter: Option<&str>,
     ) -> Result<SearchResults<SearchDocument>> {
         let index = self.client.index(&self.index_uid);
-        let results = index
-            .search()
-            .with_query(text)
-            .with_offset(offset)
-            .with_limit(limit)
+        let mut query = index.search();
+        query.with_query(text).with_offset(offset).with_limit(limit);
+        if let Some(f) = filter {
+            query.with_filter(f);
+        }
+        let results = query
             .execute::<SearchDocument>()
             .await
             .context("meilisearch query failed")?;
@@ -233,10 +236,11 @@ pub async fn upsert_search_document(
     repo: &dyn Repository,
     index: &SearchIndex,
     package_id: i64,
+    access: &str,
     packument: &Packument,
 ) {
     let (upstream, local) = fetch_downloads(repo, package_id).await;
-    let doc = build_search_document(package_id, packument, upstream, local);
+    let doc = build_search_document(package_id, packument, upstream, local, access);
     if let Err(e) = index.upsert_package(&doc).await {
         log::warn!(
             action = "search_index_upsert";
@@ -275,7 +279,7 @@ pub async fn reindex_all(repo: &dyn Repository, index: &SearchIndex) -> Result<(
                 }
             };
             let (upstream, local) = fetch_downloads(repo, pkg.id).await;
-            let doc = build_search_document(pkg.id, &packument, upstream, local);
+            let doc = build_search_document(pkg.id, &packument, upstream, local, &pkg.access);
             docs.push(doc);
         }
 

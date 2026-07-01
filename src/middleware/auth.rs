@@ -1,5 +1,5 @@
 use crate::error::{WebError, WebResult};
-use crate::repository::{TokenRow, UserRow};
+use crate::repository::{PackageRow, TokenRow, UserRow};
 use crate::state::AppState;
 use axum::http::HeaderMap;
 use base64::Engine;
@@ -105,6 +105,30 @@ pub fn check_scope_access(
         )));
     }
     Ok(())
+}
+
+pub async fn ensure_package_readable(
+    state: &AppState,
+    headers: &HeaderMap,
+    pkg: &PackageRow,
+) -> WebResult<()> {
+    if pkg.scope.is_none() || pkg.access == "public" {
+        return Ok(());
+    }
+    if let Ok(auth) = validate_auth_any(state, headers).await {
+        if is_admin(&auth.user, &state.config.auth.admins) {
+            return Ok(());
+        }
+        if state
+            .repo
+            .is_maintainer(pkg.id, auth.user.id)
+            .await
+            .map_err(WebError::CustomApiError)?
+        {
+            return Ok(());
+        }
+    }
+    Err(WebError::NotFound(format!("{} not found", pkg.name)))
 }
 
 pub fn generate_salt() -> String {

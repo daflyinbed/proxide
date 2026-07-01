@@ -263,20 +263,24 @@ pub async fn publish_package_inner(
         .map_err(WebError::CustomApiError)?;
 
     let pkg_exists = pkg.is_some();
-    if !pkg_exists && scope.is_some() {
+    let package_access: &str = if !pkg_exists && scope.is_some() {
         let want_public = package_version
             .publish_config
             .as_ref()
             .and_then(|c| c.access.as_deref())
             == Some("public");
-        if !want_public {
+        let access = if want_public { "public" } else { "restricted" };
+        if access == "restricted" {
             state
                 .repo
-                .set_package_access(package_id, "restricted")
+                .set_package_access(package_id, access)
                 .await
                 .map_err(WebError::CustomApiError)?;
         }
-    }
+        access
+    } else {
+        pkg.as_ref().map(|p| p.access.as_str()).unwrap_or("public")
+    };
     if !dist_tags.contains_key("latest") {
         let needs_latest = if pkg_exists {
             let existing_tags = state
@@ -500,7 +504,7 @@ pub async fn publish_package_inner(
         .await?;
 
     if let Some(idx) = &state.search {
-        crate::search::upsert_search_document(&*state.repo, idx, package_id, &full_manifest).await;
+        crate::search::upsert_search_document(&*state.repo, idx, package_id, package_access, &full_manifest).await;
     }
 
     log::info!(

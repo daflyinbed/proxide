@@ -1,4 +1,5 @@
 use crate::error::{WebError, WebResult};
+use crate::middleware::auth::ensure_package_readable;
 use crate::npm::types::RegistryInfo;
 use crate::state::AppState;
 use axum::Json;
@@ -66,6 +67,8 @@ pub async fn get_package_inner(
         .map_err(WebError::CustomApiError)?
         .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
 
+    ensure_package_readable(state, headers, &pkg).await?;
+
     let abbreviated = is_abbreviated_request(headers);
     let dist_id = if abbreviated {
         pkg.abbreviated_dist_id
@@ -99,6 +102,7 @@ pub async fn get_package_inner(
 
 pub async fn get_package_version_inner(
     state: &AppState,
+    headers: &HeaderMap,
     fullname: &str,
     version: &str,
 ) -> WebResult<Json<serde_json::Value>> {
@@ -108,6 +112,8 @@ pub async fn get_package_version_inner(
         .await
         .map_err(WebError::CustomApiError)?
         .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
+
+    ensure_package_readable(state, headers, &pkg).await?;
 
     let ver = state
         .repo

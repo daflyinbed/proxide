@@ -713,7 +713,7 @@ impl Repository for MysqlRepository {
             let placeholders: Vec<String> = (0..chunk.len())
                 .map(|i| {
                     if i == 0 {
-                        format!("SELECT ? AS name, ? AS source")
+                        "SELECT ? AS name, ? AS source".to_string()
                     } else {
                         "UNION ALL SELECT ?, ?".to_string()
                     }

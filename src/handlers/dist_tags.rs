@@ -1,6 +1,6 @@
 use crate::error::{WebError, WebResult};
 use crate::handlers::publish::refresh_manifests;
-use crate::middleware::auth::{AuthContext, check_scope_access, is_admin, validate_auth};
+use crate::middleware::auth::{AuthContext, check_scope_access, ensure_package_readable, is_admin, validate_auth};
 use crate::npm::split_scope_name;
 use crate::npm::types::PublishResponse;
 use crate::state::{AppState, LockOwner, UnlockGuard};
@@ -101,6 +101,7 @@ pub(crate) fn validate_dist_tag(tag: &str) -> WebResult<()> {
 )]
 pub async fn list_dist_tags(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(fullname): Path<String>,
 ) -> WebResult<Json<HashMap<String, String>>> {
     let fullname = fullname.trim();
@@ -110,6 +111,8 @@ pub async fn list_dist_tags(
         .await
         .map_err(WebError::CustomApiError)?
         .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
+
+    ensure_package_readable(&state, &headers, &pkg).await?;
 
     let map = load_tag_map(&state, pkg.id).await?;
     Ok(Json(map))
@@ -193,7 +196,7 @@ pub async fn set_dist_tag(
     .await?;
 
     if let Some(idx) = &state.search {
-        crate::search::upsert_search_document(&*state.repo, idx, pkg.id, &full_manifest).await;
+        crate::search::upsert_search_document(&*state.repo, idx, pkg.id, &pkg.access, &full_manifest).await;
     }
 
     log::info!(
@@ -272,7 +275,7 @@ pub async fn remove_dist_tag(
     .await?;
 
     if let Some(idx) = &state.search {
-        crate::search::upsert_search_document(&*state.repo, idx, pkg.id, &full_manifest).await;
+        crate::search::upsert_search_document(&*state.repo, idx, pkg.id, &pkg.access, &full_manifest).await;
     }
 
     log::info!(

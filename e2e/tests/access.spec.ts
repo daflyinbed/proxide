@@ -25,7 +25,12 @@ describe("GET /npm/-/package/{fullname}/visibility", () => {
     const token = await login(uniqueName("e2e-vis-private-pub"), "pass1234");
     await publishPackage(token, name, "1.0.0");
 
-    const { res, body } = await apiJson(visibilityPath(name));
+    const anonymous = await apiJson(visibilityPath(name));
+    expect(anonymous.res.status).toBe(403);
+
+    const { res, body } = await apiJson(visibilityPath(name), {
+      headers: { authorization: `Bearer ${token}` },
+    });
     expect(res.status).toBe(200);
     expect(body.public).toBe(false);
   });
@@ -43,6 +48,41 @@ describe("GET /npm/-/package/{fullname}/visibility", () => {
   it("returns 403 for a non-existent package", async () => {
     const { res } = await apiJson(visibilityPath(uniqueName("e2e-vis-none")));
     expect(res.status).toBe(403);
+  });
+});
+
+describe("GET /npm/-/package/{fullname}/visibility — access control for restricted packages", () => {
+  it("returns 403 for a restricted package without auth", async () => {
+    const name = uniqueScopedName("e2e-vis", "noauth-restricted");
+    const token = await login(uniqueName("e2e-vis-noauth-pub"), "pass1234");
+    await publishPackage(token, name, "1.0.0");
+
+    const { res } = await apiJson(visibilityPath(name));
+    expect(res.status).toBe(403);
+  });
+
+  it("returns 403 for a restricted package with a non-maintainer token", async () => {
+    const name = uniqueScopedName("e2e-vis", "nonmaintainer-restricted");
+    const owner = await login(uniqueName("e2e-vis-owner"), "pass1234");
+    await publishPackage(owner, name, "1.0.0");
+
+    const other = await login(uniqueName("e2e-vis-other"), "pass1234");
+    const { res } = await apiJson(visibilityPath(name), {
+      headers: { authorization: `Bearer ${other}` },
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it("allows the publishing maintainer to read a restricted package's visibility", async () => {
+    const name = uniqueScopedName("e2e-vis", "maintainer-restricted");
+    const token = await login(uniqueName("e2e-vis-maintainer-pub"), "pass1234");
+    await publishPackage(token, name, "1.0.0");
+
+    const { res, body } = await apiJson(visibilityPath(name), {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.status).toBe(200);
+    expect(body.public).toBe(false);
   });
 });
 
@@ -76,7 +116,9 @@ describe("POST /npm/-/package/{fullname}/access", () => {
     });
     expect(setPrivate.status).toBe(200);
 
-    const visPriv = await apiJson(visibilityPath(name));
+    const visPriv = await apiJson(visibilityPath(name), {
+      headers: { authorization: `Bearer ${token}` },
+    });
     expect(visPriv.body.public).toBe(false);
   });
 
@@ -95,7 +137,9 @@ describe("POST /npm/-/package/{fullname}/access", () => {
     });
     expect(res.status).toBe(200);
 
-    const { body } = await apiJson(visibilityPath(name));
+    const { body } = await apiJson(visibilityPath(name), {
+      headers: { authorization: `Bearer ${token}` },
+    });
     expect(body.public).toBe(false);
   });
 

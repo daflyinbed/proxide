@@ -1,5 +1,5 @@
 use crate::error::{WebError, WebResult};
-use crate::middleware::auth::{check_scope_access, is_admin, validate_auth};
+use crate::middleware::auth::{check_scope_access, is_admin, validate_auth, validate_auth_any};
 use crate::npm::split_scope_name;
 use crate::npm::types::Packument;
 use crate::state::AppState;
@@ -101,6 +101,7 @@ pub struct VisibilityResponse {
 )]
 pub async fn get_visibility(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(fullname): Path<String>,
 ) -> WebResult<Json<VisibilityResponse>> {
     let pkg = state
@@ -111,6 +112,22 @@ pub async fn get_visibility(
         .ok_or_else(|| WebError::Forbidden("Forbidden".to_string()))?;
 
     let is_public = pkg.scope.is_none() || pkg.access == "public";
+    if !is_public {
+        let authorized = match validate_auth_any(&state, &headers).await {
+            Ok(auth) => {
+                is_admin(&auth.user, &state.config.auth.admins)
+                    || state
+                        .repo
+                        .is_maintainer(pkg.id, auth.user.id)
+                        .await
+                        .map_err(WebError::CustomApiError)?
+            }
+            Err(_) => false,
+        };
+        if !authorized {
+            return Err(WebError::Forbidden("Forbidden".to_string()));
+        }
+    }
     Ok(Json(VisibilityResponse { public: is_public }))
 }
 

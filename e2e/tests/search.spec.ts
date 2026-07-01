@@ -6,7 +6,9 @@ import {
   apiJson,
   clearSearchIndex,
   deleteSearchDoc,
+  getMeiliSettings,
   login,
+  meiliSearch,
   publishPackage,
   searchPackages,
   uniqueName,
@@ -80,7 +82,7 @@ describe("GET /npm/-/v1/search — indexing via publish", () => {
   it("indexes scoped packages with correct scope", async () => {
     const name = uniqueScopedName("e2e-scope", "e2e-search-scoped");
     const token = await login(uniqueName("e2e-search-scoped-pub"), "pass1234");
-    const { res } = await publishPackage(token, name, "1.0.0");
+    const { res } = await publishPackage(token, name, "1.0.0", { access: "public" });
     expect(res.status).toBe(200);
 
     const unscoped = name.split("/")[1];
@@ -256,4 +258,50 @@ describe("reindex-search subcommand", () => {
     },
     120_000,
   );
+});
+
+describe("GET /npm/-/v1/search — settings", () => {
+  it("registers package.access as a filterable attribute", async () => {
+    const settings = await getMeiliSettings();
+    expect(settings.filterableAttributes).toContain("package.access");
+    expect(settings.filterableAttributes).not.toContain("access");
+  });
+});
+
+describe("GET /npm/-/v1/search — access filtering", () => {
+  it("hides restricted packages from anonymous search but keeps them indexed", async () => {
+    const name = uniqueScopedName("e2e-filter", "restricted-hidden");
+    const token = await login(uniqueName("e2e-filter-restricted-pub"), "pass1234");
+    const { res } = await publishPackage(token, name, "1.0.0");
+    expect(res.status).toBe(200);
+
+    const unscoped = name.split("/")[1];
+
+    const start = Date.now();
+    let indexed = false;
+    while (Date.now() - start < 10_000) {
+      const direct = await meiliSearch(unscoped);
+      if ((direct.hits ?? []).some((h: any) => h.package?.name === name)) {
+        indexed = true;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+    expect(indexed).toBe(true);
+
+    const { body } = await searchPackages(unscoped);
+    expect(findInObjects(body, name)).toBeUndefined();
+  });
+
+  it("shows public packages in anonymous search", async () => {
+    const name = uniqueName("e2e-filter-public-shown");
+    const token = await login(uniqueName("e2e-filter-public-pub"), "pass1234");
+    await publishPackage(token, name, "1.0.0");
+
+    const body = await waitForSearch(name, (b) => !!findInObjects(b, name));
+
+    const hit = findInObjects(body, name);
+    expect(hit).toBeDefined();
+    expect(hit.package.access).toBe("public");
+  });
 });

@@ -71,7 +71,7 @@ pub async fn search_packages(
     let filter = if is_admin_user {
         None
     } else {
-        Some(r#"access = "public""#)
+        Some(r#"package.access = "public""#)
     };
 
     let results = idx

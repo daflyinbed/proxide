@@ -144,6 +144,15 @@ export async function getMeiliSettings(): Promise<any> {
   return res.json();
 }
 
+export async function meiliSearch(text: string, limit = 50): Promise<any> {
+  const res = await fetch(`${MEILI_URL}/indexes/${MEILI_INDEX}/search`, {
+    method: "POST",
+    headers: meiliHeaders(),
+    body: JSON.stringify({ q: text, limit }),
+  });
+  return res.json();
+}
+
 export async function deleteSearchDoc(name: string): Promise<void> {
   const searchRes = await fetch(`${MEILI_URL}/indexes/${MEILI_INDEX}/search`, {
     method: "POST",

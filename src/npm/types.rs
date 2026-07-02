@@ -575,6 +575,8 @@ pub struct PublishPayload {
     pub name: String,
     #[serde(default)]
     pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access: Option<String>,
     pub versions: HashMap<String, PublishVersion>,
     #[serde(rename = "dist-tags", default)]
     pub dist_tags: HashMap<String, String>,

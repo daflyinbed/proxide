@@ -247,10 +247,15 @@ pub async fn publish_package_inner(
     let pkg_exists = pkg.is_some();
     let (desired_access, package_access): (Option<&str>, &str) =
         if !pkg_exists && scope.is_some() {
-            let want_public = package_version
-                .publish_config
-                .as_ref()
-                .and_then(|c| c.access.as_deref())
+            let want_public = payload
+                .access
+                .as_deref()
+                .or_else(|| {
+                    package_version
+                        .publish_config
+                        .as_ref()
+                        .and_then(|c| c.access.as_deref())
+                })
                 == Some("public");
             let access = if want_public { "public" } else { "restricted" };
             (

@@ -245,6 +245,22 @@ pub async fn publish_package_inner(
         .map(|s| if s.len() > 10240 { &s[..10240] } else { s });
 
     let pkg_exists = pkg.is_some();
+    if !pkg_exists && scope.is_none() {
+        let requested = payload
+            .access
+            .as_deref()
+            .or_else(|| {
+                package_version
+                    .publish_config
+                    .as_ref()
+                    .and_then(|c| c.access.as_deref())
+            });
+        if matches!(requested, Some("restricted") | Some("private")) {
+            return Err(WebError::BadRequest(
+                "unscoped packages are always public; restricted access requires a scope".to_string(),
+            ));
+        }
+    }
     let (desired_access, package_access): (Option<&str>, &str) =
         if !pkg_exists && scope.is_some() {
             let want_public = payload

@@ -165,6 +165,13 @@ pub async fn set_dist_tag(
 
     let _unlock = lock_package(&state, &fullname)?;
 
+    let pkg = state
+        .repo
+        .get_package_by_name(&fullname)
+        .await
+        .map_err(WebError::CustomApiError)?
+        .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
+
     let version_exists = state
         .repo
         .get_version(pkg.id, &version)
@@ -256,6 +263,13 @@ pub async fn remove_dist_tag(
     ensure_local_package(pkg.source.as_deref(), &fullname)?;
 
     let _unlock = lock_package(&state, &fullname)?;
+
+    let pkg = state
+        .repo
+        .get_package_by_name(&fullname)
+        .await
+        .map_err(WebError::CustomApiError)?
+        .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
 
     let mut tags = load_tag_map(&state, pkg.id).await?;
     if tags.remove(&tag).is_none() {

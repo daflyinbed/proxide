@@ -1,5 +1,7 @@
 use crate::error::{WebError, WebResult};
-use crate::middleware::auth::{check_scope_access, is_admin, validate_auth, validate_auth_any};
+use crate::middleware::auth::{
+    check_scope_access, ensure_package_readable, is_admin, validate_auth, validate_auth_any,
+};
 use crate::npm::split_scope_name;
 use crate::npm::types::Packument;
 use crate::state::AppState;
@@ -24,6 +26,7 @@ use utoipa::ToSchema;
 )]
 pub async fn list_collaborators(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(fullname): Path<String>,
 ) -> WebResult<Json<serde_json::Value>> {
     let pkg = state
@@ -32,6 +35,8 @@ pub async fn list_collaborators(
         .await
         .map_err(WebError::CustomApiError)?
         .ok_or_else(|| WebError::Forbidden("Forbidden".to_string()))?;
+
+    ensure_package_readable(&state, &headers, &pkg).await?;
 
     let maintainers = state
         .repo
@@ -60,6 +65,7 @@ pub async fn list_collaborators(
 )]
 pub async fn list_packages_by_user(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(username): Path<String>,
 ) -> WebResult<Json<serde_json::Value>> {
     let user = state
@@ -75,8 +81,26 @@ pub async fn list_packages_by_user(
         .await
         .map_err(WebError::CustomApiError)?;
 
+    let auth = validate_auth_any(&state, &headers).await.ok();
     let mut res: BTreeMap<String, String> = BTreeMap::new();
     for pkg in pkgs {
+        let is_public = pkg.scope.is_none() || pkg.access == "public";
+        if !is_public {
+            let authorized = match &auth {
+                Some(a) => {
+                    is_admin(&a.user, &state.config.auth.admins)
+                        || state
+                            .repo
+                            .is_maintainer(pkg.id, a.user.id)
+                            .await
+                            .map_err(WebError::CustomApiError)?
+                }
+                None => false,
+            };
+            if !authorized {
+                continue;
+            }
+        }
         res.insert(pkg.name, "write".to_string());
     }
     Ok(Json(serde_json::to_value(res).unwrap()))

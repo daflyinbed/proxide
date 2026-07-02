@@ -82,10 +82,11 @@ pub async fn list_packages_by_user(
         .map_err(WebError::CustomApiError)?;
 
     let auth = validate_auth_any(&state, &headers).await.ok();
+    let is_self = auth.as_ref().is_some_and(|a| a.user.id == user.id);
     let mut res: BTreeMap<String, String> = BTreeMap::new();
     for pkg in pkgs {
         let is_public = pkg.scope.is_none() || pkg.access == "public";
-        if !is_public {
+        if !is_public && !is_self {
             let authorized = match &auth {
                 Some(a) => {
                     is_admin(&a.user, &state.config.auth.admins)

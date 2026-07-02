@@ -228,7 +228,7 @@ impl Repository for MysqlRepository {
         let mut tx = self.pool.begin().await?;
 
         sqlx::query!(
-            r#"INSERT INTO packages (name, scope, description, source) VALUES (?, ?, ?, NULL) ON DUPLICATE KEY UPDATE description = IF(VALUES(description) IS NULL, description, VALUES(description)), source = IF(source IS NULL, VALUES(source), source)"#,
+            r#"INSERT INTO packages (name, scope, description, source) VALUES (?, ?, ?, NULL) ON DUPLICATE KEY UPDATE description = IF(source IS NULL AND VALUES(description) IS NOT NULL, VALUES(description), description), source = IF(source IS NULL, VALUES(source), source)"#,
             name,
             scope,
             description,

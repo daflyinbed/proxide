@@ -254,6 +254,11 @@ pub async fn publish_package_inner(
                 .as_ref()
                 .and_then(|c| c.access.as_deref())
         });
+    if let Some(access) = requested_access
+        && !matches!(access, "public" | "restricted" | "private")
+    {
+        return Err(WebError::BadRequest(format!("invalid access: {access}")));
+    }
     if !pkg_exists && scope.is_none() {
         if matches!(requested_access, Some("restricted") | Some("private")) {
             return Err(WebError::BadRequest(

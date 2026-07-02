@@ -11,6 +11,7 @@ pub(crate) struct ResolvedVersion {
     pub resolved: String,
     pub tarball_filename: String,
     pub is_public: bool,
+    pub is_scoped: bool,
 }
 
 pub(crate) fn parse_pkg_spec_path(rest: &str) -> (String, String, String) {
@@ -114,6 +115,7 @@ pub(crate) async fn resolve_version(
         resolved,
         tarball_filename,
         is_public: pkg.is_public(),
+        is_scoped: pkg.scope.is_some(),
     })
 }
 

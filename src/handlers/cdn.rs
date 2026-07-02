@@ -11,7 +11,8 @@ use axum::response::{IntoResponse, Redirect, Response};
 use futures::StreamExt;
 use reqwest::StatusCode;
 
-const CACHE_FILE: &str = "public, max-age=31536000";
+const CACHE_FILE: &str = "public, max-age=31536000, immutable";
+const CACHE_FILE_SCOPED: &str = "public, max-age=300, must-revalidate";
 const CACHE_FILE_PRIVATE: &str = "private, no-store";
 const ZSTD_SUFFIX: &str = ".zst";
 
@@ -88,10 +89,12 @@ pub async fn serve_file(
         Body::from_stream(stream)
     };
 
-    let cache_control = if resolved.is_public {
-        CACHE_FILE
-    } else {
+    let cache_control = if !resolved.is_public {
         CACHE_FILE_PRIVATE
+    } else if resolved.is_scoped {
+        CACHE_FILE_SCOPED
+    } else {
+        CACHE_FILE
     };
 
     let mut builder = Response::builder()

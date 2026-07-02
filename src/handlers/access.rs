@@ -81,7 +81,11 @@ pub async fn list_packages_by_user(
         .await
         .map_err(WebError::CustomApiError)?;
 
-    let auth = validate_auth_any(&state, &headers).await.ok();
+    let auth = match validate_auth_any(&state, &headers).await {
+        Ok(auth) => Some(auth),
+        Err(WebError::Unauthorized(_)) => None,
+        Err(e) => return Err(e),
+    };
     let is_self = auth.as_ref().is_some_and(|a| a.user.id == user.id);
     let mut res: BTreeMap<String, String> = BTreeMap::new();
     for pkg in pkgs {
@@ -147,7 +151,8 @@ pub async fn get_visibility(
                         .await
                         .map_err(WebError::CustomApiError)?
             }
-            Err(_) => false,
+            Err(WebError::Unauthorized(_)) => false,
+            Err(e) => return Err(e),
         };
         if !authorized {
             return Err(WebError::Forbidden("Forbidden".to_string()));

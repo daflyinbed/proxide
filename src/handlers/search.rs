@@ -66,7 +66,8 @@ pub async fn search_packages(
 
     let is_admin_user = match validate_auth_any(&state, &headers).await {
         Ok(auth) => is_admin(&auth.user, &state.config.auth.admins),
-        Err(_) => false,
+        Err(WebError::Unauthorized(_)) => false,
+        Err(e) => return Err(e),
     };
     let filter = if is_admin_user {
         None

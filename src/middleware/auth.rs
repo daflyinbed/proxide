@@ -115,18 +115,22 @@ pub async fn ensure_package_readable(
     if pkg.scope.is_none() || pkg.access == "public" {
         return Ok(());
     }
-    if let Ok(auth) = validate_auth_any(state, headers).await {
-        if is_admin(&auth.user, &state.config.auth.admins) {
-            return Ok(());
+    match validate_auth_any(state, headers).await {
+        Ok(auth) => {
+            if is_admin(&auth.user, &state.config.auth.admins) {
+                return Ok(());
+            }
+            if state
+                .repo
+                .is_maintainer(pkg.id, auth.user.id)
+                .await
+                .map_err(WebError::CustomApiError)?
+            {
+                return Ok(());
+            }
         }
-        if state
-            .repo
-            .is_maintainer(pkg.id, auth.user.id)
-            .await
-            .map_err(WebError::CustomApiError)?
-        {
-            return Ok(());
-        }
+        Err(WebError::Unauthorized(_)) => {}
+        Err(e) => return Err(e),
     }
     Err(WebError::NotFound(format!("{} not found", pkg.name)))
 }

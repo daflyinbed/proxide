@@ -74,32 +74,30 @@ pub async fn list_packages_by_user(
         .map_err(WebError::CustomApiError)?
         .ok_or_else(|| WebError::NotFound(format!("User \"{username}\" not found")))?;
 
-    let pkgs = state
-        .repo
-        .list_packages_by_user_id(user.id)
-        .await
-        .map_err(WebError::CustomApiError)?;
-
     let is_self = auth.as_ref().is_some_and(|a| a.user.id == user.id);
+
+    let pkgs = if is_self || auth.as_ref().is_some_and(|a| is_admin(&a.user, &state.config.auth.admins)) {
+        state
+            .repo
+            .list_packages_by_user_id(user.id)
+            .await
+            .map_err(WebError::CustomApiError)?
+    } else if let Some(a) = &auth {
+        state
+            .repo
+            .list_packages_by_user_id_readable(user.id, a.user.id)
+            .await
+            .map_err(WebError::CustomApiError)?
+    } else {
+        state
+            .repo
+            .list_packages_by_user_id_readable(user.id, 0)
+            .await
+            .map_err(WebError::CustomApiError)?
+    };
+
     let mut res: BTreeMap<String, String> = BTreeMap::new();
     for pkg in pkgs {
-        let is_public = pkg.is_public();
-        if !is_public && !is_self {
-            let authorized = match &auth {
-                Some(a) => {
-                    is_admin(&a.user, &state.config.auth.admins)
-                        || state
-                            .repo
-                            .is_maintainer(pkg.id, a.user.id)
-                            .await
-                            .map_err(WebError::CustomApiError)?
-                }
-                None => false,
-            };
-            if !authorized {
-                continue;
-            }
-        }
         res.insert(pkg.name, "write".to_string());
     }
     Ok(Json(serde_json::to_value(res).unwrap()))
@@ -170,6 +168,7 @@ pub struct AccessResponse {
 )]
 pub async fn set_access(
     State(state): State<AppState>,
+    headers: HeaderMap,
     RequireAuth(auth): RequireAuth,
     Path(fullname): Path<String>,
     Json(body): Json<AccessRequest>,
@@ -196,6 +195,8 @@ pub async fn set_access(
         .await
         .map_err(WebError::CustomApiError)?
         .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
+
+    ensure_package_readable(&state, &headers, &pkg).await?;
 
     if pkg.source.is_some() {
         return Err(WebError::Forbidden(format!(

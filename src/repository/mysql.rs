@@ -1116,6 +1116,28 @@ impl Repository for MysqlRepository {
         Ok(rows)
     }
 
+    async fn list_packages_by_user_id_readable(
+        &self,
+        target_user_id: i64,
+        viewer_user_id: i64,
+    ) -> Result<Vec<PackageRow>> {
+        let rows = sqlx::query_as!(
+            PackageRow,
+            r#"SELECT DISTINCT p.id, p.name, p.scope, p.description, p.source, p.access, p.abbreviated_dist_id, p.full_dist_id
+               FROM packages p JOIN maintainers m ON m.package_id = p.id
+               WHERE m.user_id = ?
+                 AND (p.access = 'public' OR EXISTS (
+                   SELECT 1 FROM maintainers m2 WHERE m2.package_id = p.id AND m2.user_id = ?
+                 ))
+               ORDER BY p.id"#,
+            target_user_id,
+            viewer_user_id
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
     // ── sync_tasks ──
 
     async fn fail_task_no_retry(&self, id: i64, error: &str) -> Result<()> {

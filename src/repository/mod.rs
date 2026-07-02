@@ -431,6 +431,11 @@ pub trait Repository: Send + Sync + 'static {
     async fn sync_maintainers(&self, package_id: i64, user_ids: &[i64]) -> Result<()>;
     async fn list_maintainers(&self, package_id: i64) -> Result<Vec<Maintainer>>;
     async fn list_packages_by_user_id(&self, user_id: i64) -> Result<Vec<PackageRow>>;
+    async fn list_packages_by_user_id_readable(
+        &self,
+        target_user_id: i64,
+        viewer_user_id: i64,
+    ) -> Result<Vec<PackageRow>>;
 
     // ── sync_tasks ──
 

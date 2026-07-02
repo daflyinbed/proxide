@@ -13,6 +13,7 @@ use std::collections::BTreeMap;
 use utoipa::{IntoParams, ToSchema};
 
 const CACHE_META: &str = "public, s-maxage=600, max-age=60";
+const CACHE_META_PRIVATE: &str = "private, no-store";
 
 #[derive(Debug, Default, serde::Deserialize, IntoParams)]
 pub struct StructureQuery {
@@ -78,9 +79,16 @@ pub async fn version_files(
     };
 
     let mut response = Json(body).into_response();
-    response
-        .headers_mut()
-        .insert("cache-control", CACHE_META.parse().unwrap());
+    response.headers_mut().insert(
+        "cache-control",
+        if resolved.is_public {
+            CACHE_META
+        } else {
+            CACHE_META_PRIVATE
+        }
+        .parse()
+        .unwrap(),
+    );
     Ok(response)
 }
 

@@ -12,6 +12,7 @@ use futures::StreamExt;
 use reqwest::StatusCode;
 
 const CACHE_FILE: &str = "public, max-age=31536000";
+const CACHE_FILE_PRIVATE: &str = "private, no-store";
 const ZSTD_SUFFIX: &str = ".zst";
 
 #[utoipa::path(
@@ -87,11 +88,17 @@ pub async fn serve_file(
         Body::from_stream(stream)
     };
 
+    let cache_control = if resolved.is_public {
+        CACHE_FILE
+    } else {
+        CACHE_FILE_PRIVATE
+    };
+
     let mut builder = Response::builder()
         .status(StatusCode::OK)
         .header("content-type", &file.content_type)
         .header("content-length", file.size)
-        .header("cache-control", CACHE_FILE)
+        .header("cache-control", cache_control)
         .header("cross-origin-resource-policy", "cross-origin");
     if let Some(hash) = &file.shasum {
         builder = builder.header("x-content-hash", hash);

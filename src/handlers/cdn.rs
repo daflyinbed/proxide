@@ -6,6 +6,7 @@ use crate::state::AppState;
 use async_compression::tokio::bufread::ZstdDecoder;
 use axum::body::Body;
 use axum::extract::{Path, State};
+use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Redirect, Response};
 use futures::StreamExt;
 use reqwest::StatusCode;
@@ -29,6 +30,7 @@ const ZSTD_SUFFIX: &str = ".zst";
 )]
 pub async fn serve_file(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(rest): Path<String>,
 ) -> WebResult<Response> {
     if !state.config.cdn.enabled {
@@ -40,7 +42,7 @@ pub async fn serve_file(
         return Err(WebError::NotFound("package name is empty".to_string()));
     }
 
-    let resolved = resolve_version(&state, &fullname, &spec).await?;
+    let resolved = resolve_version(&state, &headers, &fullname, &spec).await?;
 
     if spec != resolved.resolved {
         let location = format!(

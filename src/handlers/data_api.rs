@@ -6,6 +6,7 @@ use crate::repository::VersionFileRow;
 use crate::state::AppState;
 use axum::Json;
 use axum::extract::{Path, Query, State};
+use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Redirect, Response};
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -35,6 +36,7 @@ pub struct StructureQuery {
 )]
 pub async fn version_files(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(rest): Path<String>,
     Query(query): Query<StructureQuery>,
 ) -> WebResult<Response> {
@@ -47,7 +49,7 @@ pub async fn version_files(
         return Err(WebError::NotFound("package name is empty".to_string()));
     }
 
-    let resolved = resolve_version(&state, &fullname, &spec).await?;
+    let resolved = resolve_version(&state, &headers, &fullname, &spec).await?;
 
     if spec != resolved.resolved {
         let location = format!("/jsdelivr/api/npm/{fullname}@{}", resolved.resolved);

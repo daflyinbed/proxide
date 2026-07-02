@@ -304,4 +304,39 @@ describe("GET /npm/-/v1/search — access filtering", () => {
     expect(hit).toBeDefined();
     expect(hit.package.access).toBe("public");
   });
+
+  it("shows restricted package to its maintainer but not to other authenticated users", async () => {
+    const maintainer = uniqueName("e2e-filter-restricted-owner");
+    const maintainerToken = await login(maintainer, "pass1234");
+    const otherToken = await login(uniqueName("e2e-filter-restricted-other"), "pass1234");
+
+    const name = uniqueScopedName("e2e-filter-auth", "restricted-maintainer");
+    const { res } = await publishPackage(maintainerToken, name, "1.0.0", { access: "restricted" });
+    expect(res.status).toBe(200);
+
+    const unscoped = name.split("/")[1];
+
+    const start = Date.now();
+    let indexed = false;
+    while (Date.now() - start < 10_000) {
+      const direct = await meiliSearch(unscoped);
+      if ((direct.hits ?? []).some((h: any) => h.package?.name === name)) {
+        indexed = true;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+    expect(indexed).toBe(true);
+
+    const { body: anonBody } = await searchPackages(unscoped);
+    expect(findInObjects(anonBody, name)).toBeUndefined();
+
+    const { body: otherBody } = await searchPackages(unscoped, { token: otherToken });
+    expect(findInObjects(otherBody, name)).toBeUndefined();
+
+    const { body: maintainerBody } = await searchPackages(unscoped, { token: maintainerToken });
+    const hit = findInObjects(maintainerBody, name);
+    expect(hit).toBeDefined();
+    expect(hit.package.access).toBe("restricted");
+  });
 });

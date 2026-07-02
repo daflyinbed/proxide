@@ -79,23 +79,26 @@ export function uniqueScopedName(scope: string, prefix: string): string {
 
 export async function searchPackages(
   text: string,
-  params?: { from?: number; size?: number },
+  params?: { from?: number; size?: number; token?: string },
 ): Promise<{ res: Response; body: any }> {
   const q = new URLSearchParams({ text });
   if (params?.from !== undefined) q.set("from", String(params.from));
   if (params?.size !== undefined) q.set("size", String(params.size));
-  return apiJson(`/npm/-/v1/search?${q}`);
+  const headers: Record<string, string> = {};
+  if (params?.token) headers.authorization = `Bearer ${params.token}`;
+  return apiJson(`/npm/-/v1/search?${q}`, { headers });
 }
 
 export async function waitForSearch(
   text: string,
   predicate: (body: any) => boolean,
   timeoutMs = 10_000,
+  token?: string,
 ): Promise<any> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
-      const { body } = await searchPackages(text);
+      const { body } = await searchPackages(text, { token });
       if (predicate(body)) {
         return body;
       }

@@ -34,7 +34,7 @@ pub async fn list_collaborators(
         .get_package_by_name(&fullname)
         .await
         .map_err(WebError::CustomApiError)?
-        .ok_or_else(|| WebError::Forbidden("Forbidden".to_string()))?;
+        .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
 
     ensure_package_readable(&state, &headers, &pkg).await?;
 
@@ -253,7 +253,7 @@ pub async fn set_access(
 
     if !state
         .package_lock
-        .try_lock(&fullname, LockOwner::Publish)
+        .try_lock(&fullname, LockOwner::Access)
     {
         let owner = state
             .package_lock
@@ -266,16 +266,25 @@ pub async fn set_access(
     }
     let _unlock = UnlockGuard::new(&state.package_lock, fullname.clone());
 
+    let pkg = state
+        .repo
+        .get_package_by_name(&fullname)
+        .await
+        .map_err(WebError::CustomApiError)?
+        .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
+
     let old_access = pkg.access.as_str();
+    let pkg_id = pkg.id;
+    let full_dist_id = pkg.full_dist_id;
 
     state
         .repo
-        .set_package_access(pkg.id, normalized)
+        .set_package_access(pkg_id, normalized)
         .await
         .map_err(WebError::CustomApiError)?;
 
     if let Some(idx) = &state.search
-        && let Some(full_dist_id) = pkg.full_dist_id
+        && let Some(full_dist_id) = full_dist_id
     {
         let reindex_result: Result<(), anyhow::Error> = async {
             let (bytes, _) = state.repo.get_content(full_dist_id).await?;
@@ -283,7 +292,7 @@ pub async fn set_access(
             crate::search::upsert_search_document_and_wait(
                 &*state.repo,
                 idx,
-                pkg.id,
+                pkg_id,
                 normalized,
                 &packument,
             )
@@ -293,7 +302,7 @@ pub async fn set_access(
         .await;
         if let Err(e) = reindex_result {
             if old_access != normalized {
-                if let Err(rb_err) = state.repo.set_package_access(pkg.id, old_access).await {
+                if let Err(rb_err) = state.repo.set_package_access(pkg_id, old_access).await {
                     log::error!(
                         action = "set_access_rollback_failed";
                         "name={fullname} failed to roll back access from {normalized} to {old_access}: {rb_err}"

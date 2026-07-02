@@ -14,6 +14,7 @@ use tokio::task::JoinHandle;
 pub enum LockOwner {
     Sync,
     Publish,
+    Access,
 }
 
 impl std::fmt::Display for LockOwner {
@@ -21,6 +22,7 @@ impl std::fmt::Display for LockOwner {
         match self {
             LockOwner::Sync => write!(f, "sync"),
             LockOwner::Publish => write!(f, "publish"),
+            LockOwner::Access => write!(f, "modified"),
         }
     }
 }

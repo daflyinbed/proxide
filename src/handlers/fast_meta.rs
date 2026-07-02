@@ -63,15 +63,6 @@ pub(crate) async fn fetch_full_packument(
     serde_json::from_slice(&data).map_err(|e| WebError::CustomApiError(e.into()))
 }
 
-pub(crate) async fn load_abbreviated_packument(
-    state: &AppState,
-    fullname: &str,
-) -> WebResult<(PackageRow, AbbreviatedPackument)> {
-    let pkg = get_package_row(state, fullname).await?;
-    let packument = fetch_abbreviated_packument(state, &pkg).await?;
-    Ok((pkg, packument))
-}
-
 #[utoipa::path(
     get,
     tag = "fast-meta",

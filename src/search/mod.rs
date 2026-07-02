@@ -140,6 +140,25 @@ impl SearchIndex {
         Ok(())
     }
 
+    pub async fn upsert_package_and_wait(&self, doc: &SearchDocument) -> Result<()> {
+        let index = self.client.index(&self.index_uid);
+        let task = index
+            .add_or_replace(&[doc], None)
+            .await
+            .context("failed to submit upsert task")?;
+        let outcome = task
+            .wait_for_completion(&self.client, None, None)
+            .await
+            .context("upsert task wait failed")?;
+        match outcome {
+            Task::Succeeded { .. } => Ok(()),
+            Task::Failed { content } => Err(content.error).context("upsert task failed"),
+            other => Err(anyhow::anyhow!(
+                "upsert task ended in unexpected state: {other:?}"
+            )),
+        }
+    }
+
     pub async fn upsert_many(&self, docs: &[SearchDocument]) -> Result<()> {
         if docs.is_empty() {
             return Ok(());
@@ -248,6 +267,18 @@ pub async fn upsert_search_document(
             "package_id={package_id} upsert failed: {e:#}"
         );
     }
+}
+
+pub async fn upsert_search_document_and_wait(
+    repo: &dyn Repository,
+    index: &SearchIndex,
+    package_id: i64,
+    access: &str,
+    packument: &Packument,
+) -> Result<()> {
+    let (upstream, local) = fetch_downloads(repo, package_id).await;
+    let doc = build_search_document(package_id, packument, upstream, local, access);
+    index.upsert_package_and_wait(&doc).await
 }
 
 pub async fn reindex_all(repo: &dyn Repository, index: &SearchIndex) -> Result<()> {

@@ -263,23 +263,18 @@ pub async fn set_access(
         let reindex_result: Result<(), anyhow::Error> = async {
             let (bytes, _) = state.repo.get_content(full_dist_id).await?;
             let packument: Packument = serde_json::from_slice(&bytes)?;
-            crate::search::upsert_search_document(
+            crate::search::upsert_search_document_and_wait(
                 &*state.repo,
                 idx,
                 pkg.id,
                 normalized,
                 &packument,
             )
-            .await;
+            .await?;
             Ok(())
         }
         .await;
-        if let Err(e) = reindex_result {
-            log::warn!(
-                action = "set_access";
-                "name={fullname} failed to refresh search index: {e:#}"
-            );
-        }
+        reindex_result.map_err(WebError::CustomApiError)?;
     }
 
     log::info!(

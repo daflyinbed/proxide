@@ -1,6 +1,6 @@
 use crate::error::{WebError, WebResult};
 use crate::extract;
-use crate::handlers::fast_meta::{load_abbreviated_packument, resolve_specifier};
+use crate::handlers::fast_meta::{fetch_abbreviated_packument, get_package_row, resolve_specifier};
 use crate::middleware::auth::ensure_package_readable;
 use crate::repository::PackageVersionRow;
 use crate::state::AppState;
@@ -83,9 +83,11 @@ pub(crate) async fn resolve_version(
     fullname: &str,
     spec: &str,
 ) -> WebResult<ResolvedVersion> {
-    let (pkg, packument) = load_abbreviated_packument(state, fullname).await?;
+    let pkg = get_package_row(state, fullname).await?;
 
     ensure_package_readable(state, headers, &pkg).await?;
+
+    let packument = fetch_abbreviated_packument(state, &pkg).await?;
 
     let versions: Vec<String> = packument.versions.keys().cloned().collect();
     let resolved = resolve_specifier(spec, &packument.dist_tags, &versions)

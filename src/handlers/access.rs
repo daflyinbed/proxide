@@ -266,6 +266,8 @@ pub async fn set_access(
     }
     let _unlock = UnlockGuard::new(&state.package_lock, fullname.clone());
 
+    let old_access = pkg.access.as_str();
+
     state
         .repo
         .set_package_access(pkg.id, normalized)
@@ -289,7 +291,17 @@ pub async fn set_access(
             Ok(())
         }
         .await;
-        reindex_result.map_err(WebError::CustomApiError)?;
+        if let Err(e) = reindex_result {
+            if old_access != normalized {
+                if let Err(rb_err) = state.repo.set_package_access(pkg.id, old_access).await {
+                    log::error!(
+                        action = "set_access_rollback_failed";
+                        "name={fullname} failed to roll back access from {normalized} to {old_access}: {rb_err}"
+                    );
+                }
+            }
+            return Err(WebError::CustomApiError(e));
+        }
     }
 
     log::info!(

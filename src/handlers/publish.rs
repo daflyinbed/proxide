@@ -245,17 +245,17 @@ pub async fn publish_package_inner(
         .map(|s| if s.len() > 10240 { &s[..10240] } else { s });
 
     let pkg_exists = pkg.is_some();
+    let requested_access = payload
+        .access
+        .as_deref()
+        .or_else(|| {
+            package_version
+                .publish_config
+                .as_ref()
+                .and_then(|c| c.access.as_deref())
+        });
     if !pkg_exists && scope.is_none() {
-        let requested = payload
-            .access
-            .as_deref()
-            .or_else(|| {
-                package_version
-                    .publish_config
-                    .as_ref()
-                    .and_then(|c| c.access.as_deref())
-            });
-        if matches!(requested, Some("restricted") | Some("private")) {
+        if matches!(requested_access, Some("restricted") | Some("private")) {
             return Err(WebError::BadRequest(
                 "unscoped packages are always public; restricted access requires a scope".to_string(),
             ));
@@ -263,26 +263,35 @@ pub async fn publish_package_inner(
     }
     let (desired_access, package_access): (Option<&str>, &str) =
         if !pkg_exists && scope.is_some() {
-            let want_public = payload
-                .access
-                .as_deref()
-                .or_else(|| {
-                    package_version
-                        .publish_config
-                        .as_ref()
-                        .and_then(|c| c.access.as_deref())
-                })
-                == Some("public");
-            let access = if want_public { "public" } else { "restricted" };
+            let access = if requested_access == Some("public") {
+                "public"
+            } else {
+                "restricted"
+            };
             (
                 if access == "restricted" { Some(access) } else { None },
                 access,
             )
+        } else if pkg_exists && scope.is_some() {
+            let current = pkg
+                .as_ref()
+                .map(|p| p.access.as_str())
+                .unwrap_or("public");
+            let access = match requested_access {
+                Some("public") => "public",
+                Some("restricted") | Some("private") => "restricted",
+                _ => current,
+            };
+            if access != current {
+                (Some(access), access)
+            } else {
+                (
+                    if access == "restricted" { Some(access) } else { None },
+                    access,
+                )
+            }
         } else {
-            (
-                None,
-                pkg.as_ref().map(|p| p.access.as_str()).unwrap_or("public"),
-            )
+            (None, "public")
         };
 
     let (package_id, existing_source) = state

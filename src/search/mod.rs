@@ -112,6 +112,7 @@ impl SearchIndex {
                 "package.deprecated",
                 "package.created",
                 "package.access",
+                "package.maintainers.name",
             ])
             .with_sortable_attributes([
                 "downloads.upstream",

@@ -64,19 +64,25 @@ pub async fn search_packages(
         q.size.min(MAX_SIZE)
     };
 
-    let is_admin_user = match validate_auth_any(&state, &headers).await {
-        Ok(auth) => is_admin(&auth.user, &state.config.auth.admins),
-        Err(WebError::Unauthorized(_)) => false,
+    let filter = match validate_auth_any(&state, &headers).await {
+        Ok(auth) => {
+            if is_admin(&auth.user, &state.config.auth.admins) {
+                None
+            } else {
+                let escaped = escape_meili_filter_string(&auth.user.name);
+                Some(format!(
+                    r#"package.access = "public" OR package.access NOT EXISTS OR package.maintainers.name = "{escaped}""#
+                ))
+            }
+        }
+        Err(WebError::Unauthorized(_)) => {
+            Some(r#"package.access = "public" OR package.access NOT EXISTS"#.to_string())
+        }
         Err(e) => return Err(e),
-    };
-    let filter = if is_admin_user {
-        None
-    } else {
-        Some(r#"package.access = "public" OR package.access NOT EXISTS"#)
     };
 
     let results = idx
-        .search(text, from, size, filter)
+        .search(text, from, size, filter.as_deref())
         .await
         .map_err(WebError::CustomApiError)?;
 
@@ -84,4 +90,8 @@ pub async fn search_packages(
         objects: results.hits.into_iter().map(|h| h.result).collect(),
         total: results.estimated_total_hits.unwrap_or(0),
     }))
+}
+
+fn escape_meili_filter_string(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
 }

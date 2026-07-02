@@ -19,6 +19,12 @@ pub struct PackageRow {
     pub full_dist_id: Option<i64>,
 }
 
+impl PackageRow {
+    pub fn is_public(&self) -> bool {
+        self.scope.is_none() || self.access == "public"
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PackageVersionRow {
     pub id: i64,

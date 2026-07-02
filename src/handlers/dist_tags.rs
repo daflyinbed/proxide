@@ -1,42 +1,12 @@
 use crate::error::{WebError, WebResult};
 use crate::handlers::publish::refresh_manifests;
-use crate::middleware::auth::{AuthContext, check_scope_access, ensure_package_readable, is_admin, validate_auth};
-use crate::npm::split_scope_name;
+use crate::middleware::auth::{ensure_package_readable, ensure_package_write_access, validate_auth};
 use crate::npm::types::PublishResponse;
 use crate::state::{AppState, LockOwner, UnlockGuard};
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use std::collections::HashMap;
-
-async fn ensure_tag_write_access(
-    state: &AppState,
-    auth: &AuthContext,
-    fullname: &str,
-    package_id: i64,
-) -> WebResult<()> {
-    if is_admin(&auth.user, &state.config.auth.admins) {
-        return Ok(());
-    }
-    let (scope, _name) = split_scope_name(fullname);
-    check_scope_access(
-        scope,
-        &state.config.auth.allow_scopes,
-        state.config.auth.allow_publish_non_scope_package,
-    )?;
-    let is_maintainer = state
-        .repo
-        .is_maintainer(package_id, auth.user.id)
-        .await
-        .map_err(WebError::CustomApiError)?;
-    if !is_maintainer {
-        return Err(WebError::Forbidden(format!(
-            "\"{}\" not authorized to modify {fullname}, please contact maintainers",
-            auth.user.name
-        )));
-    }
-    Ok(())
-}
 
 fn ensure_local_package(source: Option<&str>, fullname: &str) -> WebResult<()> {
     if let Some(s) = source {
@@ -160,7 +130,7 @@ pub async fn set_dist_tag(
         .map_err(WebError::CustomApiError)?
         .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
 
-    ensure_tag_write_access(&state, &auth, &fullname, pkg.id).await?;
+    ensure_package_write_access(&state, &auth, &fullname, pkg.id).await?;
     ensure_local_package(pkg.source.as_deref(), &fullname)?;
 
     let _unlock = lock_package(&state, &fullname)?;
@@ -259,7 +229,7 @@ pub async fn remove_dist_tag(
         .map_err(WebError::CustomApiError)?
         .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
 
-    ensure_tag_write_access(&state, &auth, &fullname, pkg.id).await?;
+    ensure_package_write_access(&state, &auth, &fullname, pkg.id).await?;
     ensure_local_package(pkg.source.as_deref(), &fullname)?;
 
     let _unlock = lock_package(&state, &fullname)?;

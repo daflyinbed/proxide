@@ -1,4 +1,5 @@
 use crate::error::{WebError, WebResult};
+use crate::npm::split_scope_name;
 use crate::repository::{PackageRow, TokenRow, UserRow};
 use crate::state::AppState;
 use axum::http::HeaderMap;
@@ -112,7 +113,7 @@ pub async fn ensure_package_readable(
     headers: &HeaderMap,
     pkg: &PackageRow,
 ) -> WebResult<()> {
-    if pkg.scope.is_none() || pkg.access == "public" {
+    if pkg.is_public() {
         return Ok(());
     }
     match validate_auth_any(state, headers).await {
@@ -133,6 +134,35 @@ pub async fn ensure_package_readable(
         Err(e) => return Err(e),
     }
     Err(WebError::NotFound(format!("{} not found", pkg.name)))
+}
+
+pub async fn ensure_package_write_access(
+    state: &AppState,
+    auth: &AuthContext,
+    fullname: &str,
+    package_id: i64,
+) -> WebResult<()> {
+    if is_admin(&auth.user, &state.config.auth.admins) {
+        return Ok(());
+    }
+    let (scope, _name) = split_scope_name(fullname);
+    check_scope_access(
+        scope,
+        &state.config.auth.allow_scopes,
+        state.config.auth.allow_publish_non_scope_package,
+    )?;
+    let is_maintainer = state
+        .repo
+        .is_maintainer(package_id, auth.user.id)
+        .await
+        .map_err(WebError::CustomApiError)?;
+    if !is_maintainer {
+        return Err(WebError::Forbidden(format!(
+            "\"{}\" not authorized to modify {fullname}, please contact maintainers",
+            auth.user.name
+        )));
+    }
+    Ok(())
 }
 
 pub fn generate_salt() -> String {

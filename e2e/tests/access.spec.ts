@@ -26,7 +26,7 @@ describe("GET /npm/-/package/{fullname}/visibility", () => {
     await publishPackage(token, name, "1.0.0");
 
     const anonymous = await apiJson(visibilityPath(name));
-    expect(anonymous.res.status).toBe(403);
+    expect(anonymous.res.status).toBe(404);
 
     const { res, body } = await apiJson(visibilityPath(name), {
       headers: { authorization: `Bearer ${token}` },
@@ -45,23 +45,23 @@ describe("GET /npm/-/package/{fullname}/visibility", () => {
     expect(body.public).toBe(true);
   });
 
-  it("returns 403 for a non-existent package", async () => {
+  it("returns 404 for a non-existent package", async () => {
     const { res } = await apiJson(visibilityPath(uniqueName("e2e-vis-none")));
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(404);
   });
 });
 
 describe("GET /npm/-/package/{fullname}/visibility — access control for restricted packages", () => {
-  it("returns 403 for a restricted package without auth", async () => {
+  it("returns 404 for a restricted package without auth", async () => {
     const name = uniqueScopedName("e2e-vis", "noauth-restricted");
     const token = await login(uniqueName("e2e-vis-noauth-pub"), "pass1234");
     await publishPackage(token, name, "1.0.0");
 
     const { res } = await apiJson(visibilityPath(name));
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(404);
   });
 
-  it("returns 403 for a restricted package with a non-maintainer token", async () => {
+  it("returns 404 for a restricted package with a non-maintainer token", async () => {
     const name = uniqueScopedName("e2e-vis", "nonmaintainer-restricted");
     const owner = await login(uniqueName("e2e-vis-owner"), "pass1234");
     await publishPackage(owner, name, "1.0.0");
@@ -70,7 +70,7 @@ describe("GET /npm/-/package/{fullname}/visibility — access control for restri
     const { res } = await apiJson(visibilityPath(name), {
       headers: { authorization: `Bearer ${other}` },
     });
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(404);
   });
 
   it("allows the publishing maintainer to read a restricted package's visibility", async () => {

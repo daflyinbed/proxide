@@ -1,8 +1,8 @@
 use crate::error::{WebError, WebResult};
 use crate::middleware::auth::{
-    check_scope_access, ensure_package_readable, is_admin, validate_auth, validate_auth_any,
+    ensure_package_readable, ensure_package_write_access, is_admin, validate_auth,
+    validate_auth_any,
 };
-use crate::npm::split_scope_name;
 use crate::npm::types::Packument;
 use crate::state::{AppState, LockOwner, UnlockGuard};
 use axum::Json;
@@ -89,7 +89,7 @@ pub async fn list_packages_by_user(
     let is_self = auth.as_ref().is_some_and(|a| a.user.id == user.id);
     let mut res: BTreeMap<String, String> = BTreeMap::new();
     for pkg in pkgs {
-        let is_public = pkg.scope.is_none() || pkg.access == "public";
+        let is_public = pkg.is_public();
         if !is_public && !is_self {
             let authorized = match &auth {
                 Some(a) => {
@@ -138,27 +138,13 @@ pub async fn get_visibility(
         .get_package_by_name(&fullname)
         .await
         .map_err(WebError::CustomApiError)?
-        .ok_or_else(|| WebError::Forbidden("Forbidden".to_string()))?;
+        .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
 
-    let is_public = pkg.scope.is_none() || pkg.access == "public";
-    if !is_public {
-        let authorized = match validate_auth_any(&state, &headers).await {
-            Ok(auth) => {
-                is_admin(&auth.user, &state.config.auth.admins)
-                    || state
-                        .repo
-                        .is_maintainer(pkg.id, auth.user.id)
-                        .await
-                        .map_err(WebError::CustomApiError)?
-            }
-            Err(WebError::Unauthorized(_)) => false,
-            Err(e) => return Err(e),
-        };
-        if !authorized {
-            return Err(WebError::Forbidden("Forbidden".to_string()));
-        }
-    }
-    Ok(Json(VisibilityResponse { public: is_public }))
+    ensure_package_readable(&state, &headers, &pkg).await?;
+
+    Ok(Json(VisibilityResponse {
+        public: pkg.is_public(),
+    }))
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -231,25 +217,7 @@ pub async fn set_access(
         ));
     }
 
-    let (scope, _name) = split_scope_name(&fullname);
-    if !is_admin(&auth.user, &state.config.auth.admins) {
-        check_scope_access(
-            scope,
-            &state.config.auth.allow_scopes,
-            state.config.auth.allow_publish_non_scope_package,
-        )?;
-        let is_maintainer = state
-            .repo
-            .is_maintainer(pkg.id, auth.user.id)
-            .await
-            .map_err(WebError::CustomApiError)?;
-        if !is_maintainer {
-            return Err(WebError::Forbidden(format!(
-                "\"{}\" not authorized to modify {fullname}, please contact maintainers",
-                auth.user.name
-            )));
-        }
-    }
+    ensure_package_write_access(&state, &auth, &fullname, pkg.id).await?;
 
     if !state
         .package_lock

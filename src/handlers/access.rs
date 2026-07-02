@@ -1,7 +1,6 @@
 use crate::error::{WebError, WebResult};
 use crate::middleware::auth::{
-    ensure_package_readable, ensure_package_write_access, is_admin, validate_auth,
-    validate_auth_any,
+    OptionalAuth, RequireAuth, ensure_package_readable, ensure_package_write_access, is_admin,
 };
 use crate::npm::types::Packument;
 use crate::state::{AppState, LockOwner, UnlockGuard};
@@ -65,7 +64,7 @@ pub async fn list_collaborators(
 )]
 pub async fn list_packages_by_user(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    OptionalAuth(auth): OptionalAuth,
     Path(username): Path<String>,
 ) -> WebResult<Json<serde_json::Value>> {
     let user = state
@@ -81,11 +80,6 @@ pub async fn list_packages_by_user(
         .await
         .map_err(WebError::CustomApiError)?;
 
-    let auth = match validate_auth_any(&state, &headers).await {
-        Ok(auth) => Some(auth),
-        Err(WebError::Unauthorized(_)) => None,
-        Err(e) => return Err(e),
-    };
     let is_self = auth.as_ref().is_some_and(|a| a.user.id == user.id);
     let mut res: BTreeMap<String, String> = BTreeMap::new();
     for pkg in pkgs {
@@ -176,7 +170,7 @@ pub struct AccessResponse {
 )]
 pub async fn set_access(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    RequireAuth(auth): RequireAuth,
     Path(fullname): Path<String>,
     Json(body): Json<AccessRequest>,
 ) -> WebResult<Json<AccessResponse>> {
@@ -195,8 +189,6 @@ pub async fn set_access(
             )))
         }
     };
-
-    let auth = validate_auth(&state, &headers).await?;
 
     let pkg = state
         .repo

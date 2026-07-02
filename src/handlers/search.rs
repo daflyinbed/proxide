@@ -1,10 +1,9 @@
 use crate::error::{WebError, WebResult};
-use crate::middleware::auth::{is_admin, validate_auth_any};
+use crate::middleware::auth::{OptionalAuth, is_admin};
 use crate::search::SearchDocument;
 use crate::state::AppState;
 use axum::Json;
 use axum::extract::{Query, State};
-use axum::http::HeaderMap;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
@@ -44,7 +43,7 @@ pub struct SearchResponse {
 )]
 pub async fn search_packages(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    OptionalAuth(auth): OptionalAuth,
     Query(q): Query<SearchQuery>,
 ) -> WebResult<Json<SearchResponse>> {
     let text = q.text.trim();
@@ -64,8 +63,8 @@ pub async fn search_packages(
         q.size.min(MAX_SIZE)
     };
 
-    let filter = match validate_auth_any(&state, &headers).await {
-        Ok(auth) => {
+    let filter = match &auth {
+        Some(auth) => {
             if is_admin(&auth.user, &state.config.auth.admins) {
                 None
             } else {
@@ -75,10 +74,9 @@ pub async fn search_packages(
                 ))
             }
         }
-        Err(WebError::Unauthorized(_)) => {
-            Some(r#"package.access = "public" OR package.access NOT EXISTS"#.to_string())
-        }
-        Err(e) => return Err(e),
+        None => Some(
+            r#"package.access = "public" OR package.access NOT EXISTS"#.to_string(),
+        ),
     };
 
     let results = idx

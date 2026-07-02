@@ -176,7 +176,7 @@ describe("downloads endpoints", () => {
     const name = uniqueScopedName("e2e-scope", "e2e-downloads-scoped");
     const token = await login(uniqueName("e2e-downloads-scoped-user"), "pass1234");
 
-    await publishPackage(token, name, "1.0.0");
+    await publishPackage(token, name, "1.0.0", { access: "public" });
 
     const { res, body } = await apiJson(`/api/downloads/point/last-week/${name}`);
     expect(res.status).toBe(200);

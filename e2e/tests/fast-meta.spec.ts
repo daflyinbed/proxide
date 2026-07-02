@@ -13,7 +13,7 @@ async function seedScopedPackage() {
   const name = uniqueScopedName("e2e-scope", "e2e-fast");
   const version = "1.2.3";
   const token = await login(uniqueName("e2e-scoped-fast-pub"), "pass1234");
-  await publishPackage(token, name, version);
+  await publishPackage(token, name, version, { access: "public" });
   return { name, version };
 }
 

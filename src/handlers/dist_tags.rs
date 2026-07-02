@@ -1,6 +1,6 @@
 use crate::error::{WebError, WebResult};
 use crate::handlers::publish::refresh_manifests;
-use crate::middleware::auth::{ensure_package_readable, ensure_package_write_access, validate_auth};
+use crate::middleware::auth::{RequireAuth, ensure_package_readable, ensure_package_write_access};
 use crate::npm::types::PublishResponse;
 use crate::state::{AppState, LockOwner, UnlockGuard};
 use axum::Json;
@@ -108,15 +108,13 @@ pub async fn list_dist_tags(
 )]
 pub async fn set_dist_tag(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    RequireAuth(auth): RequireAuth,
     Path((fullname, tag)): Path<(String, String)>,
     Json(version): Json<String>,
 ) -> WebResult<Json<PublishResponse>> {
     let fullname = fullname.trim().to_string();
     let tag = tag.trim().to_string();
     let version = version.trim().to_string();
-
-    let auth = validate_auth(&state, &headers).await?;
 
     validate_dist_tag(&tag)?;
     if semver::Version::parse(&version).is_err() {
@@ -206,13 +204,11 @@ pub async fn set_dist_tag(
 )]
 pub async fn remove_dist_tag(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    RequireAuth(auth): RequireAuth,
     Path((fullname, tag)): Path<(String, String)>,
 ) -> WebResult<Json<PublishResponse>> {
     let fullname = fullname.trim().to_string();
     let tag = tag.trim().to_string();
-
-    let auth = validate_auth(&state, &headers).await?;
 
     validate_dist_tag(&tag)?;
 

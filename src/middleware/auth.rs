@@ -2,7 +2,9 @@ use crate::error::{WebError, WebResult};
 use crate::npm::split_scope_name;
 use crate::repository::{PackageRow, TokenRow, UserRow};
 use crate::state::AppState;
+use axum::extract::FromRequestParts;
 use axum::http::HeaderMap;
+use axum::http::request::Parts;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use sha2::{Digest, Sha256};
@@ -181,4 +183,38 @@ pub fn compute_password_integrity(salt: &str, password: &str) -> String {
 
 pub fn verify_password(salt: &str, integrity: &str, password: &str) -> bool {
     compute_password_integrity(salt, password) == integrity
+}
+
+pub struct RequireAuth(pub AuthContext);
+
+impl FromRequestParts<AppState> for RequireAuth {
+    type Rejection = WebError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, Self::Rejection> {
+        Ok(Self(validate_auth(state, &parts.headers).await?))
+    }
+}
+
+pub struct RequireAnyAuth(pub AuthContext);
+
+impl FromRequestParts<AppState> for RequireAnyAuth {
+    type Rejection = WebError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, Self::Rejection> {
+        Ok(Self(validate_auth_any(state, &parts.headers).await?))
+    }
+}
+
+pub struct OptionalAuth(pub Option<AuthContext>);
+
+impl FromRequestParts<AppState> for OptionalAuth {
+    type Rejection = WebError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, Self::Rejection> {
+        match validate_auth_any(state, &parts.headers).await {
+            Ok(auth) => Ok(Self(Some(auth))),
+            Err(WebError::Unauthorized(_)) => Ok(Self(None)),
+            Err(e) => Err(e),
+        }
+    }
 }

@@ -103,7 +103,7 @@ describe("scoped package publish flow", () => {
     const version = "1.0.0";
     const token = await login(uniqueName("e2e-scoped-publisher"), "pass1234");
 
-    const { res: pubRes, body: pubBody } = await publishPackage(token, name, version);
+    const { res: pubRes, body: pubBody } = await publishPackage(token, name, version, { access: "public" });
     expect(pubRes.status).toBe(200);
     expect(pubBody.ok).toBe(true);
 
@@ -119,7 +119,7 @@ describe("scoped package publish flow", () => {
     const version = "1.0.0";
     const token = await login(uniqueName("e2e-scoped-pub-abbrev"), "pass1234");
 
-    await publishPackage(token, name, version);
+    await publishPackage(token, name, version, { access: "public" });
 
     const res = await api(packagePath(name), {
       headers: { accept: "application/vnd.npm.install-v1+json" },
@@ -135,7 +135,7 @@ describe("scoped package publish flow", () => {
     const version = "2.0.0";
     const token = await login(uniqueName("e2e-scoped-pub-ver"), "pass1234");
 
-    await publishPackage(token, name, version);
+    await publishPackage(token, name, version, { access: "public" });
 
     const { res, body } = await apiJson(
       `${packagePath(name)}/${version}`,
@@ -150,7 +150,7 @@ describe("scoped package publish flow", () => {
     const version = "1.0.0";
     const token = await login(uniqueName("e2e-scoped-pub-tar"), "pass1234");
 
-    await publishPackage(token, name, version);
+    await publishPackage(token, name, version, { access: "public" });
 
     const { body: packument } = await apiJson(packagePath(name));
     const tarballUrl = packument.versions[version].dist.tarball as string;

@@ -4,7 +4,7 @@ use crate::middleware::auth::{
 };
 use crate::npm::split_scope_name;
 use crate::npm::types::Packument;
-use crate::state::AppState;
+use crate::state::{AppState, LockOwner, UnlockGuard};
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
@@ -250,6 +250,21 @@ pub async fn set_access(
             )));
         }
     }
+
+    if !state
+        .package_lock
+        .try_lock(&fullname, LockOwner::Publish)
+    {
+        let owner = state
+            .package_lock
+            .get_owner(&fullname)
+            .map(|o| o.to_string())
+            .unwrap_or_else(|| "modified by another request".to_string());
+        return Err(WebError::Conflict(format!(
+            "package {fullname} is currently being {owner}"
+        )));
+    }
+    let _unlock = UnlockGuard::new(&state.package_lock, fullname.clone());
 
     state
         .repo

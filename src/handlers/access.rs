@@ -103,11 +103,6 @@ pub async fn list_packages_by_user(
     Ok(Json(serde_json::to_value(res).unwrap()))
 }
 
-#[derive(Debug, Serialize, ToSchema)]
-pub struct VisibilityResponse {
-    public: bool,
-}
-
 #[utoipa::path(
     get,
     tag = "registry",
@@ -116,7 +111,7 @@ pub struct VisibilityResponse {
         ("fullname" = String, Path, description = "Package full name, e.g. lodash or @babel/core"),
     ),
     responses(
-        (status = OK, description = "Package visibility", body = VisibilityResponse),
+        (status = OK, description = "Map of package full name to visibility (public/private)", body = serde_json::Value),
         (status = FORBIDDEN, body = crate::error::ApiErrorDetail),
     ),
 )]
@@ -124,7 +119,7 @@ pub async fn get_visibility(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(fullname): Path<String>,
-) -> WebResult<Json<VisibilityResponse>> {
+) -> WebResult<Json<serde_json::Value>> {
     let pkg = state
         .repo
         .get_package_by_name(&fullname)
@@ -134,9 +129,16 @@ pub async fn get_visibility(
 
     ensure_package_readable(&state, &headers, &pkg).await?;
 
-    Ok(Json(VisibilityResponse {
-        public: pkg.is_public(),
-    }))
+    let mut res: BTreeMap<String, String> = BTreeMap::new();
+    res.insert(
+        fullname,
+        if pkg.is_public() {
+            "public".to_string()
+        } else {
+            "private".to_string()
+        },
+    );
+    Ok(Json(serde_json::to_value(res).unwrap()))
 }
 
 #[derive(Debug, Deserialize, ToSchema)]

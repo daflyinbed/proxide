@@ -1,6 +1,9 @@
 use crate::error::{WebError, WebResult};
 use crate::handlers::publish::refresh_manifests;
-use crate::middleware::auth::{RequireAuth, ensure_package_readable, ensure_package_write_access};
+use crate::middleware::auth::{
+    RequireAuth, ensure_package_readable, ensure_package_readable_with_auth,
+    ensure_package_write_access,
+};
 use crate::npm::types::PublishResponse;
 use crate::state::{AppState, LockOwner, UnlockGuard};
 use axum::Json;
@@ -128,6 +131,7 @@ pub async fn set_dist_tag(
         .map_err(WebError::CustomApiError)?
         .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
 
+    ensure_package_readable_with_auth(&state, &auth, &pkg).await?;
     ensure_package_write_access(&state, &auth, &fullname, pkg.id).await?;
     ensure_local_package(pkg.source.as_deref(), &fullname)?;
 
@@ -225,6 +229,7 @@ pub async fn remove_dist_tag(
         .map_err(WebError::CustomApiError)?
         .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
 
+    ensure_package_readable_with_auth(&state, &auth, &pkg).await?;
     ensure_package_write_access(&state, &auth, &fullname, pkg.id).await?;
     ensure_local_package(pkg.source.as_deref(), &fullname)?;
 

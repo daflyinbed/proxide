@@ -119,21 +119,32 @@ pub async fn ensure_package_readable(
         return Ok(());
     }
     match validate_auth_any(state, headers).await {
-        Ok(auth) => {
-            if is_admin(&auth.user, &state.config.auth.admins) {
-                return Ok(());
-            }
-            if state
-                .repo
-                .is_maintainer(pkg.id, auth.user.id)
-                .await
-                .map_err(WebError::CustomApiError)?
-            {
-                return Ok(());
-            }
+        Ok(auth) => ensure_package_readable_with_auth(state, &auth, pkg).await,
+        Err(WebError::Unauthorized(_)) => {
+            Err(WebError::NotFound(format!("{} not found", pkg.name)))
         }
-        Err(WebError::Unauthorized(_)) => {}
-        Err(e) => return Err(e),
+        Err(e) => Err(e),
+    }
+}
+
+pub async fn ensure_package_readable_with_auth(
+    state: &AppState,
+    auth: &AuthContext,
+    pkg: &PackageRow,
+) -> WebResult<()> {
+    if pkg.is_public() {
+        return Ok(());
+    }
+    if is_admin(&auth.user, &state.config.auth.admins) {
+        return Ok(());
+    }
+    if state
+        .repo
+        .is_maintainer(pkg.id, auth.user.id)
+        .await
+        .map_err(WebError::CustomApiError)?
+    {
+        return Ok(());
     }
     Err(WebError::NotFound(format!("{} not found", pkg.name)))
 }

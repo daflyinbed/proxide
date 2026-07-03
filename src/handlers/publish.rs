@@ -191,6 +191,14 @@ pub async fn publish_package_inner(
     let shasum = compute_shasum(&tarball_bytes);
     let integrity = compute_integrity_sha512(&tarball_bytes);
 
+    let max_tarball_size = state.config.cdn.max_tarball_size;
+    if tarball_bytes.len() as u64 > max_tarball_size {
+        return Err(WebError::BadRequest(format!(
+            "tarball for {fullname}@{} exceeds cdn.maxTarballSize ({max_tarball_size})",
+            package_version.version
+        )));
+    }
+
     if !state.package_lock.try_lock(&fullname, LockOwner::Publish) {
         let owner = state
             .package_lock
@@ -338,12 +346,6 @@ pub async fn publish_package_inner(
     let publish_time = chrono::Utc::now().naive_utc();
 
     let tar_storage_key = format!("packages/{fullname}/{version_str}/{attachment_filename}");
-    let max_tarball_size = state.config.cdn.max_tarball_size;
-    if tarball_bytes.len() as u64 > max_tarball_size {
-        return Err(WebError::BadRequest(format!(
-            "tarball for {fullname}@{version_str} exceeds cdn.maxTarballSize ({max_tarball_size})"
-        )));
-    }
     state
         .repo
         .put_storage(&tar_storage_key, tarball_bytes.clone())

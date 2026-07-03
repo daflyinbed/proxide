@@ -1,6 +1,6 @@
 {
   "db_name": "MySQL",
-  "query": "SELECT id, name, scope, description, source, abbreviated_dist_id, full_dist_id\n               FROM packages ORDER BY id LIMIT ? OFFSET ?",
+  "query": "SELECT id, name, scope, description, source, access, abbreviated_dist_id, full_dist_id\n               FROM packages ORDER BY id LIMIT ? OFFSET ?",
   "describe": {
     "columns": [
       {
@@ -50,6 +50,15 @@
       },
       {
         "ordinal": 5,
+        "name": "access",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL",
+          "max_size": 64
+        }
+      },
+      {
+        "ordinal": 6,
         "name": "abbreviated_dist_id",
         "type_info": {
           "type": "LongLong",
@@ -58,7 +67,7 @@
         }
       },
       {
-        "ordinal": 6,
+        "ordinal": 7,
         "name": "full_dist_id",
         "type_info": {
           "type": "LongLong",
@@ -76,9 +85,10 @@
       true,
       true,
       true,
+      false,
       true,
       true
     ]
   },
-  "hash": "585dbbbc8da36f208c4077d70028ba8cfdf90102f8d558c453eeeb2b043b44cf"
+  "hash": "4c895bc4aa5f654e906cb41fa9b72b35e5318ea1a05fd027cdac23bfa7866951"
 }

@@ -16,6 +16,7 @@ use axum::extract::{Path, State};
         (status = INTERNAL_SERVER_ERROR, body = crate::error::ApiErrorDetail),
     ),
 )]
+// Intentionally unauthenticated: any client may enqueue a sync task.
 pub async fn trigger_sync(
     State(state): State<AppState>,
     Path(fullname): Path<String>,

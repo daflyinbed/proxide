@@ -21,7 +21,7 @@ describe("GET /npm/-/package/{fullname}/collaborators", () => {
     const publisher = uniqueName("e2e-scoped-collab-pub");
     const token = await login(publisher, "pass1234");
 
-    await publishPackage(token, name, "1.0.0");
+    await publishPackage(token, name, "1.0.0", { access: "public" });
 
     const { res, body } = await apiJson(
       "/npm/-/package/" + encodeURIComponent(name) + "/collaborators",
@@ -30,11 +30,11 @@ describe("GET /npm/-/package/{fullname}/collaborators", () => {
     expect(body[publisher]).toBe("write");
   });
 
-  it("returns 403 for non-existent package", async () => {
+  it("returns 404 for non-existent package", async () => {
     const { res } = await apiJson(
       "/npm/-/package/" + encodeURIComponent(uniqueName("e2e-nocollab")) + "/collaborators",
     );
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(404);
   });
 });
 

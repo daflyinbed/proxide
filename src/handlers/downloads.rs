@@ -1,7 +1,9 @@
 use crate::error::{WebError, WebResult};
+use crate::middleware::auth::ensure_package_readable;
 use crate::repository::{PackageDownloadRow, UpstreamPackageDownloadRow};
 use crate::state::AppState;
 use axum::extract::Path;
+use axum::http::HeaderMap;
 use axum::Json;
 use chrono::{Datelike, NaiveDate};
 use serde::{Deserialize, Serialize};
@@ -311,6 +313,7 @@ async fn ensure_upstream_cache(
 )]
 pub async fn downloads_point(
     axum::extract::State(state): axum::extract::State<AppState>,
+    headers: HeaderMap,
     Path(rest): Path<String>,
 ) -> WebResult<Json<DownloadsPoint>> {
     let (range, fullname) = parse_download_target(&rest)?;
@@ -322,6 +325,8 @@ pub async fn downloads_point(
         .await
         .map_err(WebError::CustomApiError)?
         .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
+
+    ensure_package_readable(&state, &headers, &pkg).await?;
 
     let local_rows = state
         .repo
@@ -394,6 +399,7 @@ pub async fn downloads_point(
 )]
 pub async fn downloads_range(
     axum::extract::State(state): axum::extract::State<AppState>,
+    headers: HeaderMap,
     Path(rest): Path<String>,
 ) -> WebResult<Json<DownloadsRange>> {
     let (range, fullname) = parse_download_target(&rest)?;
@@ -405,6 +411,8 @@ pub async fn downloads_range(
         .await
         .map_err(WebError::CustomApiError)?
         .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
+
+    ensure_package_readable(&state, &headers, &pkg).await?;
 
     let local_rows = state
         .repo

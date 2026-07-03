@@ -1,4 +1,5 @@
 use crate::error::{WebError, WebResult};
+use crate::middleware::auth::ensure_package_readable;
 use crate::npm::types::{
     AbbreviatedPackument, FastMetaFull, FastMetaResolved, FastMetaVersions, Packument, VersionMeta,
 };
@@ -6,6 +7,7 @@ use crate::repository::PackageRow;
 use crate::state::AppState;
 use axum::Json;
 use axum::extract::{Path, State};
+use axum::http::HeaderMap;
 use semver::VersionReq;
 use std::collections::HashMap;
 
@@ -18,17 +20,19 @@ fn parse_specifier(pkg: &str) -> (String, String) {
     (pkg.to_string(), "latest".to_string())
 }
 
-pub(crate) async fn load_abbreviated_packument(
-    state: &AppState,
-    fullname: &str,
-) -> WebResult<(PackageRow, AbbreviatedPackument)> {
-    let pkg = state
+pub(crate) async fn get_package_row(state: &AppState, fullname: &str) -> WebResult<PackageRow> {
+    state
         .repo
         .get_package_by_name(fullname)
         .await
         .map_err(WebError::CustomApiError)?
-        .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
+        .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))
+}
 
+pub(crate) async fn fetch_abbreviated_packument(
+    state: &AppState,
+    pkg: &PackageRow,
+) -> WebResult<AbbreviatedPackument> {
     let dist_id = pkg
         .abbreviated_dist_id
         .ok_or_else(|| WebError::CustomApiError(anyhow::anyhow!("manifest not synced")))?;
@@ -39,23 +43,13 @@ pub(crate) async fn load_abbreviated_packument(
         .await
         .map_err(WebError::CustomApiError)?;
 
-    let packument: AbbreviatedPackument =
-        serde_json::from_slice(&data).map_err(|e| WebError::CustomApiError(e.into()))?;
-
-    Ok((pkg, packument))
+    serde_json::from_slice(&data).map_err(|e| WebError::CustomApiError(e.into()))
 }
 
-pub(crate) async fn load_full_packument(
+pub(crate) async fn fetch_full_packument(
     state: &AppState,
-    fullname: &str,
-) -> WebResult<(PackageRow, Packument)> {
-    let pkg = state
-        .repo
-        .get_package_by_name(fullname)
-        .await
-        .map_err(WebError::CustomApiError)?
-        .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
-
+    pkg: &PackageRow,
+) -> WebResult<Packument> {
     let dist_id = pkg
         .full_dist_id
         .ok_or_else(|| WebError::CustomApiError(anyhow::anyhow!("manifest not synced")))?;
@@ -66,10 +60,7 @@ pub(crate) async fn load_full_packument(
         .await
         .map_err(WebError::CustomApiError)?;
 
-    let packument: Packument =
-        serde_json::from_slice(&data).map_err(|e| WebError::CustomApiError(e.into()))?;
-
-    Ok((pkg, packument))
+    serde_json::from_slice(&data).map_err(|e| WebError::CustomApiError(e.into()))
 }
 
 #[utoipa::path(
@@ -87,10 +78,13 @@ pub(crate) async fn load_full_packument(
 )]
 pub async fn resolve_version(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(pkg): Path<String>,
 ) -> WebResult<Json<FastMetaResolved>> {
     let (fullname, specifier) = parse_specifier(&pkg);
-    let (_, packument) = load_abbreviated_packument(&state, &fullname).await?;
+    let pkg_row = get_package_row(&state, &fullname).await?;
+    ensure_package_readable(&state, &headers, &pkg_row).await?;
+    let packument = fetch_abbreviated_packument(&state, &pkg_row).await?;
 
     let versions: Vec<String> = packument.versions.keys().cloned().collect();
     let resolved_version = resolve_specifier(&specifier, &packument.dist_tags, &versions)
@@ -126,10 +120,13 @@ pub async fn resolve_version(
 )]
 pub async fn get_versions(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(pkg): Path<String>,
 ) -> WebResult<Json<FastMetaVersions>> {
     let (fullname, specifier) = parse_specifier(&pkg);
-    let (_, packument) = load_abbreviated_packument(&state, &fullname).await?;
+    let pkg_row = get_package_row(&state, &fullname).await?;
+    ensure_package_readable(&state, &headers, &pkg_row).await?;
+    let packument = fetch_abbreviated_packument(&state, &pkg_row).await?;
 
     let dist_tags = packument.dist_tags.clone();
     let all_versions: Vec<String> = packument.versions.keys().cloned().collect();
@@ -164,10 +161,13 @@ pub async fn get_versions(
 )]
 pub async fn get_full(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(pkg): Path<String>,
 ) -> WebResult<Json<FastMetaFull>> {
     let (fullname, _) = parse_specifier(&pkg);
-    let (_, packument) = load_full_packument(&state, &fullname).await?;
+    let pkg_row = get_package_row(&state, &fullname).await?;
+    ensure_package_readable(&state, &headers, &pkg_row).await?;
+    let packument = fetch_full_packument(&state, &pkg_row).await?;
 
     let dist_tags = packument.dist_tags.clone();
     let versions_meta = extract_versions_meta(&packument);

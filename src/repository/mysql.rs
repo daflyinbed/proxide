@@ -146,7 +146,7 @@ impl Repository for MysqlRepository {
     async fn get_package_by_name(&self, name: &str) -> Result<Option<PackageRow>> {
         let row = sqlx::query_as!(
             PackageRow,
-            r#"SELECT id, name, scope, description, source, abbreviated_dist_id, full_dist_id FROM packages WHERE name = ?"#,
+            r#"SELECT id, name, scope, description, source, access, abbreviated_dist_id, full_dist_id FROM packages WHERE name = ?"#,
             name
         )
         .fetch_optional(&self.pool)
@@ -157,7 +157,7 @@ impl Repository for MysqlRepository {
     async fn list_packages(&self, offset: i64, limit: i64) -> Result<Vec<PackageRow>> {
         let rows = sqlx::query_as!(
             PackageRow,
-            r#"SELECT id, name, scope, description, source, abbreviated_dist_id, full_dist_id
+            r#"SELECT id, name, scope, description, source, access, abbreviated_dist_id, full_dist_id
                FROM packages ORDER BY id LIMIT ? OFFSET ?"#,
             limit,
             offset
@@ -204,6 +204,66 @@ impl Repository for MysqlRepository {
         .execute(&self.pool)
         .await?;
         Ok(())
+    }
+
+    async fn set_package_access(&self, package_id: i64, access: &str) -> Result<()> {
+        sqlx::query!(
+            r#"UPDATE packages SET access = ? WHERE id = ?"#,
+            access,
+            package_id
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn upsert_package_for_publish(
+        &self,
+        name: &str,
+        scope: Option<&str>,
+        description: Option<&str>,
+        user_id: i64,
+        access: Option<&str>,
+    ) -> Result<(i64, Option<String>)> {
+        let mut tx = self.pool.begin().await?;
+
+        sqlx::query!(
+            r#"INSERT INTO packages (name, scope, description, source) VALUES (?, ?, ?, NULL) ON DUPLICATE KEY UPDATE description = IF(source IS NULL AND VALUES(description) IS NOT NULL, VALUES(description), description), source = IF(source IS NULL, VALUES(source), source)"#,
+            name,
+            scope,
+            description,
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        let row = sqlx::query!(r#"SELECT id, source FROM packages WHERE name = ?"#, name)
+            .fetch_one(&mut *tx)
+            .await?;
+        let package_id = row.id as i64;
+        let existing_source = row.source;
+
+        if existing_source.is_none() {
+            sqlx::query!(
+                r#"INSERT IGNORE INTO maintainers (package_id, user_id) VALUES (?, ?)"#,
+                package_id,
+                user_id,
+            )
+            .execute(&mut *tx)
+            .await?;
+
+            if let Some(access) = access {
+                sqlx::query!(
+                    r#"UPDATE packages SET access = ? WHERE id = ?"#,
+                    access,
+                    package_id,
+                )
+                .execute(&mut *tx)
+                .await?;
+            }
+        }
+
+        tx.commit().await?;
+        Ok((package_id, existing_source))
     }
 
     async fn count_packages(&self) -> Result<i64> {
@@ -702,7 +762,7 @@ impl Repository for MysqlRepository {
             let placeholders: Vec<String> = (0..chunk.len())
                 .map(|i| {
                     if i == 0 {
-                        format!("SELECT ? AS name, ? AS source")
+                        "SELECT ? AS name, ? AS source".to_string()
                     } else {
                         "UNION ALL SELECT ?, ?".to_string()
                     }
@@ -1046,10 +1106,32 @@ impl Repository for MysqlRepository {
     async fn list_packages_by_user_id(&self, user_id: i64) -> Result<Vec<PackageRow>> {
         let rows = sqlx::query_as!(
             PackageRow,
-            r#"SELECT p.id, p.name, p.scope, p.description, p.source, p.abbreviated_dist_id, p.full_dist_id
+            r#"SELECT p.id, p.name, p.scope, p.description, p.source, p.access, p.abbreviated_dist_id, p.full_dist_id
                FROM packages p JOIN maintainers m ON m.package_id = p.id
                WHERE m.user_id = ? ORDER BY p.id"#,
             user_id
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    async fn list_packages_by_user_id_readable(
+        &self,
+        target_user_id: i64,
+        viewer_user_id: i64,
+    ) -> Result<Vec<PackageRow>> {
+        let rows = sqlx::query_as!(
+            PackageRow,
+            r#"SELECT DISTINCT p.id, p.name, p.scope, p.description, p.source, p.access, p.abbreviated_dist_id, p.full_dist_id
+               FROM packages p JOIN maintainers m ON m.package_id = p.id
+               WHERE m.user_id = ?
+                 AND (p.access = 'public' OR EXISTS (
+                   SELECT 1 FROM maintainers m2 WHERE m2.package_id = p.id AND m2.user_id = ?
+                 ))
+               ORDER BY p.id"#,
+            target_user_id,
+            viewer_user_id
         )
         .fetch_all(&self.pool)
         .await?;

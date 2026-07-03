@@ -1,4 +1,5 @@
 use crate::error::{WebError, WebResult};
+use crate::middleware::auth::{OptionalAuth, is_admin};
 use crate::search::SearchDocument;
 use crate::state::AppState;
 use axum::Json;
@@ -42,6 +43,7 @@ pub struct SearchResponse {
 )]
 pub async fn search_packages(
     State(state): State<AppState>,
+    OptionalAuth(auth): OptionalAuth,
     Query(q): Query<SearchQuery>,
 ) -> WebResult<Json<SearchResponse>> {
     let text = q.text.trim();
@@ -61,8 +63,24 @@ pub async fn search_packages(
         q.size.min(MAX_SIZE)
     };
 
+    let filter = match &auth {
+        Some(auth) => {
+            if is_admin(&auth.user, &state.config.auth.admins) {
+                None
+            } else {
+                let escaped = escape_meili_filter_string(&auth.user.name);
+                Some(format!(
+                    r#"package.access = "public" OR package.access NOT EXISTS OR package.maintainers.name = "{escaped}""#
+                ))
+            }
+        }
+        None => Some(
+            r#"package.access = "public" OR package.access NOT EXISTS"#.to_string(),
+        ),
+    };
+
     let results = idx
-        .search(text, from, size)
+        .search(text, from, size, filter.as_deref())
         .await
         .map_err(WebError::CustomApiError)?;
 
@@ -70,4 +88,8 @@ pub async fn search_packages(
         objects: results.hits.into_iter().map(|h| h.result).collect(),
         total: results.estimated_total_hits.unwrap_or(0),
     }))
+}
+
+fn escape_meili_filter_string(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
 }

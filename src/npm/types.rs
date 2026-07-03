@@ -325,7 +325,7 @@ pub struct PackageVersion {
     pub config: Option<HashMap<String, serde_json::Value>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub files: Option<StringOrList>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, rename = "publishConfig", skip_serializing_if = "Option::is_none")]
     pub publish_config: Option<PublishConfig>,
     #[serde(default, rename = "private", skip_serializing_if = "Option::is_none")]
     pub is_private: Option<bool>,
@@ -575,6 +575,8 @@ pub struct PublishPayload {
     pub name: String,
     #[serde(default)]
     pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access: Option<String>,
     pub versions: HashMap<String, PublishVersion>,
     #[serde(rename = "dist-tags", default)]
     pub dist_tags: HashMap<String, String>,
@@ -678,7 +680,7 @@ pub struct PublishVersion {
     pub config: Option<HashMap<String, serde_json::Value>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub files: Option<StringOrList>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, rename = "publishConfig", skip_serializing_if = "Option::is_none")]
     pub publish_config: Option<PublishConfig>,
     #[serde(default, rename = "private", skip_serializing_if = "Option::is_none")]
     pub is_private: Option<bool>,

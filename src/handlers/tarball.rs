@@ -1,7 +1,9 @@
 use crate::error::{WebError, WebResult};
+use crate::middleware::auth::ensure_package_readable;
 use crate::repository::PackageVersionRow;
 use crate::state::{AppState, TarballInflight, TarballInflightError};
 use axum::body::Body;
+use axum::http::HeaderMap;
 use axum::response::Response;
 use bytes::Bytes;
 use futures::{StreamExt, stream};
@@ -489,6 +491,7 @@ async fn run_tarball_producer(
 
 pub async fn download_tarball_inner(
     state: &AppState,
+    headers: &HeaderMap,
     fullname: &str,
     filename: &str,
 ) -> WebResult<Response> {
@@ -508,6 +511,8 @@ pub async fn download_tarball_inner(
         .await
         .map_err(WebError::CustomApiError)?
         .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
+
+    ensure_package_readable(state, headers, &pkg).await?;
 
     let version = state
         .repo

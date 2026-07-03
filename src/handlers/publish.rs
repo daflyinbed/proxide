@@ -191,6 +191,14 @@ pub async fn publish_package_inner(
     let shasum = compute_shasum(&tarball_bytes);
     let integrity = compute_integrity_sha512(&tarball_bytes);
 
+    let max_tarball_size = state.config.cdn.max_tarball_size;
+    if tarball_bytes.len() as u64 > max_tarball_size {
+        return Err(WebError::BadRequest(format!(
+            "tarball for {fullname}@{} exceeds cdn.maxTarballSize ({max_tarball_size})",
+            package_version.version
+        )));
+    }
+
     if !state.package_lock.try_lock(&fullname, LockOwner::Publish) {
         let owner = state
             .package_lock
@@ -244,9 +252,70 @@ pub async fn publish_package_inner(
         .or(package_version.description.as_deref())
         .map(|s| if s.len() > 10240 { &s[..10240] } else { s });
 
+    let pkg_exists = pkg.is_some();
+    let requested_access = payload
+        .access
+        .as_deref()
+        .or_else(|| {
+            package_version
+                .publish_config
+                .as_ref()
+                .and_then(|c| c.access.as_deref())
+        });
+    if let Some(access) = requested_access
+        && !matches!(access, "public" | "restricted" | "private")
+    {
+        return Err(WebError::BadRequest(format!("invalid access: {access}")));
+    }
+    if scope.is_none()
+        && matches!(requested_access, Some("restricted") | Some("private"))
+    {
+        return Err(WebError::BadRequest(
+            "unscoped packages are always public; restricted access requires a scope".to_string(),
+        ));
+    }
+    let (desired_access, package_access): (Option<&str>, &str) =
+        if !pkg_exists && scope.is_some() {
+            let access = if requested_access == Some("public") {
+                "public"
+            } else {
+                "restricted"
+            };
+            (
+                if access == "restricted" { Some(access) } else { None },
+                access,
+            )
+        } else if pkg_exists && scope.is_some() {
+            let current = pkg
+                .as_ref()
+                .map(|p| p.access.as_str())
+                .unwrap_or("public");
+            let access = match requested_access {
+                Some("public") => "public",
+                Some("restricted") | Some("private") => "restricted",
+                _ => current,
+            };
+            if access != current {
+                (Some(access), access)
+            } else {
+                (
+                    if access == "restricted" { Some(access) } else { None },
+                    access,
+                )
+            }
+        } else {
+            (None, "public")
+        };
+
     let (package_id, existing_source) = state
         .repo
-        .upsert_package(&fullname, scope, description, None)
+        .upsert_package_for_publish(
+            &fullname,
+            scope,
+            description,
+            auth.user.id,
+            desired_access,
+        )
         .await
         .map_err(WebError::CustomApiError)?;
 
@@ -255,14 +324,6 @@ pub async fn publish_package_inner(
             "package {fullname} was synced from upstream ({source}), local publish is not allowed"
         )));
     }
-
-    state
-        .repo
-        .save_maintainer(package_id, auth.user.id)
-        .await
-        .map_err(WebError::CustomApiError)?;
-
-    let pkg_exists = pkg.is_some();
     if !dist_tags.contains_key("latest") {
         let needs_latest = if pkg_exists {
             let existing_tags = state
@@ -285,12 +346,6 @@ pub async fn publish_package_inner(
     let publish_time = chrono::Utc::now().naive_utc();
 
     let tar_storage_key = format!("packages/{fullname}/{version_str}/{attachment_filename}");
-    let max_tarball_size = state.config.cdn.max_tarball_size;
-    if tarball_bytes.len() as u64 > max_tarball_size {
-        return Err(WebError::BadRequest(format!(
-            "tarball for {fullname}@{version_str} exceeds cdn.maxTarballSize ({max_tarball_size})"
-        )));
-    }
     state
         .repo
         .put_storage(&tar_storage_key, tarball_bytes.clone())
@@ -486,7 +541,7 @@ pub async fn publish_package_inner(
         .await?;
 
     if let Some(idx) = &state.search {
-        crate::search::upsert_search_document(&*state.repo, idx, package_id, &full_manifest).await;
+        crate::search::upsert_search_document(&*state.repo, idx, package_id, package_access, &full_manifest).await;
     }
 
     log::info!(

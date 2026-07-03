@@ -45,6 +45,12 @@ pub struct PackageDoc {
     pub npm_user: Option<NpmUserDoc>,
     #[serde(skip_serializing_if = "Option::is_none", rename = "publish_time")]
     pub publish_time: Option<i64>,
+    #[serde(default = "default_access")]
+    pub access: String,
+}
+
+fn default_access() -> String {
+    "public".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -87,6 +93,7 @@ pub fn build_search_document(
     packument: &Packument,
     upstream: u64,
     local: u64,
+    access: &str,
 ) -> SearchDocument {
     let latest_version = packument.dist_tags.get("latest");
     let latest_manifest = latest_version
@@ -143,6 +150,7 @@ pub fn build_search_document(
         source_registry_name: None,
         npm_user,
         publish_time,
+        access: access.to_string(),
     };
 
     SearchDocument {
@@ -256,7 +264,7 @@ mod tests {
     #[test]
     fn publish_time_parsed_from_upstream_z_suffix() {
         let packument = packument_with_time("2021-09-30T20:34:49.756Z");
-        let doc = build_search_document(1, &packument, 0, 0);
+        let doc = build_search_document(1, &packument, 0, 0, "public");
         assert_eq!(doc.package.publish_time, Some(1_633_034_089_756));
         assert_eq!(doc.package.date.as_deref(), Some("2021-09-30T20:34:49.756Z"));
     }
@@ -264,7 +272,7 @@ mod tests {
     #[test]
     fn publish_time_parsed_from_local_no_suffix() {
         let packument = packument_with_time("2021-09-30T20:34:49.756");
-        let doc = build_search_document(1, &packument, 42, 7);
+        let doc = build_search_document(1, &packument, 42, 7, "public");
         assert_eq!(doc.package.publish_time, Some(1_633_034_089_756));
         assert_eq!(doc.downloads.upstream, 42);
         assert_eq!(doc.downloads.local, 7);
@@ -273,7 +281,7 @@ mod tests {
     #[test]
     fn build_search_document_basic_structure() {
         let packument = packument_with_time("2021-09-30T20:34:49.756Z");
-        let doc = build_search_document(42, &packument, 7, 3);
+        let doc = build_search_document(42, &packument, 7, 3, "public");
 
         assert_eq!(doc.id, "42");
         assert_eq!(doc.package.name, "@scope/pkg");
@@ -281,6 +289,7 @@ mod tests {
         assert_eq!(doc.package.scope, "scope");
         assert_eq!(doc.downloads.upstream, 7);
         assert_eq!(doc.downloads.local, 3);
+        assert_eq!(doc.package.access, "public");
         assert_eq!(doc.package.versions, vec!["1.2.3".to_string()]);
         assert_eq!(doc.package.dist_tags.get("latest").map(String::as_str), Some("1.2.3"));
         assert_eq!(doc.package.created.as_deref(), Some("2020-01-01T00:00:00.000Z"));
@@ -289,8 +298,8 @@ mod tests {
 
     #[test]
     fn build_search_document_uses_unique_db_id() {
-        assert_eq!(build_search_document(1, &packument_with_time("2021-09-30T20:34:49.756Z"), 0, 0).id, "1");
-        assert_eq!(build_search_document(999, &packument_with_time("2021-09-30T20:34:49.756Z"), 0, 0).id, "999");
+        assert_eq!(build_search_document(1, &packument_with_time("2021-09-30T20:34:49.756Z"), 0, 0, "public").id, "1");
+        assert_eq!(build_search_document(999, &packument_with_time("2021-09-30T20:34:49.756Z"), 0, 0, "public").id, "999");
     }
 
     fn local_row(version_id: i64, version: &str, d01: u32, d15: u32, d31: u32) -> (i64, String, PackageDownloadRow) {

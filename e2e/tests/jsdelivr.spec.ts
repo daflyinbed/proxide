@@ -158,7 +158,7 @@ describe("jsdelivr CDN (scoped package)", () => {
     const name = uniqueScopedName("e2e-scope", "e2e-jsdelivr-scoped");
     const version = "1.0.0";
     const token = await login(uniqueName("e2e-jsdelivr-scoped-pub"), "pass1234");
-    await publishPackage(token, name, version);
+    await publishPackage(token, name, version, { access: "public" });
 
     const res = await api(
       `/jsdelivr/npm/${name}@${version}/package.json`,

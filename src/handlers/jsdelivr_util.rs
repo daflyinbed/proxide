@@ -1,13 +1,17 @@
 use crate::error::{WebError, WebResult};
 use crate::extract;
-use crate::handlers::fast_meta::{load_abbreviated_packument, resolve_specifier};
+use crate::handlers::fast_meta::{fetch_abbreviated_packument, get_package_row, resolve_specifier};
+use crate::middleware::auth::ensure_package_readable;
 use crate::repository::PackageVersionRow;
 use crate::state::AppState;
+use axum::http::HeaderMap;
 
 pub(crate) struct ResolvedVersion {
     pub version_row: PackageVersionRow,
     pub resolved: String,
     pub tarball_filename: String,
+    pub is_public: bool,
+    pub is_scoped: bool,
 }
 
 pub(crate) fn parse_pkg_spec_path(rest: &str) -> (String, String, String) {
@@ -77,10 +81,15 @@ fn split_fullname_and_tail(s: &str) -> (String, String) {
 
 pub(crate) async fn resolve_version(
     state: &AppState,
+    headers: &HeaderMap,
     fullname: &str,
     spec: &str,
 ) -> WebResult<ResolvedVersion> {
-    let (pkg, packument) = load_abbreviated_packument(state, fullname).await?;
+    let pkg = get_package_row(state, fullname).await?;
+
+    ensure_package_readable(state, headers, &pkg).await?;
+
+    let packument = fetch_abbreviated_packument(state, &pkg).await?;
 
     let versions: Vec<String> = packument.versions.keys().cloned().collect();
     let resolved = resolve_specifier(spec, &packument.dist_tags, &versions)
@@ -105,6 +114,8 @@ pub(crate) async fn resolve_version(
         version_row,
         resolved,
         tarball_filename,
+        is_public: pkg.is_public(),
+        is_scoped: pkg.scope.is_some(),
     })
 }
 

@@ -1,5 +1,5 @@
 use crate::error::{WebError, WebResult};
-use crate::middleware::auth::{hash_token, validate_auth, validate_auth_any, verify_password};
+use crate::middleware::auth::{RequireAnyAuth, RequireAuth, hash_token, verify_password};
 use crate::npm::types::{
     OkResponse, TokenCreateRequest, TokenListResponse, TokenObject, WhoAmIResponse,
 };
@@ -7,7 +7,7 @@ use crate::repository::TokenRow;
 use crate::state::AppState;
 use axum::Json;
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::StatusCode;
 
 fn mask_token(key: &str) -> String {
     let prefix = key.chars().take(7).collect::<String>();
@@ -54,10 +54,8 @@ fn token_object(row: &TokenRow, masked: bool) -> TokenObject {
     ),
 )]
 pub async fn whoami(
-    State(state): State<AppState>,
-    headers: HeaderMap,
+    RequireAnyAuth(auth): RequireAnyAuth,
 ) -> WebResult<Json<WhoAmIResponse>> {
-    let auth = validate_auth_any(&state, &headers).await?;
     Ok(Json(WhoAmIResponse {
         username: auth.user.name,
     }))
@@ -78,11 +76,9 @@ pub async fn whoami(
 )]
 pub async fn logout(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    RequireAnyAuth(auth): RequireAnyAuth,
     Path(token): Path<String>,
 ) -> WebResult<(StatusCode, Json<OkResponse>)> {
-    let auth = validate_auth_any(&state, &headers).await?;
-
     let path_key = hash_token(&token);
     if path_key != auth.token.token_key {
         return Err(WebError::BadRequest("invalid token".to_string()));
@@ -111,9 +107,8 @@ pub async fn logout(
 )]
 pub async fn list_tokens(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    RequireAuth(auth): RequireAuth,
 ) -> WebResult<Json<TokenListResponse>> {
-    let auth = validate_auth(&state, &headers).await?;
 
     let rows = state
         .repo
@@ -145,10 +140,9 @@ pub async fn list_tokens(
 )]
 pub async fn create_token(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    RequireAuth(auth): RequireAuth,
     Json(body): Json<TokenCreateRequest>,
 ) -> WebResult<Json<TokenObject>> {
-    let auth = validate_auth(&state, &headers).await?;
 
     let (Some(salt), Some(integrity)) = (auth.user.password_salt.as_deref(), auth.user.password_integrity.as_deref())
         else { return Err(WebError::Forbidden("Password verification unavailable for this account".to_string())); };
@@ -223,10 +217,9 @@ pub async fn create_token(
 )]
 pub async fn revoke_token(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    RequireAuth(auth): RequireAuth,
     Path(key): Path<String>,
 ) -> WebResult<(StatusCode, Json<OkResponse>)> {
-    let auth = validate_auth(&state, &headers).await?;
 
     let token = state
         .repo

@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "UPDATE packages SET access = ? WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "d4fe2dcbcd49fc8bf1791438f98bcd0eca56d27171c83e877323038c1f8f3777"
+}

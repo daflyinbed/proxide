@@ -1,6 +1,6 @@
 {
   "db_name": "MySQL",
-  "query": "SELECT p.id, p.name, p.scope, p.description, p.source, p.abbreviated_dist_id, p.full_dist_id\n               FROM packages p JOIN maintainers m ON m.package_id = p.id\n               WHERE m.user_id = ? ORDER BY p.id",
+  "query": "SELECT DISTINCT p.id, p.name, p.scope, p.description, p.source, p.access, p.abbreviated_dist_id, p.full_dist_id\n               FROM packages p JOIN maintainers m ON m.package_id = p.id\n               WHERE m.user_id = ?\n                 AND (p.access = 'public' OR EXISTS (\n                   SELECT 1 FROM maintainers m2 WHERE m2.package_id = p.id AND m2.user_id = ?\n                 ))\n               ORDER BY p.id",
   "describe": {
     "columns": [
       {
@@ -50,6 +50,15 @@
       },
       {
         "ordinal": 5,
+        "name": "access",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL",
+          "max_size": 64
+        }
+      },
+      {
+        "ordinal": 6,
         "name": "abbreviated_dist_id",
         "type_info": {
           "type": "LongLong",
@@ -58,7 +67,7 @@
         }
       },
       {
-        "ordinal": 6,
+        "ordinal": 7,
         "name": "full_dist_id",
         "type_info": {
           "type": "LongLong",
@@ -68,7 +77,7 @@
       }
     ],
     "parameters": {
-      "Right": 1
+      "Right": 2
     },
     "nullable": [
       false,
@@ -76,9 +85,10 @@
       true,
       true,
       true,
+      false,
       true,
       true
     ]
   },
-  "hash": "ebd3bedd86db9e736e18418000f02983c0305d9030e9edb4f1a22b5ae64a93dc"
+  "hash": "dae31009198eb9695139c9a8dc58392da34504e2e0d71fdad261efd2916d6f02"
 }

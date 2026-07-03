@@ -6,11 +6,14 @@ use crate::state::AppState;
 use async_compression::tokio::bufread::ZstdDecoder;
 use axum::body::Body;
 use axum::extract::{Path, State};
+use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Redirect, Response};
 use futures::StreamExt;
 use reqwest::StatusCode;
 
-const CACHE_FILE: &str = "public, max-age=31536000";
+const CACHE_FILE: &str = "public, max-age=31536000, immutable";
+const CACHE_FILE_SCOPED: &str = "public, max-age=300, must-revalidate";
+const CACHE_FILE_PRIVATE: &str = "private, no-store";
 const ZSTD_SUFFIX: &str = ".zst";
 
 #[utoipa::path(
@@ -29,6 +32,7 @@ const ZSTD_SUFFIX: &str = ".zst";
 )]
 pub async fn serve_file(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(rest): Path<String>,
 ) -> WebResult<Response> {
     if !state.config.cdn.enabled {
@@ -40,7 +44,7 @@ pub async fn serve_file(
         return Err(WebError::NotFound("package name is empty".to_string()));
     }
 
-    let resolved = resolve_version(&state, &fullname, &spec).await?;
+    let resolved = resolve_version(&state, &headers, &fullname, &spec).await?;
 
     if spec != resolved.resolved {
         let location = format!(
@@ -85,11 +89,19 @@ pub async fn serve_file(
         Body::from_stream(stream)
     };
 
+    let cache_control = if !resolved.is_public {
+        CACHE_FILE_PRIVATE
+    } else if resolved.is_scoped {
+        CACHE_FILE_SCOPED
+    } else {
+        CACHE_FILE
+    };
+
     let mut builder = Response::builder()
         .status(StatusCode::OK)
         .header("content-type", &file.content_type)
         .header("content-length", file.size)
-        .header("cache-control", CACHE_FILE)
+        .header("cache-control", cache_control)
         .header("cross-origin-resource-policy", "cross-origin");
     if let Some(hash) = &file.shasum {
         builder = builder.header("x-content-hash", hash);

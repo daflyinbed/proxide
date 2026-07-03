@@ -111,6 +111,8 @@ impl SearchIndex {
                 "package.scope",
                 "package.deprecated",
                 "package.created",
+                "package.access",
+                "package.maintainers.name",
             ])
             .with_sortable_attributes([
                 "downloads.upstream",
@@ -136,6 +138,25 @@ impl SearchIndex {
             .await
             .context("failed to submit upsert task")?;
         Ok(())
+    }
+
+    pub async fn upsert_package_and_wait(&self, doc: &SearchDocument) -> Result<()> {
+        let index = self.client.index(&self.index_uid);
+        let task = index
+            .add_or_replace(&[doc], None)
+            .await
+            .context("failed to submit upsert task")?;
+        let outcome = task
+            .wait_for_completion(&self.client, None, None)
+            .await
+            .context("upsert task wait failed")?;
+        match outcome {
+            Task::Succeeded { .. } => Ok(()),
+            Task::Failed { content } => Err(content.error).context("upsert task failed"),
+            other => Err(anyhow::anyhow!(
+                "upsert task ended in unexpected state: {other:?}"
+            )),
+        }
     }
 
     pub async fn upsert_many(&self, docs: &[SearchDocument]) -> Result<()> {
@@ -164,13 +185,15 @@ impl SearchIndex {
         text: &str,
         offset: usize,
         limit: usize,
+        filter: Option<&str>,
     ) -> Result<SearchResults<SearchDocument>> {
         let index = self.client.index(&self.index_uid);
-        let results = index
-            .search()
-            .with_query(text)
-            .with_offset(offset)
-            .with_limit(limit)
+        let mut query = index.search();
+        query.with_query(text).with_offset(offset).with_limit(limit);
+        if let Some(f) = filter {
+            query.with_filter(f);
+        }
+        let results = query
             .execute::<SearchDocument>()
             .await
             .context("meilisearch query failed")?;
@@ -233,16 +256,29 @@ pub async fn upsert_search_document(
     repo: &dyn Repository,
     index: &SearchIndex,
     package_id: i64,
+    access: &str,
     packument: &Packument,
 ) {
     let (upstream, local) = fetch_downloads(repo, package_id).await;
-    let doc = build_search_document(package_id, packument, upstream, local);
+    let doc = build_search_document(package_id, packument, upstream, local, access);
     if let Err(e) = index.upsert_package(&doc).await {
         log::warn!(
             action = "search_index_upsert";
             "package_id={package_id} upsert failed: {e:#}"
         );
     }
+}
+
+pub async fn upsert_search_document_and_wait(
+    repo: &dyn Repository,
+    index: &SearchIndex,
+    package_id: i64,
+    access: &str,
+    packument: &Packument,
+) -> Result<()> {
+    let (upstream, local) = fetch_downloads(repo, package_id).await;
+    let doc = build_search_document(package_id, packument, upstream, local, access);
+    index.upsert_package_and_wait(&doc).await
 }
 
 pub async fn reindex_all(repo: &dyn Repository, index: &SearchIndex) -> Result<()> {
@@ -275,7 +311,7 @@ pub async fn reindex_all(repo: &dyn Repository, index: &SearchIndex) -> Result<(
                 }
             };
             let (upstream, local) = fetch_downloads(repo, pkg.id).await;
-            let doc = build_search_document(pkg.id, &packument, upstream, local);
+            let doc = build_search_document(pkg.id, &packument, upstream, local, &pkg.access);
             docs.push(doc);
         }
 

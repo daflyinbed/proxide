@@ -14,8 +14,15 @@ pub struct PackageRow {
     pub scope: Option<String>,
     pub description: Option<String>,
     pub source: Option<String>,
+    pub access: String,
     pub abbreviated_dist_id: Option<i64>,
     pub full_dist_id: Option<i64>,
+}
+
+impl PackageRow {
+    pub fn is_public(&self) -> bool {
+        self.scope.is_none() || self.access == "public"
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -290,6 +297,15 @@ pub trait Repository: Send + Sync + 'static {
         abbreviated_dist_id: Option<i64>,
         full_dist_id: Option<i64>,
     ) -> Result<()>;
+    async fn set_package_access(&self, package_id: i64, access: &str) -> Result<()>;
+    async fn upsert_package_for_publish(
+        &self,
+        name: &str,
+        scope: Option<&str>,
+        description: Option<&str>,
+        user_id: i64,
+        access: Option<&str>,
+    ) -> Result<(i64, Option<String>)>;
     async fn count_packages(&self) -> Result<i64>;
 
     // ── package_versions ──
@@ -415,6 +431,11 @@ pub trait Repository: Send + Sync + 'static {
     async fn sync_maintainers(&self, package_id: i64, user_ids: &[i64]) -> Result<()>;
     async fn list_maintainers(&self, package_id: i64) -> Result<Vec<Maintainer>>;
     async fn list_packages_by_user_id(&self, user_id: i64) -> Result<Vec<PackageRow>>;
+    async fn list_packages_by_user_id_readable(
+        &self,
+        target_user_id: i64,
+        viewer_user_id: i64,
+    ) -> Result<Vec<PackageRow>>;
 
     // ── sync_tasks ──
 

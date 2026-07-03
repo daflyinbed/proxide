@@ -259,7 +259,7 @@ pub async fn sync_package(
     }
 
     if let Some(idx) = search {
-        crate::search::upsert_search_document(&**repo, idx, package_id, &packument).await;
+        crate::search::upsert_search_document(&**repo, idx, package_id, "public", &packument).await;
     }
 
     // ── Phase 3: Clean up old data (best-effort) ──

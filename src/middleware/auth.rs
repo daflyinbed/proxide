@@ -1,7 +1,10 @@
 use crate::error::{WebError, WebResult};
-use crate::repository::{TokenRow, UserRow};
+use crate::npm::split_scope_name;
+use crate::repository::{PackageRow, TokenRow, UserRow};
 use crate::state::AppState;
+use axum::extract::FromRequestParts;
 use axum::http::HeaderMap;
+use axum::http::request::Parts;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use sha2::{Digest, Sha256};
@@ -107,6 +110,74 @@ pub fn check_scope_access(
     Ok(())
 }
 
+pub async fn ensure_package_readable(
+    state: &AppState,
+    headers: &HeaderMap,
+    pkg: &PackageRow,
+) -> WebResult<()> {
+    if pkg.is_public() {
+        return Ok(());
+    }
+    match validate_auth_any(state, headers).await {
+        Ok(auth) => ensure_package_readable_with_auth(state, &auth, pkg).await,
+        Err(WebError::Unauthorized(_)) => {
+            Err(WebError::NotFound(format!("{} not found", pkg.name)))
+        }
+        Err(e) => Err(e),
+    }
+}
+
+pub async fn ensure_package_readable_with_auth(
+    state: &AppState,
+    auth: &AuthContext,
+    pkg: &PackageRow,
+) -> WebResult<()> {
+    if pkg.is_public() {
+        return Ok(());
+    }
+    if is_admin(&auth.user, &state.config.auth.admins) {
+        return Ok(());
+    }
+    if state
+        .repo
+        .is_maintainer(pkg.id, auth.user.id)
+        .await
+        .map_err(WebError::CustomApiError)?
+    {
+        return Ok(());
+    }
+    Err(WebError::NotFound(format!("{} not found", pkg.name)))
+}
+
+pub async fn ensure_package_write_access(
+    state: &AppState,
+    auth: &AuthContext,
+    fullname: &str,
+    package_id: i64,
+) -> WebResult<()> {
+    if is_admin(&auth.user, &state.config.auth.admins) {
+        return Ok(());
+    }
+    let (scope, _name) = split_scope_name(fullname);
+    check_scope_access(
+        scope,
+        &state.config.auth.allow_scopes,
+        state.config.auth.allow_publish_non_scope_package,
+    )?;
+    let is_maintainer = state
+        .repo
+        .is_maintainer(package_id, auth.user.id)
+        .await
+        .map_err(WebError::CustomApiError)?;
+    if !is_maintainer {
+        return Err(WebError::Forbidden(format!(
+            "\"{}\" not authorized to modify {fullname}, please contact maintainers",
+            auth.user.name
+        )));
+    }
+    Ok(())
+}
+
 pub fn generate_salt() -> String {
     let mut buf = [0u8; 30];
     getrandom::fill(&mut buf).expect("failed to generate random salt");
@@ -123,4 +194,38 @@ pub fn compute_password_integrity(salt: &str, password: &str) -> String {
 
 pub fn verify_password(salt: &str, integrity: &str, password: &str) -> bool {
     compute_password_integrity(salt, password) == integrity
+}
+
+pub struct RequireAuth(pub AuthContext);
+
+impl FromRequestParts<AppState> for RequireAuth {
+    type Rejection = WebError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, Self::Rejection> {
+        Ok(Self(validate_auth(state, &parts.headers).await?))
+    }
+}
+
+pub struct RequireAnyAuth(pub AuthContext);
+
+impl FromRequestParts<AppState> for RequireAnyAuth {
+    type Rejection = WebError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, Self::Rejection> {
+        Ok(Self(validate_auth_any(state, &parts.headers).await?))
+    }
+}
+
+pub struct OptionalAuth(pub Option<AuthContext>);
+
+impl FromRequestParts<AppState> for OptionalAuth {
+    type Rejection = WebError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, Self::Rejection> {
+        match validate_auth_any(state, &parts.headers).await {
+            Ok(auth) => Ok(Self(Some(auth))),
+            Err(WebError::Unauthorized(_)) => Ok(Self(None)),
+            Err(e) => Err(e),
+        }
+    }
 }

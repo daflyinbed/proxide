@@ -55,7 +55,7 @@ export async function publishPackage(
   token: string,
   name: string,
   version: string,
-  opts?: { description?: string; keywords?: string[]; author?: string },
+  opts?: { description?: string; keywords?: string[]; author?: string; access?: string },
 ): Promise<{ res: Response; body: any }> {
   const payload = buildPublishPayload(name, version, opts);
   const { res, body } = await apiJson(packagePath(name), {
@@ -79,23 +79,26 @@ export function uniqueScopedName(scope: string, prefix: string): string {
 
 export async function searchPackages(
   text: string,
-  params?: { from?: number; size?: number },
+  params?: { from?: number; size?: number; token?: string },
 ): Promise<{ res: Response; body: any }> {
   const q = new URLSearchParams({ text });
   if (params?.from !== undefined) q.set("from", String(params.from));
   if (params?.size !== undefined) q.set("size", String(params.size));
-  return apiJson(`/npm/-/v1/search?${q}`);
+  const headers: Record<string, string> = {};
+  if (params?.token) headers.authorization = `Bearer ${params.token}`;
+  return apiJson(`/npm/-/v1/search?${q}`, { headers });
 }
 
 export async function waitForSearch(
   text: string,
   predicate: (body: any) => boolean,
   timeoutMs = 10_000,
+  token?: string,
 ): Promise<any> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
-      const { body } = await searchPackages(text);
+      const { body } = await searchPackages(text, { token });
       if (predicate(body)) {
         return body;
       }
@@ -140,6 +143,15 @@ export async function clearSearchIndex(): Promise<void> {
 export async function getMeiliSettings(): Promise<any> {
   const res = await fetch(`${MEILI_URL}/indexes/${MEILI_INDEX}/settings`, {
     headers: meiliHeaders(),
+  });
+  return res.json();
+}
+
+export async function meiliSearch(text: string, limit = 50): Promise<any> {
+  const res = await fetch(`${MEILI_URL}/indexes/${MEILI_INDEX}/search`, {
+    method: "POST",
+    headers: meiliHeaders(),
+    body: JSON.stringify({ q: text, limit }),
   });
   return res.json();
 }

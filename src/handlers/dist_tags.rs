@@ -1,42 +1,15 @@
 use crate::error::{WebError, WebResult};
 use crate::handlers::publish::refresh_manifests;
-use crate::middleware::auth::{AuthContext, check_scope_access, is_admin, validate_auth};
-use crate::npm::split_scope_name;
+use crate::middleware::auth::{
+    RequireAuth, ensure_package_readable, ensure_package_readable_with_auth,
+    ensure_package_write_access,
+};
 use crate::npm::types::PublishResponse;
 use crate::state::{AppState, LockOwner, UnlockGuard};
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use std::collections::HashMap;
-
-async fn ensure_tag_write_access(
-    state: &AppState,
-    auth: &AuthContext,
-    fullname: &str,
-    package_id: i64,
-) -> WebResult<()> {
-    if is_admin(&auth.user, &state.config.auth.admins) {
-        return Ok(());
-    }
-    let (scope, _name) = split_scope_name(fullname);
-    check_scope_access(
-        scope,
-        &state.config.auth.allow_scopes,
-        state.config.auth.allow_publish_non_scope_package,
-    )?;
-    let is_maintainer = state
-        .repo
-        .is_maintainer(package_id, auth.user.id)
-        .await
-        .map_err(WebError::CustomApiError)?;
-    if !is_maintainer {
-        return Err(WebError::Forbidden(format!(
-            "\"{}\" not authorized to modify {fullname}, please contact maintainers",
-            auth.user.name
-        )));
-    }
-    Ok(())
-}
 
 fn ensure_local_package(source: Option<&str>, fullname: &str) -> WebResult<()> {
     if let Some(s) = source {
@@ -101,6 +74,7 @@ pub(crate) fn validate_dist_tag(tag: &str) -> WebResult<()> {
 )]
 pub async fn list_dist_tags(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(fullname): Path<String>,
 ) -> WebResult<Json<HashMap<String, String>>> {
     let fullname = fullname.trim();
@@ -110,6 +84,8 @@ pub async fn list_dist_tags(
         .await
         .map_err(WebError::CustomApiError)?
         .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
+
+    ensure_package_readable(&state, &headers, &pkg).await?;
 
     let map = load_tag_map(&state, pkg.id).await?;
     Ok(Json(map))
@@ -135,15 +111,13 @@ pub async fn list_dist_tags(
 )]
 pub async fn set_dist_tag(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    RequireAuth(auth): RequireAuth,
     Path((fullname, tag)): Path<(String, String)>,
     Json(version): Json<String>,
 ) -> WebResult<Json<PublishResponse>> {
     let fullname = fullname.trim().to_string();
     let tag = tag.trim().to_string();
     let version = version.trim().to_string();
-
-    let auth = validate_auth(&state, &headers).await?;
 
     validate_dist_tag(&tag)?;
     if semver::Version::parse(&version).is_err() {
@@ -157,10 +131,18 @@ pub async fn set_dist_tag(
         .map_err(WebError::CustomApiError)?
         .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
 
-    ensure_tag_write_access(&state, &auth, &fullname, pkg.id).await?;
+    ensure_package_readable_with_auth(&state, &auth, &pkg).await?;
+    ensure_package_write_access(&state, &auth, &fullname, pkg.id).await?;
     ensure_local_package(pkg.source.as_deref(), &fullname)?;
 
     let _unlock = lock_package(&state, &fullname)?;
+
+    let pkg = state
+        .repo
+        .get_package_by_name(&fullname)
+        .await
+        .map_err(WebError::CustomApiError)?
+        .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
 
     let version_exists = state
         .repo
@@ -193,7 +175,7 @@ pub async fn set_dist_tag(
     .await?;
 
     if let Some(idx) = &state.search {
-        crate::search::upsert_search_document(&*state.repo, idx, pkg.id, &full_manifest).await;
+        crate::search::upsert_search_document(&*state.repo, idx, pkg.id, &pkg.access, &full_manifest).await;
     }
 
     log::info!(
@@ -226,13 +208,11 @@ pub async fn set_dist_tag(
 )]
 pub async fn remove_dist_tag(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    RequireAuth(auth): RequireAuth,
     Path((fullname, tag)): Path<(String, String)>,
 ) -> WebResult<Json<PublishResponse>> {
     let fullname = fullname.trim().to_string();
     let tag = tag.trim().to_string();
-
-    let auth = validate_auth(&state, &headers).await?;
 
     validate_dist_tag(&tag)?;
 
@@ -249,10 +229,18 @@ pub async fn remove_dist_tag(
         .map_err(WebError::CustomApiError)?
         .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
 
-    ensure_tag_write_access(&state, &auth, &fullname, pkg.id).await?;
+    ensure_package_readable_with_auth(&state, &auth, &pkg).await?;
+    ensure_package_write_access(&state, &auth, &fullname, pkg.id).await?;
     ensure_local_package(pkg.source.as_deref(), &fullname)?;
 
     let _unlock = lock_package(&state, &fullname)?;
+
+    let pkg = state
+        .repo
+        .get_package_by_name(&fullname)
+        .await
+        .map_err(WebError::CustomApiError)?
+        .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
 
     let mut tags = load_tag_map(&state, pkg.id).await?;
     if tags.remove(&tag).is_none() {
@@ -272,7 +260,7 @@ pub async fn remove_dist_tag(
     .await?;
 
     if let Some(idx) = &state.search {
-        crate::search::upsert_search_document(&*state.repo, idx, pkg.id, &full_manifest).await;
+        crate::search::upsert_search_document(&*state.repo, idx, pkg.id, &pkg.access, &full_manifest).await;
     }
 
     log::info!(

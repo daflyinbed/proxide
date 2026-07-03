@@ -259,12 +259,12 @@ pub async fn publish_package_inner(
     {
         return Err(WebError::BadRequest(format!("invalid access: {access}")));
     }
-    if !pkg_exists && scope.is_none() {
-        if matches!(requested_access, Some("restricted") | Some("private")) {
-            return Err(WebError::BadRequest(
-                "unscoped packages are always public; restricted access requires a scope".to_string(),
-            ));
-        }
+    if scope.is_none()
+        && matches!(requested_access, Some("restricted") | Some("private"))
+    {
+        return Err(WebError::BadRequest(
+            "unscoped packages are always public; restricted access requires a scope".to_string(),
+        ));
     }
     let (desired_access, package_access): (Option<&str>, &str) =
         if !pkg_exists && scope.is_some() {

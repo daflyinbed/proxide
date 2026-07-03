@@ -172,7 +172,7 @@ describe("POST /npm/-/package/{fullname}/access", () => {
     expect(res.status).toBe(401);
   });
 
-  it("returns 403 for a non-maintainer", async () => {
+  it("returns 404 for a non-maintainer (restricted package hides existence)", async () => {
     const name = uniqueScopedName("e2e-access", "forbidden");
     const publisher = await login(uniqueName("e2e-access-forbidden-owner"), "pass1234");
     await publishPackage(publisher, name, "1.0.0");
@@ -187,7 +187,7 @@ describe("POST /npm/-/package/{fullname}/access", () => {
       },
       body: JSON.stringify({ access: "public" }),
     });
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(404);
   });
 
   it("returns 404 for a non-existent package", async () => {

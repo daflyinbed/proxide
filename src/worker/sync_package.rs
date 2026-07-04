@@ -309,10 +309,8 @@ pub async fn sync_package(
         .into_iter()
         .flatten()
         .collect();
-    for dist_id in &old_manifest_dist_ids {
-        if let Err(e) = repo.delete_content(*dist_id).await {
-            error!("failed to delete old manifest dist {dist_id}: {e:#}");
-        }
+    if !old_manifest_dist_ids.is_empty() {
+        repo.delete_dists_by_ids(&old_manifest_dist_ids).await?;
     }
 
     log::info!(

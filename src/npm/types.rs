@@ -773,6 +773,15 @@ pub struct WhoAmIResponse {
     pub username: String,
 }
 
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ShowUserResponse {
+    #[serde(rename = "_id")]
+    pub id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct OkResponse {
     pub ok: bool,

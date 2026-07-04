@@ -1,8 +1,8 @@
 use crate::error::{WebError, WebResult};
 use crate::middleware::auth::{
-    compute_password_integrity, generate_salt, hash_token, verify_password,
+    OptionalAuth, compute_password_integrity, generate_salt, hash_token, verify_password,
 };
-use crate::npm::types::{LoginPayload, LoginResponse};
+use crate::npm::types::{LoginPayload, LoginResponse, ShowUserResponse};
 use crate::state::AppState;
 use axum::Json;
 use axum::extract::{Path, State};
@@ -100,4 +100,38 @@ pub async fn login(
             token: raw_token,
         }),
     ))
+}
+
+#[utoipa::path(
+    get,
+    tag = "auth",
+    path = "/-/user/org.couchdb.user:{name}",
+    params(
+        ("name" = String, Path, description = "CouchDB user name"),
+    ),
+    responses(
+        (status = OK, description = "User found", body = ShowUserResponse),
+        (status = NOT_FOUND, body = crate::error::ApiErrorDetail),
+        (status = INTERNAL_SERVER_ERROR, body = crate::error::ApiErrorDetail),
+    ),
+)]
+pub async fn show_user(
+    State(state): State<AppState>,
+    OptionalAuth(auth): OptionalAuth,
+    Path(name): Path<String>,
+) -> WebResult<Json<ShowUserResponse>> {
+    let user = state
+        .repo
+        .get_user_by_name(&name)
+        .await
+        .map_err(WebError::CustomApiError)?
+        .ok_or_else(|| WebError::NotFound(format!("User \"{name}\" not found")))?;
+
+    let email = auth.and_then(|_| user.email.clone());
+
+    Ok(Json(ShowUserResponse {
+        id: format!("org.couchdb.user:{}", user.name),
+        name: user.name,
+        email,
+    }))
 }

@@ -1,5 +1,5 @@
 import { execSync, spawn } from "node:child_process";
-import { existsSync, openSync } from "node:fs";
+import { openSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { copyFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -74,9 +74,7 @@ export default async function setup() {
   await createBucket();
 
   log("building proxide...");
-  if (!existsSync(BINARY)) {
-    run("cargo build", { cwd: PROJECT_ROOT });
-  }
+  run("cargo build", { cwd: PROJECT_ROOT });
 
   log("preparing run directory...");
   await mkdir(RUN_DIR, { recursive: true });

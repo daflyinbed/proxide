@@ -298,6 +298,7 @@ pub trait Repository: Send + Sync + 'static {
         full_dist_id: Option<i64>,
     ) -> Result<()>;
     async fn set_package_access(&self, package_id: i64, access: &str) -> Result<()>;
+    async fn delete_package_by_id(&self, package_id: i64) -> Result<()>;
     async fn upsert_package_for_publish(
         &self,
         name: &str,
@@ -332,11 +333,6 @@ pub trait Repository: Send + Sync + 'static {
         tar_dist_id: Option<i64>,
         readme_dist_id: Option<i64>,
     ) -> Result<()>;
-    async fn get_version_by_tarball_filename(
-        &self,
-        package_id: i64,
-        filename: &str,
-    ) -> Result<Option<PackageVersionRow>>;
     async fn get_versions_not_in(
         &self,
         package_id: i64,

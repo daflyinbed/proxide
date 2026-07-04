@@ -217,6 +217,13 @@ impl Repository for MysqlRepository {
         Ok(())
     }
 
+    async fn delete_package_by_id(&self, package_id: i64) -> Result<()> {
+        sqlx::query!(r#"DELETE FROM packages WHERE id = ?"#, package_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     async fn upsert_package_for_publish(
         &self,
         name: &str,
@@ -342,23 +349,6 @@ impl Repository for MysqlRepository {
         .execute(&self.pool)
         .await?;
         Ok(())
-    }
-
-    async fn get_version_by_tarball_filename(
-        &self,
-        package_id: i64,
-        filename: &str,
-    ) -> Result<Option<PackageVersionRow>> {
-        let name_part = filename.strip_suffix(".tgz").unwrap_or(filename);
-        let row = sqlx::query_as!(
-            PackageVersionRow,
-            r#"SELECT pv.id, pv.package_id, pv.version, pv.abbrev_dist_id, pv.manifest_dist_id, pv.tar_dist_id, pv.readme_dist_id, pv.publish_time, pv.is_pre_release as "is_pre_release: bool", pv.padding_version FROM package_versions pv JOIN dists d ON pv.tar_dist_id = d.id WHERE pv.package_id = ? AND d.name = ?"#,
-            package_id,
-            name_part
-        )
-        .fetch_optional(&self.pool)
-        .await?;
-        Ok(row)
     }
 
     async fn get_versions_not_in(

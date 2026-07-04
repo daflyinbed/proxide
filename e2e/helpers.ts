@@ -156,6 +156,68 @@ export async function meiliSearch(text: string, limit = 50): Promise<any> {
   return res.json();
 }
 
+export function bearer(token: string): Record<string, string> {
+  return { authorization: `Bearer ${token}` };
+}
+
+export function tarballFilename(name: string, version: string): string {
+  const base = name.startsWith("@") ? name.split("/")[1] : name;
+  return `${base}-${version}.tgz`;
+}
+
+export function unpublishPath(name: string, rev = "1"): string {
+  return `${packagePath(name)}/-rev/${rev}`;
+}
+
+export function unpublishVersionPath(
+  name: string,
+  version: string,
+  rev = "1",
+): string {
+  const filename = tarballFilename(name, version);
+  return `${packagePath(name)}/-/${filename}/-rev/${rev}`;
+}
+
+export async function unpublishPackage(
+  token: string,
+  name: string,
+  rev = "1",
+): Promise<Response> {
+  return api(unpublishPath(name, rev), {
+    method: "DELETE",
+    headers: { ...bearer(token), "npm-command": "unpublish" },
+  });
+}
+
+export async function unpublishVersion(
+  token: string,
+  name: string,
+  version: string,
+  rev = "1",
+): Promise<Response> {
+  return api(unpublishVersionPath(name, version, rev), {
+    method: "DELETE",
+    headers: { ...bearer(token), "npm-command": "unpublish" },
+  });
+}
+
+export async function updateMaintainers(
+  token: string,
+  name: string,
+  maintainers: { name: string; email?: string }[],
+  rev = "1",
+): Promise<{ res: Response; body: any }> {
+  return apiJson(unpublishPath(name, rev), {
+    method: "PUT",
+    headers: {
+      "content-type": "application/json",
+      ...bearer(token),
+      "npm-command": "owner",
+    },
+    body: JSON.stringify({ maintainers }),
+  });
+}
+
 export async function deleteSearchDoc(name: string): Promise<void> {
   const searchRes = await fetch(`${MEILI_URL}/indexes/${MEILI_INDEX}/search`, {
     method: "POST",

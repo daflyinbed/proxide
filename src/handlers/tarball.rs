@@ -33,7 +33,7 @@ fn tarball_response(body: Body, content_length: Option<u64>) -> Response {
     builder.body(body).unwrap()
 }
 
-fn extract_version(fullname: &str, filename: &str) -> Option<String> {
+pub(crate) fn extract_version(fullname: &str, filename: &str) -> Option<String> {
     let name = fullname
         .rsplit_once('/')
         .map(|(_, n)| n)

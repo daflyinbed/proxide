@@ -381,6 +381,11 @@ pub struct Maintainer {
     pub email: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+pub struct MaintainerUpdatePayload {
+    pub maintainers: Vec<Maintainer>,
+}
+
 #[derive(Debug, Clone, Default, Deserialize, Serialize, ToSchema)]
 pub struct PeerDepMeta {
     #[serde(default)]

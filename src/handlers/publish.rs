@@ -4,7 +4,7 @@ use crate::npm::types::*;
 use crate::npm::{
     build_abbreviated_version, is_prerelease, pad_version, split_scope_name,
 };
-use crate::repository::{upload_and_commit_manifests, CommitVersionParams, PendingDist};
+use crate::repository::{upload_and_commit_manifests, CommitVersionParams, PendingDist, Repository};
 use crate::state::{AppState, LockOwner, UnlockGuard};
 use axum::Json;
 use axum::http::HeaderMap;
@@ -16,6 +16,19 @@ use std::sync::LazyLock;
 
 static BASE64_RE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new("^[A-Za-z0-9+/]{4}").unwrap());
+
+pub fn get_npm_command(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("npm-command")
+        .and_then(|v| v.to_str().ok())
+        .or_else(|| {
+            headers
+                .get("referer")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.split_whitespace().next())
+        })
+        .map(|s| s.to_string())
+}
 
 fn validate_npm_command(headers: &HeaderMap) -> WebResult<()> {
     let command = headers
@@ -694,4 +707,523 @@ fn is_duplicate_key_error(err: &anyhow::Error) -> bool {
     err.chain()
         .filter_map(|e| e.downcast_ref::<sqlx::mysql::MySqlDatabaseError>())
         .any(|db_err| db_err.code() == Some("23000") && db_err.number() == 1062)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PUT /{fullname}/-rev/{rev} — npm owner add/rm (update maintainers)
+// ═══════════════════════════════════════════════════════════════════════════
+
+pub async fn update_maintainers_inner(
+    state: &AppState,
+    headers: &HeaderMap,
+    auth: &AuthContext,
+    fullname: &str,
+    payload: MaintainerUpdatePayload,
+) -> WebResult<Json<PublishResponse>> {
+    let command = get_npm_command(headers);
+    if matches!(command.as_deref(), Some("unpublish")) {
+        return Ok(Json(PublishResponse {
+            ok: false,
+            rev: String::new(),
+        }));
+    }
+    if command.as_deref() != Some("owner") {
+        return Err(WebError::BadRequest(format!(
+            "npm-command expected \"owner\", but got \"{}\"",
+            command.as_deref().unwrap_or("")
+        )));
+    }
+
+    let fullname = fullname.trim().to_string();
+
+    if payload.maintainers.is_empty() {
+        return Err(WebError::BadRequest(
+            "maintainers must not be empty".to_string(),
+        ));
+    }
+
+    let pkg = state
+        .repo
+        .get_package_by_name(&fullname)
+        .await
+        .map_err(WebError::CustomApiError)?
+        .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
+
+    crate::middleware::auth::ensure_package_readable_with_auth(state, auth, &pkg).await?;
+    crate::middleware::auth::ensure_package_write_access(state, auth, &fullname, pkg.id).await?;
+    ensure_local_package(pkg.source.as_deref(), &fullname)?;
+
+    if !state
+        .package_lock
+        .try_lock(&fullname, LockOwner::Publish)
+    {
+        let owner = state
+            .package_lock
+            .get_owner(&fullname)
+            .map(|o| o.to_string())
+            .unwrap_or_else(|| "modified by another request".to_string());
+        return Err(WebError::Conflict(format!(
+            "package {fullname} is currently being {owner}"
+        )));
+    }
+    let _unlock = UnlockGuard::new(&state.package_lock, fullname.clone());
+
+    let pkg = state
+        .repo
+        .get_package_by_name(&fullname)
+        .await
+        .map_err(WebError::CustomApiError)?
+        .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
+
+    let mut user_ids = Vec::with_capacity(payload.maintainers.len());
+    for m in &payload.maintainers {
+        let user = state
+            .repo
+            .get_user_by_name(&m.name)
+            .await
+            .map_err(WebError::CustomApiError)?
+            .ok_or_else(|| {
+                WebError::BadRequest(format!("Maintainer \"{}\" not exists", m.name))
+            })?;
+        user_ids.push(user.id);
+    }
+
+    state
+        .repo
+        .sync_maintainers(pkg.id, &user_ids)
+        .await
+        .map_err(WebError::CustomApiError)?;
+
+    let tags = state
+        .repo
+        .list_tags(pkg.id)
+        .await
+        .map_err(WebError::CustomApiError)?;
+    let tag_map: HashMap<String, String> =
+        tags.into_iter().map(|t| (t.tag, t.version)).collect();
+
+    let full_manifest = refresh_manifests(
+        state,
+        pkg.id,
+        &fullname,
+        pkg.description.as_deref(),
+        &tag_map,
+    )
+    .await?;
+
+    if let Some(idx) = &state.search {
+        crate::search::upsert_search_document(
+            &*state.repo,
+            idx,
+            pkg.id,
+            &pkg.access,
+            &full_manifest,
+        )
+        .await;
+    }
+
+    log::info!(
+        action = "owner_update";
+        "name={fullname} user={} maintainers={}",
+        auth.user.name,
+        payload.maintainers.iter().map(|m| m.name.as_str()).collect::<Vec<_>>().join(",")
+    );
+
+    Ok(Json(PublishResponse {
+        ok: true,
+        rev: pkg.id.to_string(),
+    }))
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DELETE /{fullname}/-rev/{rev} — npm unpublish (whole package or latest version)
+// ═══════════════════════════════════════════════════════════════════════════
+
+pub async fn unpublish_package_inner(
+    state: &AppState,
+    headers: &HeaderMap,
+    auth: &AuthContext,
+    fullname: &str,
+) -> WebResult<Json<PublishResponse>> {
+    if get_npm_command(headers).as_deref() != Some("unpublish") {
+        return Err(WebError::BadRequest(
+            "Only allow \"unpublish\" npm-command".to_string(),
+        ));
+    }
+
+    let fullname = fullname.trim().to_string();
+
+    let pkg = state
+        .repo
+        .get_package_by_name(&fullname)
+        .await
+        .map_err(WebError::CustomApiError)?
+        .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
+
+    crate::middleware::auth::ensure_package_readable_with_auth(state, auth, &pkg).await?;
+    crate::middleware::auth::ensure_package_write_access(state, auth, &fullname, pkg.id).await?;
+    ensure_local_package(pkg.source.as_deref(), &fullname)?;
+
+    if !state
+        .package_lock
+        .try_lock(&fullname, LockOwner::Publish)
+    {
+        let owner = state
+            .package_lock
+            .get_owner(&fullname)
+            .map(|o| o.to_string())
+            .unwrap_or_else(|| "modified by another request".to_string());
+        return Err(WebError::Conflict(format!(
+            "package {fullname} is currently being {owner}"
+        )));
+    }
+    let _unlock = UnlockGuard::new(&state.package_lock, fullname.clone());
+
+    let pkg = state
+        .repo
+        .get_package_by_name(&fullname)
+        .await
+        .map_err(WebError::CustomApiError)?
+        .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
+
+    if let Ok(versions) = state.repo.list_versions(pkg.id).await {
+        for v in &versions {
+            state.download_counters.remove(&v.id);
+        }
+    }
+
+    delete_package_completely(&*state.repo, &pkg)
+        .await
+        .map_err(WebError::CustomApiError)?;
+
+    if let Some(idx) = &state.search
+        && let Err(e) = idx.remove_package(pkg.id).await
+    {
+        log::warn!(
+            action = "search_index_remove";
+            "package_id={} remove failed: {e:#}",
+            pkg.id
+        );
+    }
+
+    log::info!(
+        action = "unpublish";
+        "name={fullname} user={}",
+        auth.user.name
+    );
+
+    Ok(Json(PublishResponse {
+        ok: true,
+        rev: pkg.id.to_string(),
+    }))
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DELETE /{fullname}/-/{filename}/-rev/{rev} — npm unpublish single version
+// ═══════════════════════════════════════════════════════════════════════════
+
+pub async fn unpublish_version_inner(
+    state: &AppState,
+    headers: &HeaderMap,
+    auth: &AuthContext,
+    fullname: &str,
+    filename: &str,
+) -> WebResult<Json<PublishResponse>> {
+    if get_npm_command(headers).as_deref() != Some("unpublish") {
+        return Err(WebError::BadRequest(
+            "Only allow \"unpublish\" npm-command".to_string(),
+        ));
+    }
+
+    let fullname = fullname.trim().to_string();
+
+    let pkg = state
+        .repo
+        .get_package_by_name(&fullname)
+        .await
+        .map_err(WebError::CustomApiError)?
+        .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
+
+    crate::middleware::auth::ensure_package_readable_with_auth(state, auth, &pkg).await?;
+    crate::middleware::auth::ensure_package_write_access(state, auth, &fullname, pkg.id).await?;
+    ensure_local_package(pkg.source.as_deref(), &fullname)?;
+
+    if !state
+        .package_lock
+        .try_lock(&fullname, LockOwner::Publish)
+    {
+        let owner = state
+            .package_lock
+            .get_owner(&fullname)
+            .map(|o| o.to_string())
+            .unwrap_or_else(|| "modified by another request".to_string());
+        return Err(WebError::Conflict(format!(
+            "package {fullname} is currently being {owner}"
+        )));
+    }
+    let _unlock = UnlockGuard::new(&state.package_lock, fullname.clone());
+
+    let pkg = state
+        .repo
+        .get_package_by_name(&fullname)
+        .await
+        .map_err(WebError::CustomApiError)?
+        .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
+
+    let version_name = crate::handlers::tarball::extract_version(&fullname, filename)
+        .ok_or_else(|| WebError::NotFound(format!("{fullname} tarball {filename} not found")))?;
+
+    let version = state
+        .repo
+        .get_version(pkg.id, &version_name)
+        .await
+        .map_err(WebError::CustomApiError)?
+        .ok_or_else(|| {
+            WebError::NotFound(format!("{fullname}@{version_name} not found"))
+        })?;
+
+    let version_str = version.version.clone();
+    remove_version_and_refresh(state, &fullname, &pkg, version).await?;
+
+    log::info!(
+        action = "unpublish_version";
+        "name={fullname} version={} tarball={} user={}",
+        version_str,
+        filename,
+        auth.user.name
+    );
+
+    Ok(Json(PublishResponse {
+        ok: true,
+        rev: pkg.id.to_string(),
+    }))
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Helpers
+// ═══════════════════════════════════════════════════════════════════════════
+
+fn ensure_local_package(source: Option<&str>, fullname: &str) -> WebResult<()> {
+    if let Some(s) = source {
+        return Err(WebError::Forbidden(format!(
+            "package {fullname} was synced from upstream ({s}), mutation is not allowed"
+        )));
+    }
+    Ok(())
+}
+
+async fn delete_version_dist_objects(
+    repo: &dyn Repository,
+    version: &crate::repository::PackageVersionRow,
+) -> WebResult<()> {
+    let dist_ids: Vec<i64> = [
+        version.abbrev_dist_id,
+        version.manifest_dist_id,
+        version.tar_dist_id,
+        version.readme_dist_id,
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+
+    let file_dists = repo
+        .get_version_file_dist_ids(&[version.id])
+        .await
+        .map_err(WebError::CustomApiError)?;
+
+    repo.delete_versions_by_ids(&[version.id])
+        .await
+        .map_err(WebError::CustomApiError)?;
+
+    for dist_id in dist_ids {
+        if let Err(e) = repo.delete_content(dist_id).await {
+            log::error!(
+                action = "delete_version_dist";
+                "failed to delete dist {dist_id}: {e:#}"
+            );
+        }
+    }
+    for (dist_id, _path) in file_dists {
+        if let Err(e) = repo.delete_content(dist_id).await {
+            log::error!(
+                action = "delete_version_file_dist";
+                "failed to delete version file dist {dist_id}: {e:#}"
+            );
+        }
+    }
+
+    Ok(())
+}
+
+async fn remove_version_and_refresh(
+    state: &AppState,
+    fullname: &str,
+    pkg: &crate::repository::PackageRow,
+    version: crate::repository::PackageVersionRow,
+) -> WebResult<()> {
+    state.download_counters.remove(&version.id);
+    delete_version_dist_objects(&*state.repo, &version).await?;
+
+    let remaining = state
+        .repo
+        .list_versions(pkg.id)
+        .await
+        .map_err(WebError::CustomApiError)?;
+
+    if remaining.is_empty() {
+        delete_package_completely(&*state.repo, pkg)
+            .await
+            .map_err(WebError::CustomApiError)?;
+
+        if let Some(idx) = &state.search
+            && let Err(e) = idx.remove_package(pkg.id).await
+        {
+            log::warn!(
+                action = "search_index_remove";
+                "package_id={} remove failed: {e:#}",
+                pkg.id
+            );
+        }
+    } else {
+        let remaining_set: std::collections::HashSet<&str> =
+            remaining.iter().map(|v| v.version.as_str()).collect();
+
+        let tags = state
+            .repo
+            .list_tags(pkg.id)
+            .await
+            .map_err(WebError::CustomApiError)?;
+        let mut tag_map: HashMap<String, String> =
+            tags.into_iter().map(|t| (t.tag, t.version)).collect();
+
+        let latest_dangling = tag_map
+            .get("latest")
+            .is_some_and(|v| !remaining_set.contains(v.as_str()));
+
+        let mut tags_changed = false;
+        tag_map.retain(|_, v| {
+            let keep = remaining_set.contains(v.as_str());
+            if !keep {
+                tags_changed = true;
+            }
+            keep
+        });
+
+        if latest_dangling
+            && let Some(new_latest) = pick_latest_version(&remaining)
+        {
+            tag_map.insert("latest".to_string(), new_latest);
+            tags_changed = true;
+        }
+
+        if tags_changed {
+            state
+                .repo
+                .sync_tags(pkg.id, &tag_map)
+                .await
+                .map_err(WebError::CustomApiError)?;
+        }
+
+        let full_manifest = refresh_manifests(
+            state,
+            pkg.id,
+            fullname,
+            pkg.description.as_deref(),
+            &tag_map,
+        )
+        .await?;
+
+        if let Some(idx) = &state.search {
+            crate::search::upsert_search_document(
+                &*state.repo,
+                idx,
+                pkg.id,
+                &pkg.access,
+                &full_manifest,
+            )
+            .await;
+        }
+    }
+
+    Ok(())
+}
+
+fn pick_latest_version(
+    versions: &[crate::repository::PackageVersionRow],
+) -> Option<String> {
+    use std::cmp::Ordering;
+
+    versions
+        .iter()
+        .filter_map(|v| {
+            semver::Version::parse(&v.version).ok().map(|sv| (v, sv))
+        })
+        .max_by(|(a, asv), (b, bsv)| match (a.is_pre_release, b.is_pre_release) {
+            (false, true) => Ordering::Greater,
+            (true, false) => Ordering::Less,
+            _ => asv.cmp(bsv),
+        })
+        .map(|(v, _)| v.version.clone())
+}
+
+async fn delete_package_completely(
+    repo: &dyn Repository,
+    pkg: &crate::repository::PackageRow,
+) -> anyhow::Result<()> {
+    let versions = repo.list_versions(pkg.id).await?;
+
+    let version_dist_ids: Vec<i64> = versions
+        .iter()
+        .flat_map(|v| {
+            [
+                v.abbrev_dist_id,
+                v.manifest_dist_id,
+                v.tar_dist_id,
+                v.readme_dist_id,
+            ]
+            .into_iter()
+            .flatten()
+        })
+        .collect();
+
+    let version_ids: Vec<i64> = versions.iter().map(|v| v.id).collect();
+    let version_file_dists = if version_ids.is_empty() {
+        Vec::new()
+    } else {
+        repo.get_version_file_dist_ids(&version_ids).await.unwrap_or_default()
+    };
+
+    let package_dist_ids: Vec<i64> = [pkg.abbreviated_dist_id, pkg.full_dist_id]
+        .into_iter()
+        .flatten()
+        .collect();
+
+    repo.delete_package_by_id(pkg.id).await?;
+
+    for dist_id in version_dist_ids {
+        if let Err(e) = repo.delete_content(dist_id).await {
+            log::error!(
+                action = "delete_package_dist";
+                "failed to delete dist {dist_id}: {e:#}"
+            );
+        }
+    }
+    for (dist_id, _path) in version_file_dists {
+        if let Err(e) = repo.delete_content(dist_id).await {
+            log::error!(
+                action = "delete_package_file_dist";
+                "failed to delete version file dist {dist_id}: {e:#}"
+            );
+        }
+    }
+    for dist_id in package_dist_ids {
+        if let Err(e) = repo.delete_content(dist_id).await {
+            log::error!(
+                action = "delete_package_manifest_dist";
+                "failed to delete dist {dist_id}: {e:#}"
+            );
+        }
+    }
+
+    Ok(())
 }

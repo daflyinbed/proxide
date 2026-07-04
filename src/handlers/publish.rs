@@ -1151,18 +1151,12 @@ async fn remove_version_and_refresh(
 fn pick_latest_version(
     versions: &[crate::repository::PackageVersionRow],
 ) -> Option<String> {
-    use std::cmp::Ordering;
-
     versions
         .iter()
         .filter_map(|v| {
             semver::Version::parse(&v.version).ok().map(|sv| (v, sv))
         })
-        .max_by(|(a, asv), (b, bsv)| match (a.is_pre_release, b.is_pre_release) {
-            (false, true) => Ordering::Greater,
-            (true, false) => Ordering::Less,
-            _ => asv.cmp(bsv),
-        })
+        .max_by(|(_, asv), (_, bsv)| asv.cmp(bsv))
         .map(|(v, _)| v.version.clone())
 }
 

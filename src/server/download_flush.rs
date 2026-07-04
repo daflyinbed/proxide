@@ -1,5 +1,6 @@
 use crate::state::AppState;
 use chrono::Datelike;
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -31,12 +32,30 @@ pub async fn flush_download_counters(state: &AppState) -> anyhow::Result<()> {
         return Ok(());
     }
 
+    let pending_ids: Vec<i64> = entries.iter().map(|(id, _)| *id).collect();
+    let existing: Option<HashSet<i64>> = match state.repo.existing_version_ids(&pending_ids).await {
+        Ok(ids) => Some(ids.into_iter().collect()),
+        Err(e) => {
+            log::warn!("existing_version_ids query failed, skipping staleness check: {e:#}");
+            None
+        }
+    };
+
     let now = chrono::Utc::now();
     let year = now.year() as u16;
     let month = now.month() as u8;
     let day = now.day() as u8;
 
     for (package_version_id, count) in entries {
+        let stale = existing
+            .as_ref()
+            .is_some_and(|set| !set.contains(&package_version_id));
+        if stale {
+            log::warn!(
+                "discarded download counter for deleted package_version_id={package_version_id} (count={count})"
+            );
+            continue;
+        }
         if let Err(e) = state
             .repo
             .increment_package_download(package_version_id, year, month, day, count)

@@ -439,6 +439,7 @@ pub trait Repository: Send + Sync + 'static {
 
     // ── package_downloads ──
 
+    async fn existing_version_ids(&self, version_ids: &[i64]) -> Result<Vec<i64>>;
     async fn increment_package_download(
         &self,
         package_version_id: i64,

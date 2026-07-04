@@ -1143,6 +1143,23 @@ impl Repository for MysqlRepository {
 
     // ── package_downloads ──
 
+    async fn existing_version_ids(&self, version_ids: &[i64]) -> Result<Vec<i64>> {
+        if version_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let placeholders: Vec<String> = version_ids.iter().map(|_| "?".to_string()).collect();
+        let sql = format!(
+            "SELECT id FROM package_versions WHERE id IN ({})",
+            placeholders.join(",")
+        );
+        let mut query = sqlx::query_scalar::<_, i64>(&sql);
+        for id in version_ids {
+            query = query.bind(id);
+        }
+        let rows = query.fetch_all(&self.pool).await?;
+        Ok(rows)
+    }
+
     async fn increment_package_download(
         &self,
         package_version_id: i64,

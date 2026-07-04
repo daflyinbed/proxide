@@ -32,9 +32,9 @@ pnpm test:e2e                   # End-to-end tests (requires Docker + cargo buil
 ## Database
 
 - MySQL 8.0 (local, credentials from `.env`)
-- Tables: `dists`, `packages`, `package_versions`, `package_tags`, `change_stream_cursors`, `sync_tasks`, `users`, `tokens`, `maintainers`, `package_downloads` (local, per-version per-day counters `d01`..`d31`), `upstream_package_downloads` (upstream npm, per-package per-day counters)
+- Tables: `dists`, `packages` (has `access` column: `public`/`private`), `package_versions`, `package_tags`, `change_stream_cursors`, `sync_tasks`, `users`, `tokens`, `maintainers`, `package_downloads` (local, per-version per-day counters `d01`..`d31`), `upstream_package_downloads` (upstream npm, per-package per-day counters), `package_version_files` (per-file entries for CDN/jsdelivr serving, keyed by `(package_version_id, filepath)`)
 - Migrations in `/migrations`, managed by sqlx-cli
-- Login sessions are **in-memory** (`DashMap` in `AppState`), not a DB table
+- Login sessions are **in-memory** (`LoginSessionMap` in `AppState`), not a DB table
 
 ## Infrastructure
 
@@ -49,7 +49,7 @@ docker compose up -d --wait    # Start all services
 
 ## Configuration
 
-`proxide.toml` loaded from CWD. Keys are **camelCase** (serde `rename_all = "camelCase"`), not snake_case. Required sections: `database`, `server`, `storage` (Local or S3), `log`, `worker`. Optional sections: `auth`, `search`. See `src/config.rs` for full schema and defaults.
+`proxide.toml` loaded from CWD. Keys are **camelCase** (serde `rename_all = "camelCase"`), not snake_case. Required sections: `database`, `server`, `storage` (Local or S3), `log`, `worker`. Optional sections: `auth`, `search`, `cdn` (defaults `enabled = true`; gates jsdelivr CDN serving + sets size limits). See `src/config.rs` for full schema and defaults.
 
 ## Architecture
 
@@ -59,11 +59,15 @@ src/
   lib.rs               # Module registration
   config.rs            # TOML config (camelCase keys)
   error.rs             # WebError → JSON responses
-  routes.rs            # Route definitions, nests /npm, /fast, /api
-  state.rs             # AppState { repo, config, http, package_lock, login_sessions, tarball_downloads, download_counters, search }
+  routes.rs            # Route definitions, nests /npm, /fast, /api, /jsdelivr/{npm,api/npm}
+  openapi.rs           # utoipa OpenAPI doc (Scalar UI served at GET /docs)
+  state.rs             # AppState { repo, config, http, package_lock, login_sessions, tarball_downloads, download_counters, search, extraction_inflight }
 
   npm/types.rs         # Packument, AbbreviatedPackument, FastMeta* types
   npm/mod.rs           # split_scope_name, decode_fullname
+
+  extract/             # Tarball unpacking for CDN/jsdelivr file serving
+    content_type.rs    # MIME guessing for extracted files
 
   storage/backend.rs   # object_store crate (S3 + LocalFileSystem)
 
@@ -88,9 +92,16 @@ src/
     tarball.rs         # Tarball download (on-demand proxy)
     package_dispatch.rs # Fallback handler — routes GET/PUT by path pattern
     publish.rs         # PUT publish (auth-protected)
+    dist_tags.rs       # GET/PUT/DELETE dist-tags
+    tokens.rs          # npm v1 token CRUD: whoami, logout, list/create/revoke
+    profile.rs         # GET/PUT user profile (/npm/-/npm/v1/user)
+    access.rs          # collaborators, visibility, set-access, list-by-user
     sync.rs            # PUT /-/package/{fullname}/syncs
     search.rs          # GET /npm/-/v1/search (Meilisearch)
     downloads.rs       # /api/downloads/{point,range}/* (npm download-counts API)
+    cdn.rs             # /jsdelivr/npm/* — serves unpacked package files
+    data_api.rs        # /jsdelivr/api/npm/* — jsdelivr data API (version files listing)
+    jsdelivr_util.rs   # Shared helpers for cdn + data_api
     auth.rs            # PUT /-/user/org.couchdb.user:{name} (legacy login)
     web_login.rs       # POST /-/v1/login + GET poll done
     home.rs            # GET /-/ping
@@ -117,10 +128,13 @@ Three concurrent loops in `run_worker` (plus initial `cleanup_once`):
 
 Defined in `src/routes.rs`. Package routes use a **fallback handler** (`package_dispatch`) that parses the URL path to dispatch to registry/tarball/publish:
 
-- **NPM** (`/npm/`): `GET /`, `GET /{fullname}`, `GET /{fullname}/{version}`, `GET /{fullname}/-/{filename}`, `PUT /{fullname}`, `PUT /-/package/{fullname}/syncs`, `PUT /-/user/org.couchdb.user:{name}`, `POST /-/v1/login`, `GET /-/v1/login/done/session/{sessionId}`, `GET /-/v1/search`
+- **NPM** (`/npm/`): `GET /`, `GET /{fullname}`, `GET /{fullname}/{version}`, `GET /{fullname}/-/{filename}`, `PUT /{fullname}`, `PUT /-/package/{fullname}/syncs`, `PUT /-/user/org.couchdb.user:{name}`, `POST /-/v1/login`, `GET /-/v1/login/done/session/{sessionId}`, `GET /-/v1/search`, dist-tags (`GET/PUT/DELETE /-/package/{fullname}/dist-tags`), tokens (`/-/npm/v1/tokens`, `/-/whoami`, `/-/user/token/{token}`), profile (`GET/PUT /-/npm/v1/user`), access (`/-/package/{fullname}/{collaborators,visibility,access}`, `/-/org/{username}/package`)
 - **fast-npm-meta** (`/fast/`): `GET /resolve/{pkg}`, `GET /versions/{pkg}`, `GET /full/{pkg}`
 - **API** (`/api/`): `GET /auth/cas/callback/session/{sessionId}`, `GET /downloads/point/{*rest}`, `GET /downloads/range/{*rest}`
-- **Misc**: `GET /-/ping`
+- **jsDelivr CDN** (`/jsdelivr/npm/`): serves unpacked package files; **data API** (`/jsdelivr/api/npm/`): version files listing
+- **Misc**: `GET /-/ping`, `GET /docs` (Scalar OpenAPI UI)
+
+There is a `#[test] openapi_paths_resolved_with_nest_prefix` in `routes.rs` asserting all expected paths resolve — keep it updated when adding/removing routes.
 
 ## S3 Paths
 

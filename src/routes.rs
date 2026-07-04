@@ -8,7 +8,7 @@ use utoipa_scalar::{Scalar, Servable};
 pub fn build_router(state: AppState) -> axum::Router {
     let npm = OpenApiRouter::new()
         .routes(routes!(handlers::registry::registry_root))
-        .routes(routes!(handlers::auth::login))
+        .routes(routes!(handlers::auth::login, handlers::auth::show_user))
         .routes(routes!(handlers::web_login::init_login))
         .routes(routes!(handlers::web_login::poll_done))
         .routes(routes!(handlers::sync::trigger_sync))
@@ -63,7 +63,7 @@ mod tests {
             .routes(routes!(handlers::home::ping));
         let npm = OpenApiRouter::new()
             .routes(routes!(handlers::registry::registry_root))
-            .routes(routes!(handlers::auth::login))
+        .routes(routes!(handlers::auth::login, handlers::auth::show_user))
             .routes(routes!(handlers::web_login::init_login))
             .routes(routes!(handlers::web_login::poll_done))
             .routes(routes!(handlers::sync::trigger_sync))

@@ -381,6 +381,11 @@ pub struct Maintainer {
     pub email: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+pub struct MaintainerUpdatePayload {
+    pub maintainers: Vec<Maintainer>,
+}
+
 #[derive(Debug, Clone, Default, Deserialize, Serialize, ToSchema)]
 pub struct PeerDepMeta {
     #[serde(default)]
@@ -766,6 +771,15 @@ pub struct LoginResponse {
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct WhoAmIResponse {
     pub username: String,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ShowUserResponse {
+    #[serde(rename = "_id")]
+    pub id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

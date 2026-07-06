@@ -1,9 +1,10 @@
 use crate::config::{DatabaseConfig, StorageConfig};
 use crate::npm::types::Maintainer;
 use crate::repository::{
-    ChangeStreamCursorRow, CommitVersionParams, DistRow, NewVersionFile, PackageDownloadRow,
-    PackageRow, PackageTagRow, PackageVersionRow, Repository, SyncManifestParams, SyncTaskRow,
-    TokenRow, UpstreamPackageDownloadRow, UserRow, VersionFileRow,
+    ChangeStreamCursorRow, CommitVersionParams, DistRow, NewVersionFile, OrganizationRow,
+    OrgMemberRow, PackageDownloadRow, PackageRow, PackageTagRow, PackageVersionRow, Repository,
+    SyncManifestParams, SyncTaskRow, TeamMemberRow, TeamRow, TokenRow,
+    UpstreamPackageDownloadRow, UserRow, VersionFileRow,
 };
 use crate::storage::Storage;
 use anyhow::Result;
@@ -1121,6 +1122,482 @@ impl Repository for MysqlRepository {
                  ))
                ORDER BY p.id"#,
             target_user_id,
+            viewer_user_id
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    // ── organizations ──
+
+    async fn create_org(&self, name: &str, description: Option<&str>) -> Result<i64> {
+        let result = sqlx::query!(
+            r#"INSERT INTO organizations (name, description) VALUES (?, ?)"#,
+            name,
+            description
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.last_insert_id() as i64)
+    }
+
+    async fn get_org_by_name(&self, name: &str) -> Result<Option<OrganizationRow>> {
+        let row = sqlx::query_as!(
+            OrganizationRow,
+            r#"SELECT id, name, description, created_at, updated_at FROM organizations WHERE name = ?"#,
+            name
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    async fn get_org_by_id(&self, id: i64) -> Result<Option<OrganizationRow>> {
+        let row = sqlx::query_as!(
+            OrganizationRow,
+            r#"SELECT id, name, description, created_at, updated_at FROM organizations WHERE id = ?"#,
+            id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    async fn delete_org(&self, id: i64) -> Result<()> {
+        sqlx::query!(r#"DELETE FROM organizations WHERE id = ?"#, id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    // ── org_members ──
+
+    async fn add_org_member(&self, org_id: i64, user_id: i64, role: &str) -> Result<()> {
+        sqlx::query!(
+            r#"INSERT INTO org_members (org_id, user_id, role) VALUES (?, ?, ?)
+               ON DUPLICATE KEY UPDATE role = VALUES(role)"#,
+            org_id,
+            user_id,
+            role
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn remove_org_member_cascade(&self, org_id: i64, user_id: i64) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query!(
+            r#"DELETE tm FROM team_members tm
+               JOIN teams t ON t.id = tm.team_id
+               WHERE t.org_id = ? AND tm.user_id = ?"#,
+            org_id,
+            user_id
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query!(
+            r#"DELETE m FROM maintainers m
+               JOIN packages p ON p.id = m.package_id
+               JOIN organizations o ON o.name = p.scope
+               WHERE o.id = ? AND m.user_id = ?"#,
+            org_id,
+            user_id
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query!(
+            r#"DELETE FROM org_members WHERE org_id = ? AND user_id = ?"#,
+            org_id,
+            user_id
+        )
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn set_org_member_role(&self, org_id: i64, user_id: i64, role: &str) -> Result<()> {
+        sqlx::query!(
+            r#"UPDATE org_members SET role = ? WHERE org_id = ? AND user_id = ?"#,
+            role,
+            org_id,
+            user_id
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn list_org_members(&self, org_id: i64) -> Result<Vec<OrgMemberRow>> {
+        let rows = sqlx::query_as!(
+            OrgMemberRow,
+            r#"SELECT id, org_id, user_id, role, created_at FROM org_members WHERE org_id = ? ORDER BY user_id"#,
+            org_id
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    async fn list_org_member_roster(&self, org_id: i64) -> Result<Vec<(String, String)>> {
+        let rows = sqlx::query!(
+            r#"SELECT u.name, om.role FROM org_members om JOIN users u ON u.id = om.user_id WHERE om.org_id = ?"#,
+            org_id
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(|r| (r.name, r.role)).collect())
+    }
+
+    async fn get_org_member(
+        &self,
+        org_id: i64,
+        user_id: i64,
+    ) -> Result<Option<OrgMemberRow>> {
+        let row = sqlx::query_as!(
+            OrgMemberRow,
+            r#"SELECT id, org_id, user_id, role, created_at FROM org_members WHERE org_id = ? AND user_id = ?"#,
+            org_id,
+            user_id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    async fn count_org_owners(&self, org_id: i64) -> Result<i64> {
+        let row = sqlx::query!(
+            r#"SELECT COUNT(*) AS `count` FROM org_members WHERE org_id = ? AND role = 'owner'"#,
+            org_id
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row.count)
+    }
+
+    async fn count_org_members(&self, org_id: i64) -> Result<i64> {
+        let row = sqlx::query!(
+            r#"SELECT COUNT(*) AS `count` FROM org_members WHERE org_id = ?"#,
+            org_id
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row.count)
+    }
+
+    // ── teams ──
+
+    async fn create_team(
+        &self,
+        org_id: i64,
+        name: &str,
+        description: Option<&str>,
+    ) -> Result<i64> {
+        let result = sqlx::query!(
+            r#"INSERT INTO teams (org_id, name, description) VALUES (?, ?, ?)"#,
+            org_id,
+            name,
+            description
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.last_insert_id() as i64)
+    }
+
+    async fn get_team_by_org_name(
+        &self,
+        org_id: i64,
+        team_name: &str,
+    ) -> Result<Option<TeamRow>> {
+        let row = sqlx::query_as!(
+            TeamRow,
+            r#"SELECT id, org_id, name, description, created_at FROM teams WHERE org_id = ? AND name = ?"#,
+            org_id,
+            team_name
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    async fn get_team_by_id(&self, team_id: i64) -> Result<Option<TeamRow>> {
+        let row = sqlx::query_as!(
+            TeamRow,
+            r#"SELECT id, org_id, name, description, created_at FROM teams WHERE id = ?"#,
+            team_id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    async fn delete_team(&self, team_id: i64) -> Result<()> {
+        sqlx::query!(r#"DELETE FROM teams WHERE id = ?"#, team_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    async fn list_teams_in_org(&self, org_id: i64) -> Result<Vec<TeamRow>> {
+        let rows = sqlx::query_as!(
+            TeamRow,
+            r#"SELECT id, org_id, name, description, created_at FROM teams WHERE org_id = ? ORDER BY name"#,
+            org_id
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    // ── team_members ──
+
+    async fn add_team_member(&self, team_id: i64, user_id: i64) -> Result<()> {
+        sqlx::query!(
+            r#"INSERT IGNORE INTO team_members (team_id, user_id) VALUES (?, ?)"#,
+            team_id,
+            user_id
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn remove_team_member(&self, team_id: i64, user_id: i64) -> Result<()> {
+        sqlx::query!(
+            r#"DELETE FROM team_members WHERE team_id = ? AND user_id = ?"#,
+            team_id,
+            user_id
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn list_team_members(&self, team_id: i64) -> Result<Vec<TeamMemberRow>> {
+        let rows = sqlx::query_as!(
+            TeamMemberRow,
+            r#"SELECT id, team_id, user_id, created_at FROM team_members WHERE team_id = ? ORDER BY user_id"#,
+            team_id
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    async fn list_team_member_names(&self, team_id: i64) -> Result<Vec<String>> {
+        let rows = sqlx::query!(
+            r#"SELECT u.name FROM team_members tm JOIN users u ON u.id = tm.user_id WHERE tm.team_id = ?"#,
+            team_id
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(|r| r.name).collect())
+    }
+
+    // ── package_team_permissions ──
+
+    async fn grant_team_permission(
+        &self,
+        package_id: i64,
+        team_id: i64,
+        permission: &str,
+    ) -> Result<()> {
+        sqlx::query!(
+            r#"INSERT INTO package_team_permissions (package_id, team_id, permission)
+               VALUES (?, ?, ?)
+               ON DUPLICATE KEY UPDATE permission = VALUES(permission)"#,
+            package_id,
+            team_id,
+            permission
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn revoke_team_permission(&self, package_id: i64, team_id: i64) -> Result<()> {
+        sqlx::query!(
+            r#"DELETE FROM package_team_permissions WHERE package_id = ? AND team_id = ?"#,
+            package_id,
+            team_id
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn list_packages_for_team(
+        &self,
+        team_id: i64,
+    ) -> Result<Vec<(PackageRow, String)>> {
+        let rows = sqlx::query!(
+            r#"SELECT p.id, p.name, p.scope, p.description, p.source, p.access,
+                      p.abbreviated_dist_id, p.full_dist_id,
+                      ptp.permission
+               FROM package_team_permissions ptp
+               JOIN packages p ON p.id = ptp.package_id
+               WHERE ptp.team_id = ?
+               ORDER BY p.id"#,
+            team_id
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                (
+                    PackageRow {
+                        id: r.id,
+                        name: r.name,
+                        scope: r.scope,
+                        description: r.description,
+                        source: r.source,
+                        access: r.access,
+                        abbreviated_dist_id: r.abbreviated_dist_id,
+                        full_dist_id: r.full_dist_id,
+                    },
+                    r.permission,
+                )
+            })
+            .collect())
+    }
+
+    async fn list_teams_for_package(
+        &self,
+        package_id: i64,
+    ) -> Result<Vec<(TeamRow, String)>> {
+        let rows = sqlx::query!(
+            r#"SELECT t.id, t.org_id, t.name, t.description, t.created_at,
+                      ptp.permission
+               FROM package_team_permissions ptp
+               JOIN teams t ON t.id = ptp.team_id
+               WHERE ptp.package_id = ?
+               ORDER BY t.name"#,
+            package_id
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                (
+                    TeamRow {
+                        id: r.id,
+                        org_id: r.org_id,
+                        name: r.name,
+                        description: r.description,
+                        created_at: r.created_at,
+                    },
+                    r.permission,
+                )
+            })
+            .collect())
+    }
+
+    async fn list_package_max_permissions(
+        &self,
+        package_ids: &[i64],
+    ) -> Result<HashMap<i64, bool>> {
+        if package_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let placeholders: Vec<String> = package_ids.iter().map(|_| "?".to_string()).collect();
+        let sql = format!(
+            "SELECT package_id, MAX(permission = 'write') AS `has_write` \
+             FROM package_team_permissions WHERE package_id IN ({}) GROUP BY package_id",
+            placeholders.join(",")
+        );
+        let mut query = sqlx::query(&sql);
+        for &id in package_ids {
+            query = query.bind(id);
+        }
+        let rows = query.fetch_all(&self.pool).await?;
+        let mut map = HashMap::with_capacity(rows.len());
+        for row in rows {
+            let package_id: i64 = row.try_get("package_id")?;
+            let has_write: i64 = row.try_get("has_write")?;
+            map.insert(package_id, has_write != 0);
+        }
+        Ok(map)
+    }
+
+    // ── org/team auth helpers ──
+
+    async fn user_has_team_access(
+        &self,
+        package_id: i64,
+        user_id: i64,
+        min_permission: &str,
+    ) -> Result<bool> {
+        let row = sqlx::query!(
+            r#"SELECT EXISTS(
+                SELECT 1 FROM package_team_permissions ptp
+                JOIN team_members tm ON tm.team_id = ptp.team_id
+                WHERE ptp.package_id = ?
+                  AND tm.user_id = ?
+                  AND (ptp.permission = 'write' OR ? = 'read')
+            ) AS `exists`"#,
+            package_id,
+            user_id,
+            min_permission
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        let exists: i64 = row.exists;
+        Ok(exists != 0)
+    }
+
+    async fn user_is_org_manager_for_scope(
+        &self,
+        scope: &str,
+        user_id: i64,
+    ) -> Result<bool> {
+        let row = sqlx::query!(
+            r#"SELECT EXISTS(
+                SELECT 1 FROM org_members om
+                JOIN organizations o ON o.id = om.org_id
+                WHERE o.name = ? AND om.user_id = ? AND om.role IN ('owner', 'admin')
+            ) AS `exists`"#,
+            scope,
+            user_id
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        let exists: i64 = row.exists;
+        Ok(exists != 0)
+    }
+
+    async fn list_packages_in_org_viewable(
+        &self,
+        org_id: i64,
+        viewer_user_id: i64,
+    ) -> Result<Vec<PackageRow>> {
+        let rows = sqlx::query_as!(
+            PackageRow,
+            r#"SELECT DISTINCT p.id, p.name, p.scope, p.description, p.source, p.access,
+                      p.abbreviated_dist_id, p.full_dist_id
+               FROM packages p
+               LEFT JOIN organizations o ON o.name = p.scope
+               WHERE o.id = ?
+                 AND (p.access = 'public'
+                      OR EXISTS (SELECT 1 FROM maintainers m WHERE m.package_id = p.id AND m.user_id = ?)
+                      OR EXISTS (
+                          SELECT 1 FROM package_team_permissions ptp
+                          JOIN team_members tm ON tm.team_id = ptp.team_id
+                          WHERE ptp.package_id = p.id AND tm.user_id = ?
+                      )
+                      OR EXISTS (
+                          SELECT 1 FROM org_members om
+                          JOIN organizations o2 ON o2.id = om.org_id
+                          WHERE o2.id = ? AND om.user_id = ? AND om.role IN ('owner','admin')
+                      ))
+               ORDER BY p.id"#,
+            org_id,
+            viewer_user_id,
+            viewer_user_id,
+            org_id,
             viewer_user_id
         )
         .fetch_all(&self.pool)

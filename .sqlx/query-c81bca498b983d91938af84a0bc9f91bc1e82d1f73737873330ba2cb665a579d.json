@@ -1,0 +1,24 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT u.name FROM team_members tm JOIN users u ON u.id = tm.user_id WHERE tm.team_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "name",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL | MULTIPLE_KEY | NO_DEFAULT_VALUE",
+          "max_size": 1024
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "c81bca498b983d91938af84a0bc9f91bc1e82d1f73737873330ba2cb665a579d"
+}

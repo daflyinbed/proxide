@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO package_team_permissions (package_id, team_id, permission)\n               VALUES (?, ?, ?)\n               ON DUPLICATE KEY UPDATE permission = VALUES(permission)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "23e2b9f418ea0ad964d45e355af67565b7ac101599a97de43ab796d2768a29ff"
+}

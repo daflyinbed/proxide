@@ -1,0 +1,24 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT EXISTS(\n                SELECT 1 FROM org_members om\n                JOIN organizations o ON o.id = om.org_id\n                WHERE o.name = ? AND om.user_id = ? AND om.role IN ('owner', 'admin')\n            ) AS `exists`",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "exists",
+        "type_info": {
+          "type": "LongLong",
+          "flags": "NOT_NULL | BINARY",
+          "max_size": 1
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "9e34e5073c0d9ac192c3443c6523476adb151e17aa479201d80a31a6f4ac69bf"
+}

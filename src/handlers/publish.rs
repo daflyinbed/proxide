@@ -97,6 +97,57 @@ fn validate_package_name(name: &str) -> WebResult<()> {
     Ok(())
 }
 
+const DEVELOPERS_TEAM: &str = "developers";
+
+async fn apply_developers_team_default(
+    state: &AppState,
+    package_id: i64,
+    scope: &str,
+    publisher_id: i64,
+) -> WebResult<()> {
+    let org = state
+        .repo
+        .get_org_by_name(scope)
+        .await
+        .map_err(WebError::CustomApiError)?;
+    let Some(org) = org else {
+        return Ok(());
+    };
+    let dev_team = state
+        .repo
+        .get_team_by_org_name(org.id, DEVELOPERS_TEAM)
+        .await
+        .map_err(WebError::CustomApiError)?;
+    let Some(dev_team) = dev_team else {
+        return Ok(());
+    };
+    let members = state
+        .repo
+        .list_team_members(dev_team.id)
+        .await
+        .map_err(WebError::CustomApiError)?;
+    let mut user_ids: Vec<i64> = members.iter().map(|m| m.user_id).collect();
+    if !user_ids.contains(&publisher_id) {
+        user_ids.push(publisher_id);
+    }
+    state
+        .repo
+        .sync_maintainers(package_id, &user_ids)
+        .await
+        .map_err(WebError::CustomApiError)?;
+    state
+        .repo
+        .grant_team_permission(package_id, dev_team.id, "write")
+        .await
+        .map_err(WebError::CustomApiError)?;
+    log::info!(
+        action = "developers_team_default";
+        "package_id={package_id} scope={scope} dev_team_id={} maintainers={}",
+        dev_team.id, user_ids.len()
+    );
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn publish_package_inner(
     state: &AppState,
@@ -542,6 +593,12 @@ pub async fn publish_package_inner(
                 WebError::CustomApiError(e)
             }
         })?;
+
+    if !pkg_exists {
+        if let Some(scope) = scope {
+            apply_developers_team_default(state, package_id, scope, auth.user.id).await?;
+        }
+    }
 
     let full_manifest =
         refresh_manifests(

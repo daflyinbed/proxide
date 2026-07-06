@@ -146,6 +146,24 @@ pub async fn ensure_package_readable_with_auth(
     {
         return Ok(());
     }
+    if pkg.source.is_none()
+        && state
+            .repo
+            .user_has_team_access(pkg.id, auth.user.id, "read")
+            .await
+            .map_err(WebError::CustomApiError)?
+    {
+        return Ok(());
+    }
+    if let Some(scope) = &pkg.scope
+        && state
+            .repo
+            .user_is_org_manager_for_scope(scope, auth.user.id)
+            .await
+            .map_err(WebError::CustomApiError)?
+    {
+        return Ok(());
+    }
     Err(WebError::NotFound(format!("{} not found", pkg.name)))
 }
 
@@ -164,18 +182,35 @@ pub async fn ensure_package_write_access(
         &state.config.auth.allow_scopes,
         state.config.auth.allow_publish_non_scope_package,
     )?;
-    let is_maintainer = state
+    if state
         .repo
         .is_maintainer(package_id, auth.user.id)
         .await
-        .map_err(WebError::CustomApiError)?;
-    if !is_maintainer {
-        return Err(WebError::Forbidden(format!(
-            "\"{}\" not authorized to modify {fullname}, please contact maintainers",
-            auth.user.name
-        )));
+        .map_err(WebError::CustomApiError)?
+    {
+        return Ok(());
     }
-    Ok(())
+    if scope.is_some()
+        && state
+            .repo
+            .user_is_org_manager_for_scope(scope.unwrap(), auth.user.id)
+            .await
+            .map_err(WebError::CustomApiError)?
+    {
+        return Ok(());
+    }
+    if state
+        .repo
+        .user_has_team_access(package_id, auth.user.id, "write")
+        .await
+        .map_err(WebError::CustomApiError)?
+    {
+        return Ok(());
+    }
+    Err(WebError::Forbidden(format!(
+        "\"{}\" not authorized to modify {fullname}, please contact maintainers",
+        auth.user.name
+    )))
 }
 
 pub fn generate_salt() -> String {

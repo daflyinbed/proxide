@@ -5,6 +5,7 @@ pub mod handlers;
 pub mod middleware;
 pub mod npm;
 pub mod openapi;
+pub mod org_cli;
 pub mod repository;
 pub mod routes;
 pub mod search;

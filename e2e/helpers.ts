@@ -1,3 +1,6 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { PROXIDE_BINARY, PROXIDE_RUN_DIR } from "./globalSetup.js";
 import { buildPublishPayload } from "./fixtures/tarball.js";
 
 export const BASE_URL = "http://localhost:14873";
@@ -5,6 +8,31 @@ export const BASE_URL = "http://localhost:14873";
 const MEILI_URL = "http://127.0.0.1:7700";
 const MEILI_KEY = "proxide";
 const MEILI_INDEX = "proxide-e2e";
+
+const execFileAsync = promisify(execFile);
+
+export async function runOrgCreate(scope: string, owner: string): Promise<void> {
+  const { stderr } = await execFileAsync(PROXIDE_BINARY, ["org", "create", scope, owner], {
+    cwd: PROXIDE_RUN_DIR,
+    timeout: 30_000,
+  });
+  if (stderr && !stderr.includes("created organization")) {
+    throw new Error(`proxide org create failed: ${stderr}`);
+  }
+}
+
+export async function runOrgAddMember(
+  org: string,
+  user: string,
+  role?: string,
+): Promise<void> {
+  const args = ["org", "add-member", org, user];
+  if (role) args.push("--role", role);
+  await execFileAsync(PROXIDE_BINARY, args, {
+    cwd: PROXIDE_RUN_DIR,
+    timeout: 30_000,
+  });
+}
 
 export async function api(
   path: string,

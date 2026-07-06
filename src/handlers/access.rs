@@ -1,12 +1,15 @@
 use crate::error::{WebError, WebResult};
+use crate::handlers::orgs::require_org_manager;
 use crate::middleware::auth::{
-    OptionalAuth, RequireAuth, ensure_package_readable, ensure_package_write_access, is_admin,
+    OptionalAuth, RequireAuth, ensure_package_readable, ensure_package_readable_with_auth,
+    ensure_package_write_access, is_admin,
 };
 use crate::npm::types::Packument;
 use crate::state::{AppState, LockOwner, UnlockGuard};
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
+use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use utoipa::ToSchema;
@@ -53,7 +56,7 @@ pub async fn list_collaborators(
 #[utoipa::path(
     get,
     tag = "auth",
-    path = "/-/org/{username}/package",
+    path = "/-/user/{username}/package",
     params(
         ("username" = String, Path, description = "User name"),
     ),
@@ -281,4 +284,237 @@ pub async fn set_access(
     );
 
     Ok(Json(AccessResponse { ok: true }))
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct TeamPackageRequest {
+    pub package: String,
+    #[serde(default)]
+    pub permissions: Option<String>,
+}
+
+async fn resolve_team_for_handler(
+    state: &AppState,
+    scope: &str,
+    team: &str,
+) -> WebResult<(crate::repository::OrganizationRow, crate::repository::TeamRow)> {
+    let org = state
+        .repo
+        .get_org_by_name(scope)
+        .await
+        .map_err(WebError::CustomApiError)?
+        .ok_or_else(|| WebError::NotFound(format!("Organization \"{scope}\" not found")))?;
+    let team_row = state
+        .repo
+        .get_team_by_org_name(org.id, team)
+        .await
+        .map_err(WebError::CustomApiError)?
+        .ok_or_else(|| WebError::NotFound(format!("Team \"{scope}:{team}\" not found")))?;
+    Ok((org, team_row))
+}
+
+async fn require_team_pkg_manager(
+    state: &AppState,
+    auth: &crate::middleware::auth::AuthContext,
+    scope: &str,
+    package_fullname: &str,
+    package_id: i64,
+) -> WebResult<()> {
+    if require_org_manager(state, auth, scope).await.is_ok() {
+        return Ok(());
+    }
+    if state
+        .repo
+        .is_maintainer(package_id, auth.user.id)
+        .await
+        .map_err(WebError::CustomApiError)?
+    {
+        return Ok(());
+    }
+    Err(WebError::Forbidden(format!(
+        "\"{}\" is not an org manager of \"{scope}\" nor a maintainer of \"{package_fullname}\"",
+        auth.user.name
+    )))
+}
+
+#[utoipa::path(
+    get,
+    tag = "registry",
+    path = "/-/team/{scope}/{team}/package",
+    params(
+        ("scope" = String, Path, description = "Organization scope (without @)"),
+        ("team" = String, Path, description = "Team name"),
+    ),
+    responses(
+        (status = OK, description = "Map of package name to permission", body = serde_json::Value),
+        (status = NOT_FOUND, body = crate::error::ApiErrorDetail),
+    ),
+)]
+pub async fn list_team_packages(
+    State(state): State<AppState>,
+    OptionalAuth(auth): OptionalAuth,
+    Path((scope, team)): Path<(String, String)>,
+) -> WebResult<Json<serde_json::Value>> {
+    let (_org, team_row) = resolve_team_for_handler(&state, &scope, &team).await?;
+    let pkgs = state
+        .repo
+        .list_packages_for_team(team_row.id)
+        .await
+        .map_err(WebError::CustomApiError)?;
+
+    let mut res: BTreeMap<String, String> = BTreeMap::new();
+    for (pkg, perm) in pkgs {
+        let readable = if pkg.is_public() {
+            true
+        } else if let Some(a) = &auth {
+            ensure_package_readable_with_auth(&state, a, &pkg).await.is_ok()
+        } else {
+            false
+        };
+        if readable {
+            res.insert(pkg.name, perm);
+        }
+    }
+    Ok(Json(serde_json::to_value(res).unwrap()))
+}
+
+#[utoipa::path(
+    put,
+    tag = "registry",
+    path = "/-/team/{scope}/{team}/package",
+    params(
+        ("scope" = String, Path, description = "Organization scope (without @)"),
+        ("team" = String, Path, description = "Team name"),
+    ),
+    request_body = TeamPackageRequest,
+    responses(
+        (status = OK, description = "Permission granted", body = AccessResponse),
+        (status = BAD_REQUEST, body = crate::error::ApiErrorDetail),
+        (status = UNAUTHORIZED, body = crate::error::ApiErrorDetail),
+        (status = FORBIDDEN, body = crate::error::ApiErrorDetail),
+        (status = NOT_FOUND, body = crate::error::ApiErrorDetail),
+    ),
+)]
+pub async fn grant_team_package(
+    State(state): State<AppState>,
+    RequireAuth(auth): RequireAuth,
+    Path((scope, team)): Path<(String, String)>,
+    Json(body): Json<TeamPackageRequest>,
+) -> WebResult<Json<AccessResponse>> {
+    let permission = match body.permissions.as_deref() {
+        Some("read-only") | Some("read") => "read",
+        Some("read-write") | Some("write") => "write",
+        Some(other) => {
+            return Err(WebError::BadRequest(format!(
+                "invalid permission: \"{other}\", must be one of: read-only, read-write"
+            )));
+        }
+        None => {
+            return Err(WebError::BadRequest(
+                "permissions field is required".to_string(),
+            ));
+        }
+    };
+
+    let (_org, team_row) = resolve_team_for_handler(&state, &scope, &team).await?;
+
+    let pkg = state
+        .repo
+        .get_package_by_name(&body.package)
+        .await
+        .map_err(WebError::CustomApiError)?
+        .ok_or_else(|| WebError::NotFound(format!("Package \"{}\" not found", body.package)))?;
+
+    if pkg.source.is_some() {
+        return Err(WebError::Forbidden(format!(
+            "package \"{}\" is synced from upstream, team permissions are not applicable",
+            body.package
+        )));
+    }
+
+    if pkg.scope.as_deref() != Some(scope.as_str()) {
+        return Err(WebError::Forbidden(format!(
+            "package \"{}\" does not belong to scope \"{scope}\"",
+            body.package
+        )));
+    }
+
+    require_team_pkg_manager(&state, &auth, &scope, &body.package, pkg.id).await?;
+
+    state
+        .repo
+        .grant_team_permission(pkg.id, team_row.id, permission)
+        .await
+        .map_err(WebError::CustomApiError)?;
+
+    log::info!(
+        action = "team_grant_package";
+        "scope={scope} team={team} pkg={} perm={permission} actor={}",
+        body.package, auth.user.name
+    );
+
+    Ok(Json(AccessResponse { ok: true }))
+}
+
+#[utoipa::path(
+    delete,
+    tag = "registry",
+    path = "/-/team/{scope}/{team}/package",
+    params(
+        ("scope" = String, Path, description = "Organization scope (without @)"),
+        ("team" = String, Path, description = "Team name"),
+    ),
+    request_body = TeamPackageRequest,
+    responses(
+        (status = NO_CONTENT, description = "Permission revoked"),
+        (status = BAD_REQUEST, body = crate::error::ApiErrorDetail),
+        (status = UNAUTHORIZED, body = crate::error::ApiErrorDetail),
+        (status = FORBIDDEN, body = crate::error::ApiErrorDetail),
+        (status = NOT_FOUND, body = crate::error::ApiErrorDetail),
+    ),
+)]
+pub async fn revoke_team_package(
+    State(state): State<AppState>,
+    RequireAuth(auth): RequireAuth,
+    Path((scope, team)): Path<(String, String)>,
+    Json(body): Json<TeamPackageRequest>,
+) -> WebResult<StatusCode> {
+    let (_org, team_row) = resolve_team_for_handler(&state, &scope, &team).await?;
+
+    let pkg = state
+        .repo
+        .get_package_by_name(&body.package)
+        .await
+        .map_err(WebError::CustomApiError)?
+        .ok_or_else(|| WebError::NotFound(format!("Package \"{}\" not found", body.package)))?;
+
+    if pkg.source.is_some() {
+        return Err(WebError::Forbidden(format!(
+            "package \"{}\" is synced from upstream, team permissions are not applicable",
+            body.package
+        )));
+    }
+
+    if pkg.scope.as_deref() != Some(scope.as_str()) {
+        return Err(WebError::Forbidden(format!(
+            "package \"{}\" does not belong to scope \"{scope}\"",
+            body.package
+        )));
+    }
+
+    require_team_pkg_manager(&state, &auth, &scope, &body.package, pkg.id).await?;
+
+    state
+        .repo
+        .revoke_team_permission(pkg.id, team_row.id)
+        .await
+        .map_err(WebError::CustomApiError)?;
+
+    log::info!(
+        action = "team_revoke_package";
+        "scope={scope} team={team} pkg={} actor={}",
+        body.package, auth.user.name
+    );
+
+    Ok(StatusCode::NO_CONTENT)
 }

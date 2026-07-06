@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "UPDATE org_members SET role = ? WHERE org_id = ? AND user_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "c115d076961b0a440543391f90d0f8c30a8a1bb23bf10ce30ec0e6c0e2a68d72"
+}

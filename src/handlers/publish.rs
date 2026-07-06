@@ -295,19 +295,13 @@ pub async fn publish_package_inner(
             )));
         }
 
-        if !is_admin(&auth.user, &state.config.auth.admins) {
-            let is_maintainer = state
-                .repo
-                .is_maintainer(pkg.id, auth.user.id)
-                .await
-                .map_err(WebError::CustomApiError)?;
-            if !is_maintainer {
-                return Err(WebError::Forbidden(format!(
-                    "\"{}\" not authorized to modify {fullname}, please contact maintainers",
-                    auth.user.name
-                )));
-            }
-        }
+        crate::middleware::auth::ensure_package_write_access(
+            state,
+            auth,
+            &fullname,
+            pkg.id,
+        )
+        .await?;
     }
 
     let description = payload

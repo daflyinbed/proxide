@@ -167,12 +167,29 @@ pub async fn set_member(
             ))
         })?;
 
-    let existed = state
+    let existing = state
         .repo
         .get_org_member(org_row.id, user.id)
         .await
-        .map_err(WebError::CustomApiError)?
-        .is_some();
+        .map_err(WebError::CustomApiError)?;
+
+    let existed = existing.is_some();
+
+    if let Some(ref m) = existing
+        && m.role == "owner"
+        && role != "owner"
+    {
+        let owner_count = state
+            .repo
+            .count_org_owners(org_row.id)
+            .await
+            .map_err(WebError::CustomApiError)?;
+        if owner_count <= 1 {
+            return Err(WebError::Conflict(format!(
+                "cannot demote the last owner of organization \"{org_name}\""
+            )));
+        }
+    }
 
     state
         .repo
@@ -327,16 +344,23 @@ pub async fn org_packages(
         .await
         .map_err(WebError::CustomApiError)?;
 
-    let pkg_ids: Vec<i64> = pkgs.iter().map(|p| p.id).collect();
-    let perm_map = state
-        .repo
-        .list_package_max_permissions(&pkg_ids)
-        .await
-        .map_err(WebError::CustomApiError)?;
+    let is_admin_viewer = auth
+        .as_ref()
+        .is_some_and(|a| is_admin(&a.user, &state.config.auth.admins));
+
+    let write_map = if is_admin_viewer {
+        pkgs.iter().map(|p| (p.id, true)).collect()
+    } else {
+        state
+            .repo
+            .list_org_package_viewer_permissions(org_row.id, viewer_id)
+            .await
+            .map_err(WebError::CustomApiError)?
+    };
 
     let mut res: BTreeMap<String, String> = BTreeMap::new();
     for pkg in pkgs {
-        let level = if perm_map.get(&pkg.id).copied().unwrap_or(false) {
+        let level = if write_map.get(&pkg.id).copied().unwrap_or(false) {
             "write"
         } else {
             "read"

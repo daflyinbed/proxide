@@ -1496,29 +1496,39 @@ impl Repository for MysqlRepository {
             .collect())
     }
 
-    async fn list_package_max_permissions(
+    async fn list_org_package_viewer_permissions(
         &self,
-        package_ids: &[i64],
+        org_id: i64,
+        viewer_user_id: i64,
     ) -> Result<HashMap<i64, bool>> {
-        if package_ids.is_empty() {
-            return Ok(HashMap::new());
-        }
-        let placeholders: Vec<String> = package_ids.iter().map(|_| "?".to_string()).collect();
-        let sql = format!(
-            "SELECT package_id, MAX(permission = 'write') AS `has_write` \
-             FROM package_team_permissions WHERE package_id IN ({}) GROUP BY package_id",
-            placeholders.join(",")
-        );
-        let mut query = sqlx::query(&sql);
-        for &id in package_ids {
-            query = query.bind(id);
-        }
-        let rows = query.fetch_all(&self.pool).await?;
+        let rows = sqlx::query!(
+            r#"SELECT p.id,
+                      CASE WHEN (
+                          EXISTS (SELECT 1 FROM maintainers m WHERE m.package_id = p.id AND m.user_id = ?)
+                          OR EXISTS (
+                              SELECT 1 FROM org_members om
+                              WHERE om.org_id = ? AND om.user_id = ? AND om.role IN ('owner','admin')
+                          )
+                          OR EXISTS (
+                              SELECT 1 FROM package_team_permissions ptp
+                              JOIN team_members tm ON tm.team_id = ptp.team_id
+                              WHERE ptp.package_id = p.id AND tm.user_id = ? AND ptp.permission = 'write'
+                          )
+                      ) THEN 1 ELSE 0 END AS `has_write`
+               FROM packages p
+               LEFT JOIN organizations o ON o.name = p.scope
+               WHERE o.id = ?"#,
+            viewer_user_id,
+            org_id,
+            viewer_user_id,
+            viewer_user_id,
+            org_id
+        )
+        .fetch_all(&self.pool)
+        .await?;
         let mut map = HashMap::with_capacity(rows.len());
         for row in rows {
-            let package_id: i64 = row.try_get("package_id")?;
-            let has_write: i64 = row.try_get("has_write")?;
-            map.insert(package_id, has_write != 0);
+            map.insert(row.id, row.has_write != 0);
         }
         Ok(map)
     }

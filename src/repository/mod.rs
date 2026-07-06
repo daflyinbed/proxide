@@ -540,9 +540,10 @@ pub trait Repository: Send + Sync + 'static {
         &self,
         package_id: i64,
     ) -> Result<Vec<(TeamRow, String)>>;
-    async fn list_package_max_permissions(
+    async fn list_org_package_viewer_permissions(
         &self,
-        package_ids: &[i64],
+        org_id: i64,
+        viewer_user_id: i64,
     ) -> Result<HashMap<i64, bool>>;
 
     // ── org/team auth helpers ──

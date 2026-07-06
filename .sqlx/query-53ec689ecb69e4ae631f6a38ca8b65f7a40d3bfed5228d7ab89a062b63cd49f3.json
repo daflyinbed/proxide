@@ -1,0 +1,34 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT p.id,\n                      CASE WHEN (\n                          EXISTS (SELECT 1 FROM maintainers m WHERE m.package_id = p.id AND m.user_id = ?)\n                          OR EXISTS (\n                              SELECT 1 FROM org_members om\n                              WHERE om.org_id = ? AND om.user_id = ? AND om.role IN ('owner','admin')\n                          )\n                          OR EXISTS (\n                              SELECT 1 FROM package_team_permissions ptp\n                              JOIN team_members tm ON tm.team_id = ptp.team_id\n                              WHERE ptp.package_id = p.id AND tm.user_id = ? AND ptp.permission = 'write'\n                          )\n                      ) THEN 1 ELSE 0 END AS `has_write`\n               FROM packages p\n               LEFT JOIN organizations o ON o.name = p.scope\n               WHERE o.id = ?",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": {
+          "type": "LongLong",
+          "flags": "NOT_NULL | PRIMARY_KEY | AUTO_INCREMENT",
+          "max_size": 20
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "has_write",
+        "type_info": {
+          "type": "LongLong",
+          "flags": "NOT_NULL | BINARY",
+          "max_size": 2
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "53ec689ecb69e4ae631f6a38ca8b65f7a40d3bfed5228d7ab89a062b63cd49f3"
+}

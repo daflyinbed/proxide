@@ -522,6 +522,13 @@ pub trait Repository: Send + Sync + 'static {
         user_id: i64,
         role: &str,
     ) -> Result<bool>;
+    async fn set_org_member_role_and_join_developers(
+        &self,
+        org_id: i64,
+        user_id: i64,
+        role: &str,
+        developers_team_name: &str,
+    ) -> Result<bool>;
     async fn list_org_members(&self, org_id: i64) -> Result<Vec<OrgMemberRow>>;
     async fn list_org_member_roster(&self, org_id: i64) -> Result<Vec<(String, String)>>;
     async fn get_org_member(

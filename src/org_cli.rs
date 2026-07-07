@@ -112,18 +112,12 @@ async fn add_member(
         .await?
         .ok_or_else(|| anyhow::anyhow!("user \"{user_name}\" does not exist"))?;
 
-    let existed = state.repo.get_org_member(org.id, user.id).await?.is_some();
     let applied = state
         .repo
-        .set_org_member_role_guarded(org.id, user.id, role)
+        .set_org_member_role_and_join_developers(org.id, user.id, role, DEVELOPERS_TEAM)
         .await?;
     if !applied {
         bail!("cannot demote the last owner of organization \"{org_name}\"");
-    }
-    if !existed
-        && let Some(dev_team) = state.repo.get_team_by_org_name(org.id, DEVELOPERS_TEAM).await?
-    {
-        state.repo.add_team_member(dev_team.id, user.id).await?;
     }
     println!(
         "set \"{}\" as {role} of organization \"{}\"",

@@ -296,13 +296,7 @@ pub async fn publish_package_inner(
             )));
         }
 
-        crate::middleware::auth::ensure_package_write_access(
-            state,
-            auth,
-            &fullname,
-            pkg.id,
-        )
-        .await?;
+        crate::middleware::auth::ensure_package_write_access(state, auth, pkg).await?;
     }
 
     let description = payload
@@ -800,7 +794,7 @@ pub async fn update_maintainers_inner(
         .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
 
     crate::middleware::auth::ensure_package_readable_with_auth(state, auth, &pkg).await?;
-    crate::middleware::auth::ensure_package_write_access(state, auth, &fullname, pkg.id).await?;
+    crate::middleware::auth::ensure_package_write_access(state, auth, &pkg).await?;
     ensure_local_package(pkg.source.as_deref(), &fullname)?;
 
     if !state
@@ -911,7 +905,7 @@ pub async fn unpublish_package_inner(
         .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
 
     crate::middleware::auth::ensure_package_readable_with_auth(state, auth, &pkg).await?;
-    crate::middleware::auth::ensure_package_write_access(state, auth, &fullname, pkg.id).await?;
+    crate::middleware::auth::ensure_package_write_access(state, auth, &pkg).await?;
     ensure_local_package(pkg.source.as_deref(), &fullname)?;
 
     if !state
@@ -995,7 +989,7 @@ pub async fn unpublish_version_inner(
         .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
 
     crate::middleware::auth::ensure_package_readable_with_auth(state, auth, &pkg).await?;
-    crate::middleware::auth::ensure_package_write_access(state, auth, &fullname, pkg.id).await?;
+    crate::middleware::auth::ensure_package_write_access(state, auth, &pkg).await?;
     ensure_local_package(pkg.source.as_deref(), &fullname)?;
 
     if !state

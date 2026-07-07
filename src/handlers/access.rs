@@ -222,7 +222,7 @@ pub async fn set_access(
         ));
     }
 
-    ensure_package_write_access(&state, &auth, &fullname, pkg.id).await?;
+    ensure_package_write_access(&state, &auth, &pkg).await?;
 
     if !state
         .package_lock

@@ -1,5 +1,4 @@
 use crate::error::{WebError, WebResult};
-use crate::npm::split_scope_name;
 use crate::repository::{PackageRow, TokenRow, UserRow};
 use crate::state::AppState;
 use axum::extract::FromRequestParts;
@@ -171,13 +170,12 @@ pub async fn ensure_package_readable_with_auth(
 pub async fn ensure_package_write_access(
     state: &AppState,
     auth: &AuthContext,
-    fullname: &str,
-    package_id: i64,
+    pkg: &PackageRow,
 ) -> WebResult<()> {
     if is_admin(&auth.user, &state.config.auth.admins) {
         return Ok(());
     }
-    let (scope, _name) = split_scope_name(fullname);
+    let scope = pkg.scope.as_deref();
     check_scope_access(
         scope,
         &state.config.auth.allow_scopes,
@@ -185,13 +183,14 @@ pub async fn ensure_package_write_access(
     )?;
     if state
         .repo
-        .is_maintainer(package_id, auth.user.id)
+        .is_maintainer(pkg.id, auth.user.id)
         .await
         .map_err(WebError::CustomApiError)?
     {
         return Ok(());
     }
-    if let Some(scope) = scope
+    if pkg.source.is_none()
+        && let Some(scope) = scope
         && state
             .repo
             .user_is_org_manager_for_scope(scope, auth.user.id)
@@ -200,17 +199,18 @@ pub async fn ensure_package_write_access(
     {
         return Ok(());
     }
-    if state
-        .repo
-        .user_has_team_access(package_id, auth.user.id, "write")
-        .await
-        .map_err(WebError::CustomApiError)?
+    if pkg.source.is_none()
+        && state
+            .repo
+            .user_has_team_access(pkg.id, auth.user.id, "write")
+            .await
+            .map_err(WebError::CustomApiError)?
     {
         return Ok(());
     }
     Err(WebError::Forbidden(format!(
-        "\"{}\" not authorized to modify {fullname}, please contact maintainers",
-        auth.user.name
+        "\"{}\" not authorized to modify {}, please contact maintainers",
+        auth.user.name, pkg.name
     )))
 }
 

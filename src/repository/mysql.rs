@@ -1069,18 +1069,19 @@ impl Repository for MysqlRepository {
         let mut tx = self.pool.begin().await?;
         if user_ids.is_empty() {
             sqlx::query!(
-                r#"DELETE FROM maintainers WHERE package_id = ?"#,
-                package_id
+                r#"DELETE FROM maintainers WHERE package_id = ? AND source = ?"#,
+                package_id,
+                source
             )
             .execute(&mut *tx)
             .await?;
         } else {
             let placeholders: Vec<String> = user_ids.iter().map(|_| "?".to_string()).collect();
             let sql = format!(
-                "DELETE FROM maintainers WHERE package_id = ? AND user_id NOT IN ({})",
+                "DELETE FROM maintainers WHERE package_id = ? AND source = ? AND user_id NOT IN ({})",
                 placeholders.join(",")
             );
-            let mut query = sqlx::query(&sql).bind(package_id);
+            let mut query = sqlx::query(&sql).bind(package_id).bind(source);
             for id in user_ids {
                 query = query.bind(id);
             }
@@ -1356,6 +1357,66 @@ impl Repository for MysqlRepository {
         )
         .execute(&mut *tx)
         .await?;
+        tx.commit().await?;
+        Ok(true)
+    }
+
+    async fn set_org_member_role_and_join_developers(
+        &self,
+        org_id: i64,
+        user_id: i64,
+        role: &str,
+        developers_team_name: &str,
+    ) -> Result<bool> {
+        let mut tx = self.pool.begin().await?;
+        let current = sqlx::query!(
+            r#"SELECT role FROM org_members WHERE org_id = ? AND user_id = ? FOR UPDATE"#,
+            org_id,
+            user_id
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
+        let existed = current.is_some();
+        if current.as_ref().is_some_and(|c| c.role == "owner") && role != "owner" {
+            let row = sqlx::query!(
+                r#"SELECT COUNT(*) AS `count` FROM org_members
+                   WHERE org_id = ? AND role = 'owner' FOR UPDATE"#,
+                org_id
+            )
+            .fetch_one(&mut *tx)
+            .await?;
+            if row.count <= 1 {
+                return Ok(false);
+            }
+        }
+        sqlx::query!(
+            r#"INSERT INTO org_members (org_id, user_id, role) VALUES (?, ?, ?)
+               ON DUPLICATE KEY UPDATE role = VALUES(role)"#,
+            org_id,
+            user_id,
+            role
+        )
+        .execute(&mut *tx)
+        .await?;
+        if !existed {
+            let team = sqlx::query_as!(
+                TeamRow,
+                r#"SELECT id, org_id, name, description, created_at FROM teams WHERE org_id = ? AND name = ?"#,
+                org_id,
+                developers_team_name
+            )
+            .fetch_optional(&mut *tx)
+            .await?;
+            if let Some(team) = team {
+                sqlx::query!(
+                    r#"INSERT IGNORE INTO team_members (team_id, user_id) VALUES (?, ?)"#,
+                    team.id,
+                    user_id
+                )
+                .execute(&mut *tx)
+                .await?;
+            }
+        }
         tx.commit().await?;
         Ok(true)
     }

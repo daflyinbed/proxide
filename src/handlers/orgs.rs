@@ -98,26 +98,6 @@ pub async fn require_org_member(
     }
 }
 
-pub async fn auto_add_to_developers(
-    state: &AppState,
-    org_id: i64,
-    user_id: i64,
-) -> WebResult<()> {
-    if let Some(team) = state
-        .repo
-        .get_team_by_org_name(org_id, DEVELOPERS_TEAM)
-        .await
-        .map_err(WebError::CustomApiError)?
-    {
-        state
-            .repo
-            .add_team_member(team.id, user_id)
-            .await
-            .map_err(WebError::CustomApiError)?;
-    }
-    Ok(())
-}
-
 #[utoipa::path(
     get,
     tag = "org",
@@ -201,27 +181,15 @@ pub async fn set_member(
             ))
         })?;
 
-    let existing = state
-        .repo
-        .get_org_member(org_row.id, user.id)
-        .await
-        .map_err(WebError::CustomApiError)?;
-
-    let existed = existing.is_some();
-
     let applied = state
         .repo
-        .set_org_member_role_guarded(org_row.id, user.id, role)
+        .set_org_member_role_and_join_developers(org_row.id, user.id, role, DEVELOPERS_TEAM)
         .await
         .map_err(WebError::CustomApiError)?;
     if !applied {
         return Err(WebError::Conflict(format!(
             "cannot demote the last owner of organization \"{org_name}\""
         )));
-    }
-
-    if !existed {
-        auto_add_to_developers(&state, org_row.id, user.id).await?;
     }
 
     let size = state

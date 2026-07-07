@@ -426,6 +426,8 @@ pub async fn grant_team_package(
         }
     };
 
+    require_org_member(&state, &auth, &scope).await?;
+
     let (_org, team_row) = resolve_team_for_handler(&state, &scope, &team).await?;
 
     let pkg = state
@@ -489,6 +491,8 @@ pub async fn revoke_team_package(
     Path((scope, team)): Path<(String, String)>,
     Json(body): Json<TeamPackageRequest>,
 ) -> WebResult<StatusCode> {
+    require_org_member(&state, &auth, &scope).await?;
+
     let (_org, team_row) = resolve_team_for_handler(&state, &scope, &team).await?;
 
     let pkg = state

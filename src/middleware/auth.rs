@@ -191,10 +191,10 @@ pub async fn ensure_package_write_access(
     {
         return Ok(());
     }
-    if scope.is_some()
+    if let Some(scope) = scope
         && state
             .repo
-            .user_is_org_manager_for_scope(scope.unwrap(), auth.user.id)
+            .user_is_org_manager_for_scope(scope, auth.user.id)
             .await
             .map_err(WebError::CustomApiError)?
     {

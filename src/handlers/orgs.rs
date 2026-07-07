@@ -176,6 +176,19 @@ pub async fn set_member(
     let role = body.role.as_deref().unwrap_or("developer");
     validate_role(role)?;
 
+    if role == "owner" && !is_admin(&auth.user, &state.config.auth.admins) {
+        let actor_member = state
+            .repo
+            .get_org_member(org_row.id, auth.user.id)
+            .await
+            .map_err(WebError::CustomApiError)?;
+        if !matches!(actor_member.as_ref().map(|m| m.role.as_str()), Some("owner")) {
+            return Err(WebError::Forbidden(
+                "only owners can grant the owner role".to_string(),
+            ));
+        }
+    }
+
     let user = state
         .repo
         .get_user_by_name(&body.user)

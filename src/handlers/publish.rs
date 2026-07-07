@@ -840,7 +840,7 @@ pub async fn update_maintainers_inner(
 
     state
         .repo
-        .sync_maintainers(pkg.id, &user_ids, MAINTAINER_SOURCE_MANUAL)
+        .replace_maintainers(pkg.id, &user_ids, MAINTAINER_SOURCE_MANUAL)
         .await
         .map_err(WebError::CustomApiError)?;
 

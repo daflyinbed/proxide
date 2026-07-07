@@ -77,27 +77,11 @@ async fn create_org(state: &AppState, raw_name: &str, owner_name: &str) -> Resul
         bail!("organization \"{name}\" already exists");
     }
 
-    let org_id = state.repo.create_org(&name, None).await?;
-    state
+    let org_id = state
         .repo
-        .create_team(org_id, DEVELOPERS_TEAM, None)
+        .create_org_with_owner(&name, owner.id, DEVELOPERS_TEAM)
         .await
-        .context("failed to create developers team")?;
-    state
-        .repo
-        .add_org_member(org_id, owner.id, "owner")
-        .await
-        .context("failed to add owner as org member")?;
-    let dev_team = state
-        .repo
-        .get_team_by_org_name(org_id, DEVELOPERS_TEAM)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("developers team disappeared after create"))?;
-    state
-        .repo
-        .add_team_member(dev_team.id, owner.id)
-        .await
-        .context("failed to add owner to developers team")?;
+        .context("failed to create organization with owner")?;
 
     println!(
         "created organization \"{}\" (id={org_id}) with owner \"{}\"; developers team initialized",

@@ -1060,6 +1060,47 @@ impl Repository for MysqlRepository {
         Ok(())
     }
 
+    async fn replace_maintainers(
+        &self,
+        package_id: i64,
+        user_ids: &[i64],
+        source: &str,
+    ) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        if user_ids.is_empty() {
+            sqlx::query!(
+                r#"DELETE FROM maintainers WHERE package_id = ?"#,
+                package_id
+            )
+            .execute(&mut *tx)
+            .await?;
+        } else {
+            let placeholders: Vec<String> = user_ids.iter().map(|_| "?".to_string()).collect();
+            let sql = format!(
+                "DELETE FROM maintainers WHERE package_id = ? AND user_id NOT IN ({})",
+                placeholders.join(",")
+            );
+            let mut query = sqlx::query(&sql).bind(package_id);
+            for id in user_ids {
+                query = query.bind(id);
+            }
+            query.execute(&mut *tx).await?;
+
+            for &user_id in user_ids {
+                sqlx::query!(
+                    r#"INSERT IGNORE INTO maintainers (package_id, user_id, source) VALUES (?, ?, ?)"#,
+                    package_id,
+                    user_id,
+                    source
+                )
+                .execute(&mut *tx)
+                .await?;
+            }
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
     async fn sync_maintainers_and_grant_team_permission(
         &self,
         package_id: i64,
@@ -1146,6 +1187,54 @@ impl Repository for MysqlRepository {
         .execute(&self.pool)
         .await?;
         Ok(result.last_insert_id() as i64)
+    }
+
+    async fn create_org_with_owner(
+        &self,
+        name: &str,
+        owner_user_id: i64,
+        developers_team_name: &str,
+    ) -> Result<i64> {
+        let mut tx = self.pool.begin().await?;
+        let org_result = sqlx::query!(
+            r#"INSERT INTO organizations (name, description) VALUES (?, ?)"#,
+            name,
+            None::<&str>
+        )
+        .execute(&mut *tx)
+        .await?;
+        let org_id = org_result.last_insert_id() as i64;
+
+        let team_result = sqlx::query!(
+            r#"INSERT INTO teams (org_id, name, description) VALUES (?, ?, ?)"#,
+            org_id,
+            developers_team_name,
+            None::<&str>
+        )
+        .execute(&mut *tx)
+        .await?;
+        let dev_team_id = team_result.last_insert_id() as i64;
+
+        sqlx::query!(
+            r#"INSERT INTO org_members (org_id, user_id, role) VALUES (?, ?, ?)
+               ON DUPLICATE KEY UPDATE role = VALUES(role)"#,
+            org_id,
+            owner_user_id,
+            "owner"
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query!(
+            r#"INSERT IGNORE INTO team_members (team_id, user_id) VALUES (?, ?)"#,
+            dev_team_id,
+            owner_user_id
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok(org_id)
     }
 
     async fn get_org_by_name(&self, name: &str) -> Result<Option<OrganizationRow>> {

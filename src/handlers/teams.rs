@@ -35,6 +35,11 @@ pub struct FormatQuery {
 }
 
 fn validate_team_name(name: &str) -> WebResult<()> {
+    if name.len() > 256 {
+        return Err(WebError::BadRequest(
+            "team name cannot exceed 256 characters".to_string(),
+        ));
+    }
     if name == DEVELOPERS_TEAM {
         return Err(WebError::BadRequest(
             "team name \"developers\" is reserved".to_string(),

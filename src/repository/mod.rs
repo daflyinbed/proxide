@@ -478,6 +478,12 @@ pub trait Repository: Send + Sync + 'static {
         user_ids: &[i64],
         source: &str,
     ) -> Result<()>;
+    async fn replace_maintainers(
+        &self,
+        package_id: i64,
+        user_ids: &[i64],
+        source: &str,
+    ) -> Result<()>;
     async fn sync_maintainers_and_grant_team_permission(
         &self,
         package_id: i64,
@@ -497,6 +503,12 @@ pub trait Repository: Send + Sync + 'static {
     // ── organizations ──
 
     async fn create_org(&self, name: &str, description: Option<&str>) -> Result<i64>;
+    async fn create_org_with_owner(
+        &self,
+        name: &str,
+        owner_user_id: i64,
+        developers_team_name: &str,
+    ) -> Result<i64>;
     async fn get_org_by_name(&self, name: &str) -> Result<Option<OrganizationRow>>;
     async fn delete_org(&self, id: i64) -> Result<()>;
 

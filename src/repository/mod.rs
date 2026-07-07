@@ -481,14 +481,18 @@ pub trait Repository: Send + Sync + 'static {
 
     async fn create_org(&self, name: &str, description: Option<&str>) -> Result<i64>;
     async fn get_org_by_name(&self, name: &str) -> Result<Option<OrganizationRow>>;
-    async fn get_org_by_id(&self, id: i64) -> Result<Option<OrganizationRow>>;
     async fn delete_org(&self, id: i64) -> Result<()>;
 
     // ── org_members ──
 
     async fn add_org_member(&self, org_id: i64, user_id: i64, role: &str) -> Result<()>;
-    async fn remove_org_member_cascade(&self, org_id: i64, user_id: i64) -> Result<()>;
-    async fn set_org_member_role(&self, org_id: i64, user_id: i64, role: &str) -> Result<()>;
+    async fn remove_org_member_cascade(&self, org_id: i64, user_id: i64) -> Result<bool>;
+    async fn set_org_member_role_guarded(
+        &self,
+        org_id: i64,
+        user_id: i64,
+        role: &str,
+    ) -> Result<bool>;
     async fn list_org_members(&self, org_id: i64) -> Result<Vec<OrgMemberRow>>;
     async fn list_org_member_roster(&self, org_id: i64) -> Result<Vec<(String, String)>>;
     async fn get_org_member(
@@ -512,7 +516,6 @@ pub trait Repository: Send + Sync + 'static {
         org_id: i64,
         team_name: &str,
     ) -> Result<Option<TeamRow>>;
-    async fn get_team_by_id(&self, team_id: i64) -> Result<Option<TeamRow>>;
     async fn delete_team(&self, team_id: i64) -> Result<()>;
     async fn list_teams_in_org(&self, org_id: i64) -> Result<Vec<TeamRow>>;
 
@@ -536,10 +539,6 @@ pub trait Repository: Send + Sync + 'static {
         &self,
         team_id: i64,
     ) -> Result<Vec<(PackageRow, String)>>;
-    async fn list_teams_for_package(
-        &self,
-        package_id: i64,
-    ) -> Result<Vec<(TeamRow, String)>>;
     async fn list_org_package_viewer_permissions(
         &self,
         org_id: i64,

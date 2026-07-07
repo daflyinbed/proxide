@@ -1,0 +1,24 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT COUNT(*) AS `count` FROM org_members\n                   WHERE org_id = ? AND role = 'owner' FOR UPDATE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count",
+        "type_info": {
+          "type": "LongLong",
+          "flags": "NOT_NULL | BINARY",
+          "max_size": 21
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "8405e4e6788253dd0e16dc66c42dfa0d52f4ca5a36932119c6631dee9e6cbf38"
+}

@@ -1153,17 +1153,6 @@ impl Repository for MysqlRepository {
         Ok(row)
     }
 
-    async fn get_org_by_id(&self, id: i64) -> Result<Option<OrganizationRow>> {
-        let row = sqlx::query_as!(
-            OrganizationRow,
-            r#"SELECT id, name, description, created_at, updated_at FROM organizations WHERE id = ?"#,
-            id
-        )
-        .fetch_optional(&self.pool)
-        .await?;
-        Ok(row)
-    }
-
     async fn delete_org(&self, id: i64) -> Result<()> {
         sqlx::query!(r#"DELETE FROM organizations WHERE id = ?"#, id)
             .execute(&self.pool)
@@ -1186,22 +1175,31 @@ impl Repository for MysqlRepository {
         Ok(())
     }
 
-    async fn remove_org_member_cascade(&self, org_id: i64, user_id: i64) -> Result<()> {
+    async fn remove_org_member_cascade(&self, org_id: i64, user_id: i64) -> Result<bool> {
         let mut tx = self.pool.begin().await?;
+        let target = sqlx::query!(
+            r#"SELECT role FROM org_members WHERE org_id = ? AND user_id = ? FOR UPDATE"#,
+            org_id,
+            user_id
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
+        if target.as_ref().is_some_and(|t| t.role == "owner") {
+            let row = sqlx::query!(
+                r#"SELECT COUNT(*) AS `count` FROM org_members
+                   WHERE org_id = ? AND role = 'owner' FOR UPDATE"#,
+                org_id
+            )
+            .fetch_one(&mut *tx)
+            .await?;
+            if row.count <= 1 {
+                return Ok(false);
+            }
+        }
         sqlx::query!(
             r#"DELETE tm FROM team_members tm
                JOIN teams t ON t.id = tm.team_id
                WHERE t.org_id = ? AND tm.user_id = ?"#,
-            org_id,
-            user_id
-        )
-        .execute(&mut *tx)
-        .await?;
-        sqlx::query!(
-            r#"DELETE m FROM maintainers m
-               JOIN packages p ON p.id = m.package_id
-               JOIN organizations o ON o.name = p.scope
-               WHERE o.id = ? AND m.user_id = ?"#,
             org_id,
             user_id
         )
@@ -1215,19 +1213,46 @@ impl Repository for MysqlRepository {
         .execute(&mut *tx)
         .await?;
         tx.commit().await?;
-        Ok(())
+        Ok(true)
     }
 
-    async fn set_org_member_role(&self, org_id: i64, user_id: i64, role: &str) -> Result<()> {
-        sqlx::query!(
-            r#"UPDATE org_members SET role = ? WHERE org_id = ? AND user_id = ?"#,
-            role,
+    async fn set_org_member_role_guarded(
+        &self,
+        org_id: i64,
+        user_id: i64,
+        role: &str,
+    ) -> Result<bool> {
+        let mut tx = self.pool.begin().await?;
+        let current = sqlx::query!(
+            r#"SELECT role FROM org_members WHERE org_id = ? AND user_id = ? FOR UPDATE"#,
             org_id,
             user_id
         )
-        .execute(&self.pool)
+        .fetch_optional(&mut *tx)
         .await?;
-        Ok(())
+        if current.as_ref().is_some_and(|c| c.role == "owner") && role != "owner" {
+            let row = sqlx::query!(
+                r#"SELECT COUNT(*) AS `count` FROM org_members
+                   WHERE org_id = ? AND role = 'owner' FOR UPDATE"#,
+                org_id
+            )
+            .fetch_one(&mut *tx)
+            .await?;
+            if row.count <= 1 {
+                return Ok(false);
+            }
+        }
+        sqlx::query!(
+            r#"INSERT INTO org_members (org_id, user_id, role) VALUES (?, ?, ?)
+               ON DUPLICATE KEY UPDATE role = VALUES(role)"#,
+            org_id,
+            user_id,
+            role
+        )
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(true)
     }
 
     async fn list_org_members(&self, org_id: i64) -> Result<Vec<OrgMemberRow>> {
@@ -1316,17 +1341,6 @@ impl Repository for MysqlRepository {
             r#"SELECT id, org_id, name, description, created_at FROM teams WHERE org_id = ? AND name = ?"#,
             org_id,
             team_name
-        )
-        .fetch_optional(&self.pool)
-        .await?;
-        Ok(row)
-    }
-
-    async fn get_team_by_id(&self, team_id: i64) -> Result<Option<TeamRow>> {
-        let row = sqlx::query_as!(
-            TeamRow,
-            r#"SELECT id, org_id, name, description, created_at FROM teams WHERE id = ?"#,
-            team_id
         )
         .fetch_optional(&self.pool)
         .await?;
@@ -1457,38 +1471,6 @@ impl Repository for MysqlRepository {
                         access: r.access,
                         abbreviated_dist_id: r.abbreviated_dist_id,
                         full_dist_id: r.full_dist_id,
-                    },
-                    r.permission,
-                )
-            })
-            .collect())
-    }
-
-    async fn list_teams_for_package(
-        &self,
-        package_id: i64,
-    ) -> Result<Vec<(TeamRow, String)>> {
-        let rows = sqlx::query!(
-            r#"SELECT t.id, t.org_id, t.name, t.description, t.created_at,
-                      ptp.permission
-               FROM package_team_permissions ptp
-               JOIN teams t ON t.id = ptp.team_id
-               WHERE ptp.package_id = ?
-               ORDER BY t.name"#,
-            package_id
-        )
-        .fetch_all(&self.pool)
-        .await?;
-        Ok(rows
-            .into_iter()
-            .map(|r| {
-                (
-                    TeamRow {
-                        id: r.id,
-                        org_id: r.org_id,
-                        name: r.name,
-                        description: r.description,
-                        created_at: r.created_at,
                     },
                     r.permission,
                 )

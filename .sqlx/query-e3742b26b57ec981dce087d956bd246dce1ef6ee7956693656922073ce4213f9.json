@@ -1,0 +1,24 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT role FROM org_members WHERE org_id = ? AND user_id = ? FOR UPDATE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "role",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL",
+          "max_size": 64
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "e3742b26b57ec981dce087d956bd246dce1ef6ee7956693656922073ce4213f9"
+}

@@ -175,27 +175,16 @@ pub async fn set_member(
 
     let existed = existing.is_some();
 
-    if let Some(ref m) = existing
-        && m.role == "owner"
-        && role != "owner"
-    {
-        let owner_count = state
-            .repo
-            .count_org_owners(org_row.id)
-            .await
-            .map_err(WebError::CustomApiError)?;
-        if owner_count <= 1 {
-            return Err(WebError::Conflict(format!(
-                "cannot demote the last owner of organization \"{org_name}\""
-            )));
-        }
-    }
-
-    state
+    let applied = state
         .repo
-        .add_org_member(org_row.id, user.id, role)
+        .set_org_member_role_guarded(org_row.id, user.id, role)
         .await
         .map_err(WebError::CustomApiError)?;
+    if !applied {
+        return Err(WebError::Conflict(format!(
+            "cannot demote the last owner of organization \"{org_name}\""
+        )));
+    }
 
     if !existed {
         auto_add_to_developers(&state, org_row.id, user.id).await?;
@@ -265,7 +254,7 @@ pub async fn rm_member(
         .map_err(WebError::CustomApiError)?
         .ok_or_else(|| WebError::NotFound(format!("User \"{}\" not found", body.user)))?;
 
-    let existing = state
+    state
         .repo
         .get_org_member(org_row.id, user.id)
         .await
@@ -277,24 +266,16 @@ pub async fn rm_member(
             ))
         })?;
 
-    if existing.role == "owner" {
-        let owner_count = state
-            .repo
-            .count_org_owners(org_row.id)
-            .await
-            .map_err(WebError::CustomApiError)?;
-        if owner_count <= 1 {
-            return Err(WebError::Conflict(format!(
-                "cannot remove the last owner of organization \"{org_name}\""
-            )));
-        }
-    }
-
-    state
+    let removed = state
         .repo
         .remove_org_member_cascade(org_row.id, user.id)
         .await
         .map_err(WebError::CustomApiError)?;
+    if !removed {
+        return Err(WebError::Conflict(format!(
+            "cannot remove the last owner of organization \"{org_name}\""
+        )));
+    }
 
     log::info!(
         action = "org_rm_member";
@@ -313,8 +294,8 @@ pub async fn rm_member(
         ("org" = String, Path, description = "Organization name (scope without @)"),
     ),
     responses(
-        (status = OK, description = "Packages in the org viewable by current user", body = serde_json::Value),
-        (status = NOT_FOUND, body = crate::error::ApiErrorDetail, description = "Org not found (triggers client fallback to /-/user/{x}/package)"),
+        (status = OK, description = "Packages in the org viewable by current user (delegates to per-user listing when the name is not an org)", body = serde_json::Value),
+        (status = NOT_FOUND, body = crate::error::ApiErrorDetail, description = "Neither an org nor a user with that name exists"),
     ),
 )]
 pub async fn org_packages(
@@ -330,9 +311,8 @@ pub async fn org_packages(
     {
         Some(o) => o,
         None => {
-            return Err(WebError::NotFound(format!(
-                "Organization \"{org}\" not found"
-            )));
+            return crate::handlers::access::build_user_packages(&state, auth.as_ref(), &org)
+                .await;
         }
     };
 

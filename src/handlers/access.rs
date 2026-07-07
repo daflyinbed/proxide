@@ -53,39 +53,28 @@ pub async fn list_collaborators(
     Ok(Json(serde_json::to_value(res).unwrap()))
 }
 
-#[utoipa::path(
-    get,
-    tag = "auth",
-    path = "/-/user/{username}/package",
-    params(
-        ("username" = String, Path, description = "User name"),
-    ),
-    responses(
-        (status = OK, description = "Map of package full name to access level", body = serde_json::Value),
-        (status = NOT_FOUND, body = crate::error::ApiErrorDetail),
-    ),
-)]
-pub async fn list_packages_by_user(
-    State(state): State<AppState>,
-    OptionalAuth(auth): OptionalAuth,
-    Path(username): Path<String>,
+pub async fn build_user_packages(
+    state: &AppState,
+    auth: Option<&crate::middleware::auth::AuthContext>,
+    username: &str,
 ) -> WebResult<Json<serde_json::Value>> {
     let user = state
         .repo
-        .get_user_by_name(&username)
+        .get_user_by_name(username)
         .await
         .map_err(WebError::CustomApiError)?
         .ok_or_else(|| WebError::NotFound(format!("User \"{username}\" not found")))?;
 
-    let is_self = auth.as_ref().is_some_and(|a| a.user.id == user.id);
+    let is_admin_viewer = auth.is_some_and(|a| is_admin(&a.user, &state.config.auth.admins));
+    let is_self = auth.is_some_and(|a| a.user.id == user.id);
 
-    let pkgs = if is_self || auth.as_ref().is_some_and(|a| is_admin(&a.user, &state.config.auth.admins)) {
+    let pkgs = if is_self || is_admin_viewer {
         state
             .repo
             .list_packages_by_user_id(user.id)
             .await
             .map_err(WebError::CustomApiError)?
-    } else if let Some(a) = &auth {
+    } else if let Some(a) = auth {
         state
             .repo
             .list_packages_by_user_id_readable(user.id, a.user.id)
@@ -104,6 +93,26 @@ pub async fn list_packages_by_user(
         res.insert(pkg.name, "write".to_string());
     }
     Ok(Json(serde_json::to_value(res).unwrap()))
+}
+
+#[utoipa::path(
+    get,
+    tag = "auth",
+    path = "/-/user/{username}/package",
+    params(
+        ("username" = String, Path, description = "User name"),
+    ),
+    responses(
+        (status = OK, description = "Map of package full name to access level", body = serde_json::Value),
+        (status = NOT_FOUND, body = crate::error::ApiErrorDetail),
+    ),
+)]
+pub async fn list_packages_by_user(
+    State(state): State<AppState>,
+    OptionalAuth(auth): OptionalAuth,
+    Path(username): Path<String>,
+) -> WebResult<Json<serde_json::Value>> {
+    build_user_packages(&state, auth.as_ref(), &username).await
 }
 
 #[utoipa::path(

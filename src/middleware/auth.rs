@@ -155,7 +155,8 @@ pub async fn ensure_package_readable_with_auth(
     {
         return Ok(());
     }
-    if let Some(scope) = &pkg.scope
+    if pkg.source.is_none()
+        && let Some(scope) = &pkg.scope
         && state
             .repo
             .user_is_org_manager_for_scope(scope, auth.user.id)

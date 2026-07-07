@@ -1043,37 +1043,30 @@ impl Repository for MysqlRepository {
 
     async fn sync_maintainers(&self, package_id: i64, user_ids: &[i64]) -> Result<()> {
         let mut tx = self.pool.begin().await?;
+        sync_maintainers_tx(&mut tx, package_id, user_ids).await?;
+        tx.commit().await?;
+        Ok(())
+    }
 
-        if user_ids.is_empty() {
-            sqlx::query!(
-                r#"DELETE FROM maintainers WHERE package_id = ?"#,
-                package_id
-            )
-            .execute(&mut *tx)
-            .await?;
-        } else {
-            let placeholders: Vec<String> = user_ids.iter().map(|_| "?".to_string()).collect();
-            let sql = format!(
-                "DELETE FROM maintainers WHERE package_id = ? AND user_id NOT IN ({})",
-                placeholders.join(",")
-            );
-            let mut query = sqlx::query(&sql).bind(package_id);
-            for id in user_ids {
-                query = query.bind(id);
-            }
-            query.execute(&mut *tx).await?;
-
-            for &user_id in user_ids {
-                sqlx::query!(
-                    r#"INSERT IGNORE INTO maintainers (package_id, user_id) VALUES (?, ?)"#,
-                    package_id,
-                    user_id
-                )
-                .execute(&mut *tx)
-                .await?;
-            }
-        }
-
+    async fn sync_maintainers_and_grant_team_permission(
+        &self,
+        package_id: i64,
+        user_ids: &[i64],
+        team_id: i64,
+        permission: &str,
+    ) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        sync_maintainers_tx(&mut tx, package_id, user_ids).await?;
+        sqlx::query!(
+            r#"INSERT INTO package_team_permissions (package_id, team_id, permission)
+               VALUES (?, ?, ?)
+               ON DUPLICATE KEY UPDATE permission = VALUES(permission)"#,
+            package_id,
+            team_id,
+            permission
+        )
+        .execute(&mut *tx)
+        .await?;
         tx.commit().await?;
         Ok(())
     }
@@ -2424,6 +2417,43 @@ async fn insert_dist_tx(
     .execute(&mut **tx)
     .await?;
     Ok(result.last_insert_id() as i64)
+}
+
+async fn sync_maintainers_tx(
+    tx: &mut sqlx::Transaction<'_, MySql>,
+    package_id: i64,
+    user_ids: &[i64],
+) -> Result<()> {
+    if user_ids.is_empty() {
+        sqlx::query!(
+            r#"DELETE FROM maintainers WHERE package_id = ?"#,
+            package_id
+        )
+        .execute(&mut **tx)
+        .await?;
+    } else {
+        let placeholders: Vec<String> = user_ids.iter().map(|_| "?".to_string()).collect();
+        let sql = format!(
+            "DELETE FROM maintainers WHERE package_id = ? AND user_id NOT IN ({})",
+            placeholders.join(",")
+        );
+        let mut query = sqlx::query(&sql).bind(package_id);
+        for id in user_ids {
+            query = query.bind(id);
+        }
+        query.execute(&mut **tx).await?;
+
+        for &user_id in user_ids {
+            sqlx::query!(
+                r#"INSERT IGNORE INTO maintainers (package_id, user_id) VALUES (?, ?)"#,
+                package_id,
+                user_id
+            )
+            .execute(&mut **tx)
+            .await?;
+        }
+    }
+    Ok(())
 }
 
 async fn sync_tags_tx(

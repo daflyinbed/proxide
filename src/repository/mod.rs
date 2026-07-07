@@ -469,6 +469,13 @@ pub trait Repository: Send + Sync + 'static {
     async fn save_maintainer(&self, package_id: i64, user_id: i64) -> Result<()>;
     async fn is_maintainer(&self, package_id: i64, user_id: i64) -> Result<bool>;
     async fn sync_maintainers(&self, package_id: i64, user_ids: &[i64]) -> Result<()>;
+    async fn sync_maintainers_and_grant_team_permission(
+        &self,
+        package_id: i64,
+        user_ids: &[i64],
+        team_id: i64,
+        permission: &str,
+    ) -> Result<()>;
     async fn list_maintainers(&self, package_id: i64) -> Result<Vec<Maintainer>>;
     async fn list_packages_by_user_id(&self, user_id: i64) -> Result<Vec<PackageRow>>;
     async fn list_packages_by_user_id_readable(

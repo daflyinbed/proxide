@@ -132,12 +132,7 @@ async fn apply_developers_team_default(
     }
     state
         .repo
-        .sync_maintainers(package_id, &user_ids)
-        .await
-        .map_err(WebError::CustomApiError)?;
-    state
-        .repo
-        .grant_team_permission(package_id, dev_team.id, "write")
+        .sync_maintainers_and_grant_team_permission(package_id, &user_ids, dev_team.id, "write")
         .await
         .map_err(WebError::CustomApiError)?;
     log::info!(

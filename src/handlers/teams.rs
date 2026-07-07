@@ -54,24 +54,15 @@ fn validate_team_name(name: &str) -> WebResult<()> {
     Ok(())
 }
 
-async fn resolve_org(state: &AppState, scope: &str) -> WebResult<crate::repository::OrganizationRow> {
-    state
-        .repo
-        .get_org_by_name(scope)
-        .await
-        .map_err(WebError::CustomApiError)?
-        .ok_or_else(|| WebError::NotFound(format!("Organization \"{scope}\" not found")))
-}
-
-async fn resolve_team(
+async fn resolve_team_by_org(
     state: &AppState,
+    org_id: i64,
     scope: &str,
     team_name: &str,
 ) -> WebResult<crate::repository::TeamRow> {
-    let org = resolve_org(state, scope).await?;
     state
         .repo
-        .get_team_by_org_name(org.id, team_name)
+        .get_team_by_org_name(org_id, team_name)
         .await
         .map_err(WebError::CustomApiError)?
         .ok_or_else(|| WebError::NotFound(format!("Team \"{scope}:{team_name}\" not found")))
@@ -99,10 +90,8 @@ pub async fn create_team(
     Path(scope): Path<String>,
     Json(body): Json<CreateTeamRequest>,
 ) -> WebResult<(StatusCode, Json<TeamCreatedResponse>)> {
-    require_org_manager(&state, &auth, &scope).await?;
+    let org = require_org_manager(&state, &auth, &scope).await?;
     validate_team_name(&body.name)?;
-
-    let org = resolve_org(&state, &scope).await?;
 
     if state
         .repo
@@ -156,7 +145,7 @@ pub async fn destroy_team(
     RequireAuth(auth): RequireAuth,
     Path((scope, team)): Path<(String, String)>,
 ) -> WebResult<StatusCode> {
-    require_org_manager(&state, &auth, &scope).await?;
+    let org = require_org_manager(&state, &auth, &scope).await?;
 
     if team == DEVELOPERS_TEAM {
         return Err(WebError::BadRequest(format!(
@@ -164,7 +153,7 @@ pub async fn destroy_team(
         )));
     }
 
-    let team_row = resolve_team(&state, &scope, &team).await?;
+    let team_row = resolve_team_by_org(&state, org.id, &scope, &team).await?;
 
     state
         .repo
@@ -204,10 +193,8 @@ pub async fn add_user(
     Path((scope, team)): Path<(String, String)>,
     Json(body): Json<TeamMemberRequest>,
 ) -> WebResult<(StatusCode, Json<serde_json::Value>)> {
-    require_org_manager(&state, &auth, &scope).await?;
-
-    let org = resolve_org(&state, &scope).await?;
-    let team_row = resolve_team(&state, &scope, &team).await?;
+    let org = require_org_manager(&state, &auth, &scope).await?;
+    let team_row = resolve_team_by_org(&state, org.id, &scope, &team).await?;
 
     let user = state
         .repo
@@ -267,7 +254,7 @@ pub async fn rm_user(
     Path((scope, team)): Path<(String, String)>,
     Json(body): Json<TeamMemberRequest>,
 ) -> WebResult<StatusCode> {
-    require_org_manager(&state, &auth, &scope).await?;
+    let org = require_org_manager(&state, &auth, &scope).await?;
 
     if team == DEVELOPERS_TEAM {
         return Err(WebError::BadRequest(format!(
@@ -275,7 +262,7 @@ pub async fn rm_user(
         )));
     }
 
-    let team_row = resolve_team(&state, &scope, &team).await?;
+    let team_row = resolve_team_by_org(&state, org.id, &scope, &team).await?;
 
     let user = state
         .repo
@@ -320,8 +307,7 @@ pub async fn list_teams(
     Path(scope): Path<String>,
     Query(query): Query<FormatQuery>,
 ) -> WebResult<Json<serde_json::Value>> {
-    require_org_member(&state, &auth, &scope).await?;
-    let org = resolve_org(&state, &scope).await?;
+    let org = require_org_member(&state, &auth, &scope).await?;
     let teams = state
         .repo
         .list_teams_in_org(org.id)
@@ -362,8 +348,8 @@ pub async fn list_users(
     Path((scope, team)): Path<(String, String)>,
     Query(query): Query<FormatQuery>,
 ) -> WebResult<Json<serde_json::Value>> {
-    require_org_member(&state, &auth, &scope).await?;
-    let team_row = resolve_team(&state, &scope, &team).await?;
+    let org = require_org_member(&state, &auth, &scope).await?;
+    let team_row = resolve_team_by_org(&state, org.id, &scope, &team).await?;
     let mut names = state
         .repo
         .list_team_member_names(team_row.id)

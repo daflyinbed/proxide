@@ -1250,26 +1250,24 @@ impl Repository for MysqlRepository {
     }
 
     async fn delete_org(&self, id: i64) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query!(
+            r#"DELETE m FROM maintainers m
+               JOIN packages p ON p.id = m.package_id
+               JOIN organizations o ON o.name = p.scope
+               WHERE o.id = ? AND m.source = 'team'"#,
+            id
+        )
+        .execute(&mut *tx)
+        .await?;
         sqlx::query!(r#"DELETE FROM organizations WHERE id = ?"#, id)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?;
+        tx.commit().await?;
         Ok(())
     }
 
     // ── org_members ──
-
-    async fn add_org_member(&self, org_id: i64, user_id: i64, role: &str) -> Result<()> {
-        sqlx::query!(
-            r#"INSERT INTO org_members (org_id, user_id, role) VALUES (?, ?, ?)
-               ON DUPLICATE KEY UPDATE role = VALUES(role)"#,
-            org_id,
-            user_id,
-            role
-        )
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
 
     async fn remove_org_member_cascade(&self, org_id: i64, user_id: i64) -> Result<bool> {
         let mut tx = self.pool.begin().await?;
@@ -1315,45 +1313,6 @@ impl Repository for MysqlRepository {
             r#"DELETE FROM org_members WHERE org_id = ? AND user_id = ?"#,
             org_id,
             user_id
-        )
-        .execute(&mut *tx)
-        .await?;
-        tx.commit().await?;
-        Ok(true)
-    }
-
-    async fn set_org_member_role_guarded(
-        &self,
-        org_id: i64,
-        user_id: i64,
-        role: &str,
-    ) -> Result<bool> {
-        let mut tx = self.pool.begin().await?;
-        let current = sqlx::query!(
-            r#"SELECT role FROM org_members WHERE org_id = ? AND user_id = ? FOR UPDATE"#,
-            org_id,
-            user_id
-        )
-        .fetch_optional(&mut *tx)
-        .await?;
-        if current.as_ref().is_some_and(|c| c.role == "owner") && role != "owner" {
-            let row = sqlx::query!(
-                r#"SELECT COUNT(*) AS `count` FROM org_members
-                   WHERE org_id = ? AND role = 'owner' FOR UPDATE"#,
-                org_id
-            )
-            .fetch_one(&mut *tx)
-            .await?;
-            if row.count <= 1 {
-                return Ok(false);
-            }
-        }
-        sqlx::query!(
-            r#"INSERT INTO org_members (org_id, user_id, role) VALUES (?, ?, ?)
-               ON DUPLICATE KEY UPDATE role = VALUES(role)"#,
-            org_id,
-            user_id,
-            role
         )
         .execute(&mut *tx)
         .await?;

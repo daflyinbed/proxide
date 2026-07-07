@@ -514,14 +514,7 @@ pub trait Repository: Send + Sync + 'static {
 
     // ── org_members ──
 
-    async fn add_org_member(&self, org_id: i64, user_id: i64, role: &str) -> Result<()>;
     async fn remove_org_member_cascade(&self, org_id: i64, user_id: i64) -> Result<bool>;
-    async fn set_org_member_role_guarded(
-        &self,
-        org_id: i64,
-        user_id: i64,
-        role: &str,
-    ) -> Result<bool>;
     async fn set_org_member_role_and_join_developers(
         &self,
         org_id: i64,

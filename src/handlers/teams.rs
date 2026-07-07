@@ -199,6 +199,13 @@ pub async fn add_user(
     Json(body): Json<TeamMemberRequest>,
 ) -> WebResult<(StatusCode, Json<serde_json::Value>)> {
     let org = require_org_manager(&state, &auth, &scope).await?;
+
+    if team == DEVELOPERS_TEAM {
+        return Err(WebError::BadRequest(format!(
+            "the \"{DEVELOPERS_TEAM}\" team membership is managed automatically and cannot be added per-user"
+        )));
+    }
+
     let team_row = resolve_team_by_org(&state, org.id, &scope, &team).await?;
 
     let user = state

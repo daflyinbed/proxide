@@ -129,7 +129,13 @@ async fn add_member(
         .ok_or_else(|| anyhow::anyhow!("user \"{user_name}\" does not exist"))?;
 
     let existed = state.repo.get_org_member(org.id, user.id).await?.is_some();
-    state.repo.add_org_member(org.id, user.id, role).await?;
+    let applied = state
+        .repo
+        .set_org_member_role_guarded(org.id, user.id, role)
+        .await?;
+    if !applied {
+        bail!("cannot demote the last owner of organization \"{org_name}\"");
+    }
     if !existed {
         if let Some(dev_team) = state.repo.get_team_by_org_name(org.id, DEVELOPERS_TEAM).await? {
             state.repo.add_team_member(dev_team.id, user.id).await?;
@@ -168,7 +174,13 @@ async fn rm_member(state: &AppState, raw_org: &str, user_name: &str) -> Result<(
         }
     }
 
-    state.repo.remove_org_member_cascade(org.id, user.id).await?;
+    let removed = state
+        .repo
+        .remove_org_member_cascade(org.id, user.id)
+        .await?;
+    if !removed {
+        bail!("cannot remove the last owner of organization \"{org_name}\"");
+    }
     println!(
         "removed \"{}\" from organization \"{}\"",
         user_name, org_name

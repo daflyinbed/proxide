@@ -1,6 +1,6 @@
 use crate::error::{WebError, WebResult};
-use crate::handlers::orgs::require_org_manager;
-use crate::middleware::auth::{OptionalAuth, RequireAuth};
+use crate::handlers::orgs::{require_org_manager, require_org_member};
+use crate::middleware::auth::RequireAuth;
 use crate::state::AppState;
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -269,6 +269,12 @@ pub async fn rm_user(
 ) -> WebResult<StatusCode> {
     require_org_manager(&state, &auth, &scope).await?;
 
+    if team == DEVELOPERS_TEAM {
+        return Err(WebError::BadRequest(format!(
+            "the \"{DEVELOPERS_TEAM}\" team membership is managed automatically and cannot be removed per-user"
+        )));
+    }
+
     let team_row = resolve_team(&state, &scope, &team).await?;
 
     let user = state
@@ -303,15 +309,18 @@ pub async fn rm_user(
     ),
     responses(
         (status = OK, description = "Teams in scope", body = serde_json::Value),
+        (status = UNAUTHORIZED, body = crate::error::ApiErrorDetail),
+        (status = FORBIDDEN, body = crate::error::ApiErrorDetail),
         (status = NOT_FOUND, body = crate::error::ApiErrorDetail),
     ),
 )]
 pub async fn list_teams(
     State(state): State<AppState>,
-    OptionalAuth(_auth): OptionalAuth,
+    RequireAuth(auth): RequireAuth,
     Path(scope): Path<String>,
     Query(query): Query<FormatQuery>,
 ) -> WebResult<Json<serde_json::Value>> {
+    require_org_member(&state, &auth, &scope).await?;
     let org = resolve_org(&state, &scope).await?;
     let teams = state
         .repo
@@ -342,15 +351,18 @@ pub async fn list_teams(
     ),
     responses(
         (status = OK, description = "Team members", body = serde_json::Value),
+        (status = UNAUTHORIZED, body = crate::error::ApiErrorDetail),
+        (status = FORBIDDEN, body = crate::error::ApiErrorDetail),
         (status = NOT_FOUND, body = crate::error::ApiErrorDetail),
     ),
 )]
 pub async fn list_users(
     State(state): State<AppState>,
-    OptionalAuth(_auth): OptionalAuth,
+    RequireAuth(auth): RequireAuth,
     Path((scope, team)): Path<(String, String)>,
     Query(query): Query<FormatQuery>,
 ) -> WebResult<Json<serde_json::Value>> {
+    require_org_member(&state, &auth, &scope).await?;
     let team_row = resolve_team(&state, &scope, &team).await?;
     let mut names = state
         .repo

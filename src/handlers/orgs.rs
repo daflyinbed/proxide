@@ -67,6 +67,36 @@ pub async fn require_org_manager(
     }
 }
 
+pub async fn require_org_member(
+    state: &AppState,
+    auth: &AuthContext,
+    org_name: &str,
+) -> WebResult<()> {
+    if is_admin(&auth.user, &state.config.auth.admins) {
+        return Ok(());
+    }
+    let org_row = state
+        .repo
+        .get_org_by_name(org_name)
+        .await
+        .map_err(WebError::CustomApiError)?
+        .ok_or_else(|| WebError::NotFound(format!("Organization \"{org_name}\" not found")))?;
+    let is_member = state
+        .repo
+        .get_org_member(org_row.id, auth.user.id)
+        .await
+        .map_err(WebError::CustomApiError)?
+        .is_some();
+    if is_member {
+        Ok(())
+    } else {
+        Err(WebError::Forbidden(format!(
+            "\"{}\" is not a member of organization \"{org_name}\"",
+            auth.user.name
+        )))
+    }
+}
+
 pub async fn auto_add_to_developers(
     state: &AppState,
     org_id: i64,
@@ -96,14 +126,18 @@ pub async fn auto_add_to_developers(
     ),
     responses(
         (status = OK, description = "Roster: username → role", body = serde_json::Value),
+        (status = UNAUTHORIZED, body = crate::error::ApiErrorDetail),
+        (status = FORBIDDEN, body = crate::error::ApiErrorDetail),
         (status = NOT_FOUND, body = crate::error::ApiErrorDetail),
     ),
 )]
 pub async fn roster(
     State(state): State<AppState>,
-    OptionalAuth(_auth): OptionalAuth,
+    RequireAuth(auth): RequireAuth,
     Path(org): Path<String>,
 ) -> WebResult<Json<serde_json::Value>> {
+    require_org_member(&state, &auth, &org).await?;
+
     let org_row = state
         .repo
         .get_org_by_name(&org)

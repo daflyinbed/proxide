@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "DELETE m FROM maintainers m\n               JOIN packages p ON p.id = m.package_id\n               JOIN organizations o ON o.name = p.scope\n               WHERE o.id = ? AND m.source = 'team'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "18e54bdbba51974ef797b7a0d7c90084b9a13fe4a9148b3386773b026141f841"
+}

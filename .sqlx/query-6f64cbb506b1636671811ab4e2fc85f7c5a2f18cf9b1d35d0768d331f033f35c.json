@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "DELETE FROM maintainers WHERE package_id = ? AND source = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "6f64cbb506b1636671811ab4e2fc85f7c5a2f18cf9b1d35d0768d331f033f35c"
+}

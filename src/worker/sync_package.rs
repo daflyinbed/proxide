@@ -5,7 +5,8 @@ use crate::npm::{
     split_scope_name,
 };
 use crate::repository::{
-    CommitVersionParams, PackageVersionRow, PendingDist, Repository, upload_and_commit_manifests,
+    CommitVersionParams, PackageVersionRow, PendingDist, Repository, MAINTAINER_SOURCE_UPSTREAM,
+    upload_and_commit_manifests,
 };
 use crate::search::SearchIndex;
 use crate::state::{LockOwner, PackageLock, UnlockGuard};
@@ -139,7 +140,8 @@ pub async fn sync_package(
                 .await?;
             user_ids.push(uid);
         }
-        repo.sync_maintainers(package_id, &user_ids).await?;
+        repo.sync_maintainers(package_id, &user_ids, MAINTAINER_SOURCE_UPSTREAM)
+            .await?;
     }
 
     let existing_versions = repo.list_versions(package_id).await?;

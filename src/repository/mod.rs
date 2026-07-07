@@ -7,6 +7,10 @@ use anyhow::Result;
 use async_trait::async_trait;
 use std::collections::HashMap;
 
+pub const MAINTAINER_SOURCE_TEAM: &str = "team";
+pub const MAINTAINER_SOURCE_MANUAL: &str = "manual";
+pub const MAINTAINER_SOURCE_UPSTREAM: &str = "upstream";
+
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct PackageRow {
     pub id: i64,
@@ -466,13 +470,19 @@ pub trait Repository: Send + Sync + 'static {
 
     // ── maintainers ──
 
-    async fn save_maintainer(&self, package_id: i64, user_id: i64) -> Result<()>;
+    async fn save_maintainer(&self, package_id: i64, user_id: i64, source: &str) -> Result<()>;
     async fn is_maintainer(&self, package_id: i64, user_id: i64) -> Result<bool>;
-    async fn sync_maintainers(&self, package_id: i64, user_ids: &[i64]) -> Result<()>;
+    async fn sync_maintainers(
+        &self,
+        package_id: i64,
+        user_ids: &[i64],
+        source: &str,
+    ) -> Result<()>;
     async fn sync_maintainers_and_grant_team_permission(
         &self,
         package_id: i64,
         user_ids: &[i64],
+        source: &str,
         team_id: i64,
         permission: &str,
     ) -> Result<()>;

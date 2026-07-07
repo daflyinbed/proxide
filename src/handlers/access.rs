@@ -361,7 +361,7 @@ async fn require_team_pkg_manager(
 )]
 pub async fn list_team_packages(
     State(state): State<AppState>,
-    OptionalAuth(auth): OptionalAuth,
+    RequireAuth(auth): RequireAuth,
     Path((scope, team)): Path<(String, String)>,
 ) -> WebResult<Json<serde_json::Value>> {
     let (_org, team_row) = resolve_team_for_handler(&state, &scope, &team).await?;
@@ -375,10 +375,8 @@ pub async fn list_team_packages(
     for (pkg, perm) in pkgs {
         let readable = if pkg.is_public() {
             true
-        } else if let Some(a) = &auth {
-            ensure_package_readable_with_auth(&state, a, &pkg).await.is_ok()
         } else {
-            false
+            ensure_package_readable_with_auth(&state, &auth, &pkg).await.is_ok()
         };
         if readable {
             res.insert(pkg.name, perm);

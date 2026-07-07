@@ -4,7 +4,7 @@ use crate::npm::types::*;
 use crate::npm::{
     build_abbreviated_version, is_prerelease, pad_version, split_scope_name,
 };
-use crate::repository::{upload_and_commit_manifests, CommitVersionParams, PendingDist, Repository};
+use crate::repository::{upload_and_commit_manifests, CommitVersionParams, MAINTAINER_SOURCE_MANUAL, MAINTAINER_SOURCE_TEAM, PendingDist, Repository};
 use crate::state::{AppState, LockOwner, UnlockGuard};
 use axum::Json;
 use axum::http::HeaderMap;
@@ -132,7 +132,13 @@ async fn apply_developers_team_default(
     }
     state
         .repo
-        .sync_maintainers_and_grant_team_permission(package_id, &user_ids, dev_team.id, "write")
+        .sync_maintainers_and_grant_team_permission(
+            package_id,
+            &user_ids,
+            MAINTAINER_SOURCE_TEAM,
+            dev_team.id,
+            "write",
+        )
         .await
         .map_err(WebError::CustomApiError)?;
     log::info!(
@@ -836,7 +842,7 @@ pub async fn update_maintainers_inner(
 
     state
         .repo
-        .sync_maintainers(pkg.id, &user_ids)
+        .sync_maintainers(pkg.id, &user_ids, MAINTAINER_SOURCE_MANUAL)
         .await
         .map_err(WebError::CustomApiError)?;
 

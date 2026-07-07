@@ -1,9 +1,9 @@
 use crate::config::{DatabaseConfig, StorageConfig};
 use crate::npm::types::Maintainer;
 use crate::repository::{
-    ChangeStreamCursorRow, CommitVersionParams, DistRow, NewVersionFile, OrganizationRow,
-    OrgMemberRow, PackageDownloadRow, PackageRow, PackageTagRow, PackageVersionRow, Repository,
-    SyncManifestParams, SyncTaskRow, TeamMemberRow, TeamRow, TokenRow,
+    ChangeStreamCursorRow, CommitVersionParams, DistRow, MAINTAINER_SOURCE_MANUAL, NewVersionFile,
+    OrganizationRow, OrgMemberRow, PackageDownloadRow, PackageRow, PackageTagRow, PackageVersionRow,
+    Repository, SyncManifestParams, SyncTaskRow, TeamMemberRow, TeamRow, TokenRow,
     UpstreamPackageDownloadRow, UserRow, VersionFileRow,
 };
 use crate::storage::Storage;
@@ -252,9 +252,10 @@ impl Repository for MysqlRepository {
 
         if existing_source.is_none() {
             sqlx::query!(
-                r#"INSERT IGNORE INTO maintainers (package_id, user_id) VALUES (?, ?)"#,
+                r#"INSERT IGNORE INTO maintainers (package_id, user_id, source) VALUES (?, ?, ?)"#,
                 package_id,
                 user_id,
+                MAINTAINER_SOURCE_MANUAL,
             )
             .execute(&mut *tx)
             .await?;
@@ -1019,11 +1020,17 @@ impl Repository for MysqlRepository {
 
     // ── maintainers ──
 
-    async fn save_maintainer(&self, package_id: i64, user_id: i64) -> Result<()> {
+    async fn save_maintainer(
+        &self,
+        package_id: i64,
+        user_id: i64,
+        source: &str,
+    ) -> Result<()> {
         sqlx::query!(
-            r#"INSERT IGNORE INTO maintainers (package_id, user_id) VALUES (?, ?)"#,
+            r#"INSERT IGNORE INTO maintainers (package_id, user_id, source) VALUES (?, ?, ?)"#,
             package_id,
-            user_id
+            user_id,
+            source
         )
         .execute(&self.pool)
         .await?;
@@ -1041,9 +1048,14 @@ impl Repository for MysqlRepository {
         Ok(row.count > 0)
     }
 
-    async fn sync_maintainers(&self, package_id: i64, user_ids: &[i64]) -> Result<()> {
+    async fn sync_maintainers(
+        &self,
+        package_id: i64,
+        user_ids: &[i64],
+        source: &str,
+    ) -> Result<()> {
         let mut tx = self.pool.begin().await?;
-        sync_maintainers_tx(&mut tx, package_id, user_ids).await?;
+        sync_maintainers_tx(&mut tx, package_id, user_ids, source).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -1052,11 +1064,12 @@ impl Repository for MysqlRepository {
         &self,
         package_id: i64,
         user_ids: &[i64],
+        source: &str,
         team_id: i64,
         permission: &str,
     ) -> Result<()> {
         let mut tx = self.pool.begin().await?;
-        sync_maintainers_tx(&mut tx, package_id, user_ids).await?;
+        sync_maintainers_tx(&mut tx, package_id, user_ids, source).await?;
         sqlx::query!(
             r#"INSERT INTO package_team_permissions (package_id, team_id, permission)
                VALUES (?, ?, ?)
@@ -1193,6 +1206,16 @@ impl Repository for MysqlRepository {
             r#"DELETE tm FROM team_members tm
                JOIN teams t ON t.id = tm.team_id
                WHERE t.org_id = ? AND tm.user_id = ?"#,
+            org_id,
+            user_id
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query!(
+            r#"DELETE m FROM maintainers m
+               JOIN packages p ON p.id = m.package_id
+               JOIN organizations o ON o.name = p.scope
+               WHERE o.id = ? AND m.user_id = ? AND m.source = 'team'"#,
             org_id,
             user_id
         )
@@ -2423,21 +2446,23 @@ async fn sync_maintainers_tx(
     tx: &mut sqlx::Transaction<'_, MySql>,
     package_id: i64,
     user_ids: &[i64],
+    source: &str,
 ) -> Result<()> {
     if user_ids.is_empty() {
         sqlx::query!(
-            r#"DELETE FROM maintainers WHERE package_id = ?"#,
-            package_id
+            r#"DELETE FROM maintainers WHERE package_id = ? AND source = ?"#,
+            package_id,
+            source
         )
         .execute(&mut **tx)
         .await?;
     } else {
         let placeholders: Vec<String> = user_ids.iter().map(|_| "?".to_string()).collect();
         let sql = format!(
-            "DELETE FROM maintainers WHERE package_id = ? AND user_id NOT IN ({})",
+            "DELETE FROM maintainers WHERE package_id = ? AND source = ? AND user_id NOT IN ({})",
             placeholders.join(",")
         );
-        let mut query = sqlx::query(&sql).bind(package_id);
+        let mut query = sqlx::query(&sql).bind(package_id).bind(source);
         for id in user_ids {
             query = query.bind(id);
         }
@@ -2445,9 +2470,10 @@ async fn sync_maintainers_tx(
 
         for &user_id in user_ids {
             sqlx::query!(
-                r#"INSERT IGNORE INTO maintainers (package_id, user_id) VALUES (?, ?)"#,
+                r#"INSERT IGNORE INTO maintainers (package_id, user_id, source) VALUES (?, ?, ?)"#,
                 package_id,
-                user_id
+                user_id,
+                source
             )
             .execute(&mut **tx)
             .await?;

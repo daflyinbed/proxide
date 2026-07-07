@@ -1577,6 +1577,22 @@ impl Repository for MysqlRepository {
         Ok(exists != 0)
     }
 
+    async fn list_all_packages_in_org(&self, org_id: i64) -> Result<Vec<PackageRow>> {
+        let rows = sqlx::query_as!(
+            PackageRow,
+            r#"SELECT DISTINCT p.id, p.name, p.scope, p.description, p.source, p.access,
+                      p.abbreviated_dist_id, p.full_dist_id
+               FROM packages p
+               JOIN organizations o ON o.name = p.scope
+               WHERE o.id = ?
+               ORDER BY p.id"#,
+            org_id
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
     async fn list_packages_in_org_viewable(
         &self,
         org_id: i64,

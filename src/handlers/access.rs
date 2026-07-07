@@ -1,5 +1,5 @@
 use crate::error::{WebError, WebResult};
-use crate::handlers::orgs::require_org_manager;
+use crate::handlers::orgs::{require_org_manager, require_org_member};
 use crate::middleware::auth::{
     OptionalAuth, RequireAuth, ensure_package_readable, ensure_package_readable_with_auth,
     ensure_package_write_access, is_admin,
@@ -274,13 +274,13 @@ pub async fn set_access(
         }
         .await;
         if let Err(e) = reindex_result {
-            if old_access != normalized {
-                if let Err(rb_err) = state.repo.set_package_access(pkg_id, old_access).await {
-                    log::error!(
-                        action = "set_access_rollback_failed";
-                        "name={fullname} failed to roll back access from {normalized} to {old_access}: {rb_err}"
-                    );
-                }
+            if old_access != normalized
+                && let Err(rb_err) = state.repo.set_package_access(pkg_id, old_access).await
+            {
+                log::error!(
+                    action = "set_access_rollback_failed";
+                    "name={fullname} failed to roll back access from {normalized} to {old_access}: {rb_err}"
+                );
             }
             return Err(WebError::CustomApiError(e));
         }
@@ -356,6 +356,8 @@ async fn require_team_pkg_manager(
     ),
     responses(
         (status = OK, description = "Map of package name to permission", body = serde_json::Value),
+        (status = UNAUTHORIZED, body = crate::error::ApiErrorDetail),
+        (status = FORBIDDEN, body = crate::error::ApiErrorDetail),
         (status = NOT_FOUND, body = crate::error::ApiErrorDetail),
     ),
 )]
@@ -364,6 +366,7 @@ pub async fn list_team_packages(
     RequireAuth(auth): RequireAuth,
     Path((scope, team)): Path<(String, String)>,
 ) -> WebResult<Json<serde_json::Value>> {
+    require_org_member(&state, &auth, &scope).await?;
     let (_org, team_row) = resolve_team_for_handler(&state, &scope, &team).await?;
     let pkgs = state
         .repo

@@ -330,17 +330,25 @@ pub async fn org_packages(
         }
     };
 
-    let viewer_id = auth.as_ref().map(|a| a.user.id).unwrap_or(0);
-
-    let pkgs = state
-        .repo
-        .list_packages_in_org_viewable(org_row.id, viewer_id)
-        .await
-        .map_err(WebError::CustomApiError)?;
-
     let is_admin_viewer = auth
         .as_ref()
         .is_some_and(|a| is_admin(&a.user, &state.config.auth.admins));
+
+    let viewer_id = auth.as_ref().map(|a| a.user.id).unwrap_or(0);
+
+    let pkgs = if is_admin_viewer {
+        state
+            .repo
+            .list_all_packages_in_org(org_row.id)
+            .await
+            .map_err(WebError::CustomApiError)?
+    } else {
+        state
+            .repo
+            .list_packages_in_org_viewable(org_row.id, viewer_id)
+            .await
+            .map_err(WebError::CustomApiError)?
+    };
 
     let write_map = if is_admin_viewer {
         pkgs.iter().map(|p| (p.id, true)).collect()

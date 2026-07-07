@@ -136,10 +136,10 @@ async fn add_member(
     if !applied {
         bail!("cannot demote the last owner of organization \"{org_name}\"");
     }
-    if !existed {
-        if let Some(dev_team) = state.repo.get_team_by_org_name(org.id, DEVELOPERS_TEAM).await? {
-            state.repo.add_team_member(dev_team.id, user.id).await?;
-        }
+    if !existed
+        && let Some(dev_team) = state.repo.get_team_by_org_name(org.id, DEVELOPERS_TEAM).await?
+    {
+        state.repo.add_team_member(dev_team.id, user.id).await?;
     }
     println!(
         "set \"{}\" as {role} of organization \"{}\"",
@@ -199,7 +199,7 @@ async fn ls_org(state: &AppState, raw_org: &str) -> Result<()> {
 
     println!("organization: {} (id={})", org.name, org.id);
     println!("members:");
-    println!("{:<32}  {}", "user", "role");
+    println!("{:<32}  role", "user");
     println!("{:-<32}  {:-<10}", "", "");
     for m in members {
         let name = state

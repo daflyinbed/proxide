@@ -575,6 +575,7 @@ pub trait Repository: Send + Sync + 'static {
         scope: &str,
         user_id: i64,
     ) -> Result<bool>;
+    async fn list_all_packages_in_org(&self, org_id: i64) -> Result<Vec<PackageRow>>;
     async fn list_packages_in_org_viewable(
         &self,
         org_id: i64,

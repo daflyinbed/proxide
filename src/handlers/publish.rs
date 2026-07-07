@@ -589,10 +589,8 @@ pub async fn publish_package_inner(
             }
         })?;
 
-    if !pkg_exists {
-        if let Some(scope) = scope {
-            apply_developers_team_default(state, package_id, scope, auth.user.id).await?;
-        }
+    if !pkg_exists && let Some(scope) = scope {
+        apply_developers_team_default(state, package_id, scope, auth.user.id).await?;
     }
 
     let full_manifest =

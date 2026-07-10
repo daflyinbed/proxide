@@ -10,6 +10,7 @@ use utoipa::ToSchema;
 const SESSION_TTL_SECS: i64 = 300;
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct WebLoginResponse {
     pub login_url: String,
     pub done_url: String,

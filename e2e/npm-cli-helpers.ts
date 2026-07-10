@@ -72,6 +72,68 @@ export async function execNpmStdin(
   });
 }
 
+export async function npmLoginWeb(
+  dir: string,
+  registry: string,
+  onLoginUrl: (sessionId: string) => Promise<void>,
+  timeoutMs = 30_000,
+): Promise<NpmResult> {
+  await writeFile(join(dir, ".npmrc"), `registry=${registry}\n`);
+
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      "npm",
+      ["login", "--auth-type=web", `--registry=${registry}`],
+      {
+        cwd: dir,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: buildNpmEnv({
+          NPM_CONFIG_USERCONFIG: join(dir, ".npmrc"),
+          BROWSER: "/bin/true",
+        }),
+      },
+    );
+
+    let stdout = "";
+    let stderr = "";
+    let urlHandled = false;
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error(`npm login timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    function tryExtractUrl(text: string) {
+      if (urlHandled) return;
+      const match = text.match(
+        /https?:\/\/[^\s]*session\/[a-f0-9-]{36}[^\s]*/,
+      );
+      if (match) {
+        urlHandled = true;
+        const sessionId =
+          match[0].match(/session\/([a-f0-9-]{36})/)?.[1] ?? "";
+        Promise.resolve(onLoginUrl(sessionId)).catch((e) => {
+          clearTimeout(timer);
+          child.kill("SIGKILL");
+          reject(e);
+        });
+      }
+    }
+
+    child.stdout.on("data", (d) => {
+      stdout += d.toString();
+      tryExtractUrl(stdout);
+    });
+    child.stderr.on("data", (d) => {
+      stderr += d.toString();
+      tryExtractUrl(stderr);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      resolve({ stdout, stderr, exitCode: code ?? 1 });
+    });
+  });
+}
+
 export async function createTempDir(prefix: string): Promise<string> {
   const dir = join(E2E_RUN_DIR, `${prefix}-${Date.now().toString(36)}`);
   await mkdir(dir, { recursive: true });

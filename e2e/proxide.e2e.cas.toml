@@ -1,0 +1,32 @@
+[database]
+uri = "mysql://root:root@127.0.0.1:3306/proxide_e2e"
+
+[server]
+binding = "0.0.0.0"
+port = 14873
+rootUrl = "http://localhost:14873"
+
+[storage.S3]
+endpoint = "http://127.0.0.1:9000"
+accessKeyId = "proxide"
+secretAccessKey = "proxide123"
+bucketName = "proxide-e2e"
+compressJson = true
+zstdLevel = 3
+
+[log]
+level = "warn"
+
+[worker]
+upstreamRegistry = "https://registry.npmjs.org"
+consumerCount = 1
+cronIntervalSecs = 3600
+
+[auth]
+casUrl = "http://localhost:14900"
+allowPublishNonScopePackage = true
+
+[search]
+meiliUrl = "http://127.0.0.1:7700"
+meiliKey = "proxide"
+indexName = "proxide-e2e"

@@ -1089,7 +1089,9 @@ impl Repository for MysqlRepository {
 
             for &user_id in user_ids {
                 sqlx::query!(
-                    r#"INSERT IGNORE INTO maintainers (package_id, user_id, source) VALUES (?, ?, ?)"#,
+                    r#"INSERT INTO maintainers (package_id, user_id, source)
+                       VALUES (?, ?, ?)
+                       ON DUPLICATE KEY UPDATE source = VALUES(source)"#,
                     package_id,
                     user_id,
                     source

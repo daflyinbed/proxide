@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO maintainers (package_id, user_id, source)\n                       VALUES (?, ?, ?)\n                       ON DUPLICATE KEY UPDATE source = VALUES(source)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "5597a5fae417850d3782fce811fec2104a94424c3699b8cdca073e6c1183bb3a"
+}

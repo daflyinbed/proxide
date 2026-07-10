@@ -8,6 +8,7 @@ import {
   PROXIDE_RUN_DIR,
   BASE_URL,
   PROXIDE_PID_FILE,
+  waitForProcessExit,
 } from "../globalSetup.js";
 import { startMockCas, MOCK_CAS_PORT } from "../mock-cas-server.js";
 import {
@@ -47,8 +48,8 @@ beforeAll(async () => {
   const pid = parseInt(readFileSync(PROXIDE_PID_FILE, "utf-8").trim());
   try {
     process.kill(pid, "SIGTERM");
+    await waitForProcessExit(pid);
   } catch {}
-  await new Promise((r) => setTimeout(r, 3000));
 
   mockCas = startMockCas(MOCK_CAS_PORT);
 

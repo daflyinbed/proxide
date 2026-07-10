@@ -22,6 +22,20 @@ function log(msg: string) {
   console.log(`[e2e:setup] ${msg}`);
 }
 
+export async function waitForProcessExit(pid: number, timeoutMs = 10_000): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return true;
+    }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  log(`WARNING: PID ${pid} did not exit within ${timeoutMs}ms`);
+  return false;
+}
+
 function run(cmd: string, opts?: { cwd?: string; env?: Record<string, string> }) {
   execSync(cmd, { stdio: "inherit", cwd: opts?.cwd, env: { ...process.env, ...opts?.env } });
 }
@@ -109,14 +123,11 @@ export default async function setup() {
         try {
           process.kill(pid, 0);
           process.kill(pid, "SIGTERM");
-          await new Promise((r) => setTimeout(r, 2000));
+          await waitForProcessExit(pid);
         } catch {}
       } else if (child.exitCode === null && !child.killed) {
         child.kill("SIGTERM");
-        await new Promise<void>((resolve) => {
-          child.once("exit", () => resolve());
-          setTimeout(resolve, 5000);
-        });
+        await waitForProcessExit(child.pid!);
       }
     } catch {}
     log("done");

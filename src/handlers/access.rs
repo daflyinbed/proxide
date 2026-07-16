@@ -326,22 +326,14 @@ async fn require_team_pkg_manager(
     state: &AppState,
     auth: &crate::middleware::auth::AuthContext,
     scope: &str,
-    package_fullname: &str,
-    package_id: i64,
+    _package_fullname: &str,
+    _package_id: i64,
 ) -> WebResult<()> {
     if require_org_manager(state, auth, scope).await.is_ok() {
         return Ok(());
     }
-    if state
-        .repo
-        .is_maintainer(package_id, auth.user.id)
-        .await
-        .map_err(WebError::CustomApiError)?
-    {
-        return Ok(());
-    }
     Err(WebError::Forbidden(format!(
-        "\"{}\" is not an org manager of \"{scope}\" nor a maintainer of \"{package_fullname}\"",
+        "\"{}\" is not an owner or admin of organization \"{scope}\"",
         auth.user.name
     )))
 }

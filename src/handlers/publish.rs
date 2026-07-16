@@ -1,5 +1,6 @@
 use crate::error::{WebError, WebResult};
 use crate::middleware::auth::{AuthContext, is_admin};
+use crate::handlers::orgs::require_org_member;
 use crate::npm::types::*;
 use crate::npm::{
     build_abbreviated_version, is_prerelease, pad_version, split_scope_name,
@@ -171,7 +172,24 @@ pub async fn publish_package_inner(
 
     let (scope, _name) = split_scope_name(&fullname);
 
-    if !is_admin(&auth.user, &state.config.auth.admins) {
+    let is_org_scope = if let Some(scope_name) = scope {
+        if state
+            .repo
+            .get_org_by_name(scope_name)
+            .await
+            .map_err(WebError::CustomApiError)?
+            .is_some()
+        {
+            require_org_member(state, auth, scope_name).await?;
+            true
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    if !is_org_scope && !is_admin(&auth.user, &state.config.auth.admins) {
         crate::middleware::auth::check_scope_access(
             scope,
             &state.config.auth.allow_scopes,

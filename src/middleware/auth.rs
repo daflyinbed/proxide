@@ -176,6 +176,36 @@ pub async fn ensure_package_write_access(
         return Ok(());
     }
     let scope = pkg.scope.as_deref();
+    if pkg.source.is_none()
+        && let Some(scope) = scope
+        && let Some(org) = state
+            .repo
+            .get_org_by_name(scope)
+            .await
+            .map_err(WebError::CustomApiError)?
+        && state
+            .repo
+            .get_org_member(org.id, auth.user.id)
+            .await
+            .map_err(WebError::CustomApiError)?
+            .is_some()
+    {
+        return Ok(());
+    }
+    if pkg.source.is_none()
+        && let Some(scope) = scope
+        && state
+            .repo
+            .get_org_by_name(scope)
+            .await
+            .map_err(WebError::CustomApiError)?
+            .is_some()
+    {
+        return Err(WebError::Forbidden(format!(
+            "\"{}\" is not a member of organization \"{scope}\"",
+            auth.user.name
+        )));
+    }
     check_scope_access(
         scope,
         &state.config.auth.allow_scopes,

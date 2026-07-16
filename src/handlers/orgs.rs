@@ -51,9 +51,6 @@ pub async fn require_org_manager(
         .await
         .map_err(WebError::CustomApiError)?
         .ok_or_else(|| WebError::NotFound(format!("Organization \"{org_name}\" not found")))?;
-    if is_admin(&auth.user, &state.config.auth.admins) {
-        return Ok(org_row);
-    }
     let row = state
         .repo
         .get_org_member(org_row.id, auth.user.id)
@@ -68,6 +65,32 @@ pub async fn require_org_manager(
     }
 }
 
+pub async fn require_org_owner(
+    state: &AppState,
+    auth: &AuthContext,
+    org_name: &str,
+) -> WebResult<OrganizationRow> {
+    let org_row = state
+        .repo
+        .get_org_by_name(org_name)
+        .await
+        .map_err(WebError::CustomApiError)?
+        .ok_or_else(|| WebError::NotFound(format!("Organization \"{org_name}\" not found")))?;
+    let row = state
+        .repo
+        .get_org_member(org_row.id, auth.user.id)
+        .await
+        .map_err(WebError::CustomApiError)?;
+    if row.as_ref().is_some_and(|r| r.role == "owner") {
+        Ok(org_row)
+    } else {
+        Err(WebError::Forbidden(format!(
+            "\"{}\" is not an owner of organization \"{org_name}\"",
+            auth.user.name
+        )))
+    }
+}
+
 pub async fn require_org_member(
     state: &AppState,
     auth: &AuthContext,
@@ -79,9 +102,6 @@ pub async fn require_org_member(
         .await
         .map_err(WebError::CustomApiError)?
         .ok_or_else(|| WebError::NotFound(format!("Organization \"{org_name}\" not found")))?;
-    if is_admin(&auth.user, &state.config.auth.admins) {
-        return Ok(org_row);
-    }
     let is_member = state
         .repo
         .get_org_member(org_row.id, auth.user.id)
@@ -151,23 +171,10 @@ pub async fn set_member(
     Path(org_name): Path<String>,
     Json(body): Json<OrgMemberRequest>,
 ) -> WebResult<(StatusCode, Json<MembershipDetail>)> {
-    let org_row = require_org_manager(&state, &auth, &org_name).await?;
+    let org_row = require_org_owner(&state, &auth, &org_name).await?;
 
     let role = body.role.as_deref().unwrap_or("developer");
     validate_role(role)?;
-
-    if role == "owner" && !is_admin(&auth.user, &state.config.auth.admins) {
-        let actor_member = state
-            .repo
-            .get_org_member(org_row.id, auth.user.id)
-            .await
-            .map_err(WebError::CustomApiError)?;
-        if !matches!(actor_member.as_ref().map(|m| m.role.as_str()), Some("owner")) {
-            return Err(WebError::Forbidden(
-                "only owners can grant the owner role".to_string(),
-            ));
-        }
-    }
 
     let user = state
         .repo
@@ -240,7 +247,7 @@ pub async fn rm_member(
     Path(org_name): Path<String>,
     Json(body): Json<OrgMemberRequest>,
 ) -> WebResult<StatusCode> {
-    let org_row = require_org_manager(&state, &auth, &org_name).await?;
+    let org_row = require_org_owner(&state, &auth, &org_name).await?;
 
     let user = state
         .repo
@@ -352,4 +359,3 @@ pub async fn org_packages(
     }
     Ok(Json(serde_json::to_value(res).unwrap()))
 }
-

@@ -302,32 +302,29 @@ pub struct TeamPackageRequest {
     pub permissions: Option<String>,
 }
 
-async fn resolve_team_for_handler(
+async fn resolve_team(
     state: &AppState,
     scope: &str,
     team: &str,
-) -> WebResult<(crate::repository::OrganizationRow, crate::repository::TeamRow)> {
+) -> WebResult<crate::repository::TeamRow> {
     let org = state
         .repo
         .get_org_by_name(scope)
         .await
         .map_err(WebError::CustomApiError)?
         .ok_or_else(|| WebError::NotFound(format!("Organization \"{scope}\" not found")))?;
-    let team_row = state
+    state
         .repo
         .get_team_by_org_name(org.id, team)
         .await
         .map_err(WebError::CustomApiError)?
-        .ok_or_else(|| WebError::NotFound(format!("Team \"{scope}:{team}\" not found")))?;
-    Ok((org, team_row))
+        .ok_or_else(|| WebError::NotFound(format!("Team \"{scope}:{team}\" not found")))
 }
 
-async fn require_team_pkg_manager(
+async fn require_team_package_manager(
     state: &AppState,
     auth: &crate::middleware::auth::AuthContext,
     scope: &str,
-    _package_fullname: &str,
-    _package_id: i64,
 ) -> WebResult<()> {
     if require_org_manager(state, auth, scope).await.is_ok() {
         return Ok(());
@@ -359,7 +356,7 @@ pub async fn list_team_packages(
     Path((scope, team)): Path<(String, String)>,
 ) -> WebResult<Json<serde_json::Value>> {
     require_org_member(&state, &auth, &scope).await?;
-    let (_org, team_row) = resolve_team_for_handler(&state, &scope, &team).await?;
+    let team_row = resolve_team(&state, &scope, &team).await?;
     let pkgs = state
         .repo
         .list_packages_for_team(team_row.id)
@@ -368,12 +365,10 @@ pub async fn list_team_packages(
 
     let mut res: BTreeMap<String, String> = BTreeMap::new();
     for (pkg, perm) in pkgs {
-        let readable = if pkg.is_public() {
-            true
-        } else {
-            ensure_package_readable_with_auth(&state, &auth, &pkg).await.is_ok()
-        };
-        if readable {
+        if ensure_package_readable_with_auth(&state, &auth, &pkg)
+            .await
+            .is_ok()
+        {
             res.insert(pkg.name, perm);
         }
     }
@@ -419,8 +414,7 @@ pub async fn grant_team_package(
     };
 
     require_org_member(&state, &auth, &scope).await?;
-
-    let (_org, team_row) = resolve_team_for_handler(&state, &scope, &team).await?;
+    let team_row = resolve_team(&state, &scope, &team).await?;
 
     let pkg = state
         .repo
@@ -443,7 +437,7 @@ pub async fn grant_team_package(
         )));
     }
 
-    require_team_pkg_manager(&state, &auth, &scope, &body.package, pkg.id).await?;
+    require_team_package_manager(&state, &auth, &scope).await?;
 
     state
         .repo
@@ -484,8 +478,7 @@ pub async fn revoke_team_package(
     Json(body): Json<TeamPackageRequest>,
 ) -> WebResult<StatusCode> {
     require_org_member(&state, &auth, &scope).await?;
-
-    let (_org, team_row) = resolve_team_for_handler(&state, &scope, &team).await?;
+    let team_row = resolve_team(&state, &scope, &team).await?;
 
     let pkg = state
         .repo
@@ -508,7 +501,7 @@ pub async fn revoke_team_package(
         )));
     }
 
-    require_team_pkg_manager(&state, &auth, &scope, &body.package, pkg.id).await?;
+    require_team_package_manager(&state, &auth, &scope).await?;
 
     state
         .repo

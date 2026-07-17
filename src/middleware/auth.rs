@@ -176,32 +176,31 @@ pub async fn ensure_package_write_access(
         return Ok(());
     }
     let scope = pkg.scope.as_deref();
-    let mut is_org_member = false;
-    if pkg.source.is_none()
+    let is_local_package = pkg.source.is_none();
+    let is_org_member = if is_local_package
         && let Some(scope) = scope
-    {
-        if let Some(org) = state
+        && let Some(org) = state
             .repo
             .get_org_by_name(scope)
             .await
             .map_err(WebError::CustomApiError)?
-        {
-            if state
-                .repo
-                .get_org_member(org.id, auth.user.id)
-                .await
-                .map_err(WebError::CustomApiError)?
-                .is_some()
-            {
-                is_org_member = true;
-            } else {
-                return Err(WebError::Forbidden(format!(
-                    "\"{}\" is not a member of organization \"{scope}\"",
-                    auth.user.name
-                )));
-            }
+    {
+        let is_member = state
+            .repo
+            .get_org_member(org.id, auth.user.id)
+            .await
+            .map_err(WebError::CustomApiError)?
+            .is_some();
+        if !is_member {
+            return Err(WebError::Forbidden(format!(
+                "\"{}\" is not a member of organization \"{scope}\"",
+                auth.user.name
+            )));
         }
-    }
+        true
+    } else {
+        false
+    };
     if !is_org_member {
         check_scope_access(
             scope,
@@ -217,7 +216,7 @@ pub async fn ensure_package_write_access(
     {
         return Ok(());
     }
-    if pkg.source.is_none()
+    if is_local_package
         && let Some(scope) = scope
         && state
             .repo
@@ -227,7 +226,7 @@ pub async fn ensure_package_write_access(
     {
         return Ok(());
     }
-    if pkg.source.is_none()
+    if is_local_package
         && state
             .repo
             .user_has_team_access(pkg.id, auth.user.id, "write")

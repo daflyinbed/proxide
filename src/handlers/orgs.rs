@@ -1,6 +1,6 @@
 use crate::error::{WebError, WebResult};
 use crate::middleware::auth::{AuthContext, OptionalAuth, RequireAuth, is_admin};
-use crate::repository::OrganizationRow;
+use crate::repository::{OrgMemberRow, OrganizationRow};
 use crate::state::AppState;
 use axum::Json;
 use axum::extract::{Path, State};
@@ -31,6 +31,25 @@ pub struct MembershipDetail {
     pub role: String,
 }
 
+async fn resolve_org_membership(
+    state: &AppState,
+    auth: &AuthContext,
+    org_name: &str,
+) -> WebResult<(OrganizationRow, Option<OrgMemberRow>)> {
+    let org = state
+        .repo
+        .get_org_by_name(org_name)
+        .await
+        .map_err(WebError::CustomApiError)?
+        .ok_or_else(|| WebError::NotFound(format!("Organization \"{org_name}\" not found")))?;
+    let membership = state
+        .repo
+        .get_org_member(org.id, auth.user.id)
+        .await
+        .map_err(WebError::CustomApiError)?;
+    Ok((org, membership))
+}
+
 fn validate_role(role: &str) -> WebResult<()> {
     match role {
         "owner" | "admin" | "developer" => Ok(()),
@@ -45,19 +64,9 @@ pub async fn require_org_manager(
     auth: &AuthContext,
     org_name: &str,
 ) -> WebResult<OrganizationRow> {
-    let org_row = state
-        .repo
-        .get_org_by_name(org_name)
-        .await
-        .map_err(WebError::CustomApiError)?
-        .ok_or_else(|| WebError::NotFound(format!("Organization \"{org_name}\" not found")))?;
-    let row = state
-        .repo
-        .get_org_member(org_row.id, auth.user.id)
-        .await
-        .map_err(WebError::CustomApiError)?;
-    match row.as_ref().map(|r| r.role.as_str()) {
-        Some("owner") | Some("admin") => Ok(org_row),
+    let (org, membership) = resolve_org_membership(state, auth, org_name).await?;
+    match membership.as_ref().map(|member| member.role.as_str()) {
+        Some("owner") | Some("admin") => Ok(org),
         _ => Err(WebError::Forbidden(format!(
             "\"{}\" is not an owner or admin of organization \"{org_name}\"",
             auth.user.name
@@ -70,19 +79,9 @@ pub async fn require_org_owner(
     auth: &AuthContext,
     org_name: &str,
 ) -> WebResult<OrganizationRow> {
-    let org_row = state
-        .repo
-        .get_org_by_name(org_name)
-        .await
-        .map_err(WebError::CustomApiError)?
-        .ok_or_else(|| WebError::NotFound(format!("Organization \"{org_name}\" not found")))?;
-    let row = state
-        .repo
-        .get_org_member(org_row.id, auth.user.id)
-        .await
-        .map_err(WebError::CustomApiError)?;
-    if row.as_ref().is_some_and(|r| r.role == "owner") {
-        Ok(org_row)
+    let (org, membership) = resolve_org_membership(state, auth, org_name).await?;
+    if membership.is_some_and(|member| member.role == "owner") {
+        Ok(org)
     } else {
         Err(WebError::Forbidden(format!(
             "\"{}\" is not an owner of organization \"{org_name}\"",
@@ -96,20 +95,9 @@ pub async fn require_org_member(
     auth: &AuthContext,
     org_name: &str,
 ) -> WebResult<OrganizationRow> {
-    let org_row = state
-        .repo
-        .get_org_by_name(org_name)
-        .await
-        .map_err(WebError::CustomApiError)?
-        .ok_or_else(|| WebError::NotFound(format!("Organization \"{org_name}\" not found")))?;
-    let is_member = state
-        .repo
-        .get_org_member(org_row.id, auth.user.id)
-        .await
-        .map_err(WebError::CustomApiError)?
-        .is_some();
-    if is_member {
-        Ok(org_row)
+    let (org, membership) = resolve_org_membership(state, auth, org_name).await?;
+    if membership.is_some() {
+        Ok(org)
     } else {
         Err(WebError::Forbidden(format!(
             "\"{}\" is not a member of organization \"{org_name}\"",

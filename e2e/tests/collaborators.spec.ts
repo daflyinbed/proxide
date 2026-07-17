@@ -59,7 +59,7 @@ describe("GET /npm/-/package/{fullname}/collaborators", () => {
   });
 });
 
-describe("GET /npm/-/org/{username}/package", () => {
+describe("GET /npm/-/user/{username}/package", () => {
   it("lists packages for a user", async () => {
     const publisher = uniqueName("e2e-org-pub");
     const token = await login(publisher, "pass1234");
@@ -68,7 +68,7 @@ describe("GET /npm/-/org/{username}/package", () => {
     await publishPackage(token, name, "1.0.0");
 
     const { res, body } = await apiJson(
-      "/npm/-/org/" + encodeURIComponent(publisher) + "/package",
+      "/npm/-/user/" + encodeURIComponent(publisher) + "/package",
     );
     expect(res.status).toBe(200);
     expect(body[name]).toBe("write");
@@ -76,7 +76,7 @@ describe("GET /npm/-/org/{username}/package", () => {
 
   it("returns 404 for non-existent user", async () => {
     const { res } = await apiJson(
-      "/npm/-/org/" + encodeURIComponent(uniqueName("e2e-nouser")) + "/package",
+      "/npm/-/user/" + encodeURIComponent(uniqueName("e2e-nouser")) + "/package",
     );
     expect(res.status).toBe(404);
   });

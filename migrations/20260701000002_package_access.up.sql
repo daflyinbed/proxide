@@ -1,1 +1,0 @@
-ALTER TABLE packages ADD COLUMN access VARCHAR(16) NOT NULL DEFAULT 'public' AFTER source;

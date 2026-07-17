@@ -132,7 +132,7 @@ pub async fn set_dist_tag(
         .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
 
     ensure_package_readable_with_auth(&state, &auth, &pkg).await?;
-    ensure_package_write_access(&state, &auth, &fullname, pkg.id).await?;
+    ensure_package_write_access(&state, &auth, &pkg).await?;
     ensure_local_package(pkg.source.as_deref(), &fullname)?;
 
     let _unlock = lock_package(&state, &fullname)?;
@@ -230,7 +230,7 @@ pub async fn remove_dist_tag(
         .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
 
     ensure_package_readable_with_auth(&state, &auth, &pkg).await?;
-    ensure_package_write_access(&state, &auth, &fullname, pkg.id).await?;
+    ensure_package_write_access(&state, &auth, &pkg).await?;
     ensure_local_package(pkg.source.as_deref(), &fullname)?;
 
     let _unlock = lock_package(&state, &fullname)?;

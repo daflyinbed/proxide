@@ -1,5 +1,5 @@
 import { execSync, spawn } from "node:child_process";
-import { openSync } from "node:fs";
+import { openSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { copyFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -16,9 +16,24 @@ const RUN_DIR = join(PROJECT_ROOT, "target", "e2e-run");
 export const BASE_URL = "http://localhost:14873";
 export const PROXIDE_BINARY = BINARY;
 export const PROXIDE_RUN_DIR = RUN_DIR;
+export const PROXIDE_PID_FILE = join(RUN_DIR, "proxide.pid");
 
 function log(msg: string) {
   console.log(`[e2e:setup] ${msg}`);
+}
+
+export async function waitForProcessExit(pid: number, timeoutMs = 10_000): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return true;
+    }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  log(`WARNING: PID ${pid} did not exit within ${timeoutMs}ms`);
+  return false;
 }
 
 function run(cmd: string, opts?: { cwd?: string; env?: Record<string, string> }) {
@@ -90,6 +105,8 @@ export default async function setup() {
     env: { ...process.env, RUST_LOG: "warn" },
   });
 
+  writeFileSync(PROXIDE_PID_FILE, String(child.pid));
+
   log("waiting for proxide /-/ping...");
   await waitFor(`${BASE_URL}/-/ping`);
   log("proxide is ready");
@@ -100,12 +117,19 @@ export default async function setup() {
 
   return async () => {
     log("stopping proxide...");
-    if (child.exitCode === null && !child.killed) {
-      child.kill("SIGTERM");
-      await new Promise<void>((resolve) => {
-        child.once("exit", () => resolve());
-      });
-    }
+    try {
+      if (existsSync(PROXIDE_PID_FILE)) {
+        const pid = parseInt(readFileSync(PROXIDE_PID_FILE, "utf-8").trim());
+        try {
+          process.kill(pid, 0);
+          process.kill(pid, "SIGTERM");
+          await waitForProcessExit(pid);
+        } catch {}
+      } else if (child.exitCode === null && !child.killed) {
+        child.kill("SIGTERM");
+        await waitForProcessExit(child.pid!);
+      }
+    } catch {}
     log("done");
   };
 }

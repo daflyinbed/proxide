@@ -1,0 +1,94 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT DISTINCT p.id, p.name, p.scope, p.description, p.source, p.access,\n                      p.abbreviated_dist_id, p.full_dist_id\n               FROM packages p\n               LEFT JOIN organizations o ON o.name = p.scope\n               WHERE o.id = ?\n                 AND (p.access = 'public'\n                      OR EXISTS (SELECT 1 FROM maintainers m WHERE m.package_id = p.id AND m.user_id = ?)\n                      OR EXISTS (\n                          SELECT 1 FROM package_team_permissions ptp\n                          JOIN team_members tm ON tm.team_id = ptp.team_id\n                          WHERE ptp.package_id = p.id AND tm.user_id = ?\n                      )\n                      OR EXISTS (\n                          SELECT 1 FROM org_members om\n                          JOIN organizations o2 ON o2.id = om.org_id\n                          WHERE o2.id = ? AND om.user_id = ? AND om.role IN ('owner','admin')\n                      ))\n               ORDER BY p.id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": {
+          "type": "LongLong",
+          "flags": "NOT_NULL | PRIMARY_KEY | AUTO_INCREMENT",
+          "max_size": 20
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL | UNIQUE_KEY | NO_DEFAULT_VALUE",
+          "max_size": 2048
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "scope",
+        "type_info": {
+          "type": "VarString",
+          "flags": "MULTIPLE_KEY",
+          "max_size": 1024
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "description",
+        "type_info": {
+          "type": "Blob",
+          "flags": "BLOB",
+          "max_size": 262140
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "source",
+        "type_info": {
+          "type": "VarString",
+          "flags": "",
+          "max_size": 256
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "access",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL",
+          "max_size": 64
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "abbreviated_dist_id",
+        "type_info": {
+          "type": "LongLong",
+          "flags": "",
+          "max_size": 20
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "full_dist_id",
+        "type_info": {
+          "type": "LongLong",
+          "flags": "",
+          "max_size": 20
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "a679b4ec0325d81e2fe732b3d3a963e2ccb752edd05ccbad9095743e49dce895"
+}

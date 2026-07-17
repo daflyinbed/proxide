@@ -1,10 +1,11 @@
 use crate::error::{WebError, WebResult};
 use crate::middleware::auth::{AuthContext, is_admin};
+use crate::handlers::orgs::require_org_member;
 use crate::npm::types::*;
 use crate::npm::{
     build_abbreviated_version, is_prerelease, pad_version, split_scope_name,
 };
-use crate::repository::{upload_and_commit_manifests, CommitVersionParams, PendingDist, Repository};
+use crate::repository::{upload_and_commit_manifests, CommitVersionParams, MAINTAINER_SOURCE_MANUAL, MAINTAINER_SOURCE_TEAM, PendingDist, Repository};
 use crate::state::{AppState, LockOwner, UnlockGuard};
 use axum::Json;
 use axum::http::HeaderMap;
@@ -97,6 +98,58 @@ fn validate_package_name(name: &str) -> WebResult<()> {
     Ok(())
 }
 
+const DEVELOPERS_TEAM: &str = "developers";
+
+async fn apply_developers_team_default(
+    state: &AppState,
+    package_id: i64,
+    scope: &str,
+    publisher_id: i64,
+) -> WebResult<()> {
+    let org = state
+        .repo
+        .get_org_by_name(scope)
+        .await
+        .map_err(WebError::CustomApiError)?;
+    let Some(org) = org else {
+        return Ok(());
+    };
+    let dev_team = state
+        .repo
+        .get_team_by_org_name(org.id, DEVELOPERS_TEAM)
+        .await
+        .map_err(WebError::CustomApiError)?;
+    let Some(dev_team) = dev_team else {
+        return Ok(());
+    };
+    let members = state
+        .repo
+        .list_team_members(dev_team.id)
+        .await
+        .map_err(WebError::CustomApiError)?;
+    let mut user_ids: Vec<i64> = members.iter().map(|m| m.user_id).collect();
+    if !user_ids.contains(&publisher_id) {
+        user_ids.push(publisher_id);
+    }
+    state
+        .repo
+        .sync_maintainers_and_grant_team_permission(
+            package_id,
+            &user_ids,
+            MAINTAINER_SOURCE_TEAM,
+            dev_team.id,
+            "write",
+        )
+        .await
+        .map_err(WebError::CustomApiError)?;
+    log::info!(
+        action = "developers_team_default";
+        "package_id={package_id} scope={scope} dev_team_id={} maintainers={}",
+        dev_team.id, user_ids.len()
+    );
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn publish_package_inner(
     state: &AppState,
@@ -119,7 +172,24 @@ pub async fn publish_package_inner(
 
     let (scope, _name) = split_scope_name(&fullname);
 
-    if !is_admin(&auth.user, &state.config.auth.admins) {
+    let is_org_scope = if let Some(scope_name) = scope {
+        if state
+            .repo
+            .get_org_by_name(scope_name)
+            .await
+            .map_err(WebError::CustomApiError)?
+            .is_some()
+        {
+            require_org_member(state, auth, scope_name).await?;
+            true
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    if !is_org_scope && !is_admin(&auth.user, &state.config.auth.admins) {
         crate::middleware::auth::check_scope_access(
             scope,
             &state.config.auth.allow_scopes,
@@ -244,19 +314,7 @@ pub async fn publish_package_inner(
             )));
         }
 
-        if !is_admin(&auth.user, &state.config.auth.admins) {
-            let is_maintainer = state
-                .repo
-                .is_maintainer(pkg.id, auth.user.id)
-                .await
-                .map_err(WebError::CustomApiError)?;
-            if !is_maintainer {
-                return Err(WebError::Forbidden(format!(
-                    "\"{}\" not authorized to modify {fullname}, please contact maintainers",
-                    auth.user.name
-                )));
-            }
-        }
+        crate::middleware::auth::ensure_package_write_access(state, auth, pkg).await?;
     }
 
     let description = payload
@@ -543,6 +601,10 @@ pub async fn publish_package_inner(
             }
         })?;
 
+    if !pkg_exists && let Some(scope) = scope {
+        apply_developers_team_default(state, package_id, scope, auth.user.id).await?;
+    }
+
     let full_manifest =
         refresh_manifests(
             state,
@@ -750,7 +812,7 @@ pub async fn update_maintainers_inner(
         .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
 
     crate::middleware::auth::ensure_package_readable_with_auth(state, auth, &pkg).await?;
-    crate::middleware::auth::ensure_package_write_access(state, auth, &fullname, pkg.id).await?;
+    crate::middleware::auth::ensure_package_write_access(state, auth, &pkg).await?;
     ensure_local_package(pkg.source.as_deref(), &fullname)?;
 
     if !state
@@ -790,7 +852,7 @@ pub async fn update_maintainers_inner(
 
     state
         .repo
-        .sync_maintainers(pkg.id, &user_ids)
+        .replace_maintainers(pkg.id, &user_ids, MAINTAINER_SOURCE_MANUAL)
         .await
         .map_err(WebError::CustomApiError)?;
 
@@ -861,7 +923,7 @@ pub async fn unpublish_package_inner(
         .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
 
     crate::middleware::auth::ensure_package_readable_with_auth(state, auth, &pkg).await?;
-    crate::middleware::auth::ensure_package_write_access(state, auth, &fullname, pkg.id).await?;
+    crate::middleware::auth::ensure_package_write_access(state, auth, &pkg).await?;
     ensure_local_package(pkg.source.as_deref(), &fullname)?;
 
     if !state
@@ -945,7 +1007,7 @@ pub async fn unpublish_version_inner(
         .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
 
     crate::middleware::auth::ensure_package_readable_with_auth(state, auth, &pkg).await?;
-    crate::middleware::auth::ensure_package_write_access(state, auth, &fullname, pkg.id).await?;
+    crate::middleware::auth::ensure_package_write_access(state, auth, &pkg).await?;
     ensure_local_package(pkg.source.as_deref(), &fullname)?;
 
     if !state

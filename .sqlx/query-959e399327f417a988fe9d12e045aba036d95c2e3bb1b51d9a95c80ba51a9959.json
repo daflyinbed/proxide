@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "DELETE FROM package_team_permissions WHERE package_id = ? AND team_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "959e399327f417a988fe9d12e045aba036d95c2e3bb1b51d9a95c80ba51a9959"
+}

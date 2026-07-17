@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT IGNORE INTO maintainers (package_id, user_id, source) VALUES (?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "13f01231a6db3bc5ab0684a7cdd806c7dcddbbc0e1e94472b9c196eab2fd03a2"
+}

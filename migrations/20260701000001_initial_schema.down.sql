@@ -1,3 +1,8 @@
+DROP TABLE IF EXISTS package_team_permissions;
+DROP TABLE IF EXISTS team_members;
+DROP TABLE IF EXISTS teams;
+DROP TABLE IF EXISTS org_members;
+DROP TABLE IF EXISTS organizations;
 DROP TABLE IF EXISTS package_version_files;
 DROP TABLE IF EXISTS upstream_package_downloads;
 DROP TABLE IF EXISTS package_downloads;

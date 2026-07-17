@@ -1,0 +1,24 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT EXISTS(\n                SELECT 1 FROM package_team_permissions ptp\n                JOIN team_members tm ON tm.team_id = ptp.team_id\n                WHERE ptp.package_id = ?\n                  AND tm.user_id = ?\n                  AND (ptp.permission = 'write' OR ? = 'read')\n            ) AS `exists`",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "exists",
+        "type_info": {
+          "type": "LongLong",
+          "flags": "NOT_NULL | BINARY",
+          "max_size": 1
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "6fe925e50cf02e9dc32abe7e7f7a8f93ea274c4f952a40e7a0314cdfed3ac5e0"
+}

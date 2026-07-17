@@ -1,5 +1,4 @@
 use crate::error::{WebError, WebResult};
-use crate::npm::split_scope_name;
 use crate::repository::{PackageRow, TokenRow, UserRow};
 use crate::state::AppState;
 use axum::extract::FromRequestParts;
@@ -146,36 +145,100 @@ pub async fn ensure_package_readable_with_auth(
     {
         return Ok(());
     }
+    if pkg.source.is_none()
+        && state
+            .repo
+            .user_has_team_access(pkg.id, auth.user.id, "read")
+            .await
+            .map_err(WebError::CustomApiError)?
+    {
+        return Ok(());
+    }
+    if pkg.source.is_none()
+        && let Some(scope) = &pkg.scope
+        && state
+            .repo
+            .user_is_org_manager_for_scope(scope, auth.user.id)
+            .await
+            .map_err(WebError::CustomApiError)?
+    {
+        return Ok(());
+    }
     Err(WebError::NotFound(format!("{} not found", pkg.name)))
 }
 
 pub async fn ensure_package_write_access(
     state: &AppState,
     auth: &AuthContext,
-    fullname: &str,
-    package_id: i64,
+    pkg: &PackageRow,
 ) -> WebResult<()> {
     if is_admin(&auth.user, &state.config.auth.admins) {
         return Ok(());
     }
-    let (scope, _name) = split_scope_name(fullname);
-    check_scope_access(
-        scope,
-        &state.config.auth.allow_scopes,
-        state.config.auth.allow_publish_non_scope_package,
-    )?;
-    let is_maintainer = state
-        .repo
-        .is_maintainer(package_id, auth.user.id)
-        .await
-        .map_err(WebError::CustomApiError)?;
-    if !is_maintainer {
-        return Err(WebError::Forbidden(format!(
-            "\"{}\" not authorized to modify {fullname}, please contact maintainers",
-            auth.user.name
-        )));
+    let scope = pkg.scope.as_deref();
+    let is_local_package = pkg.source.is_none();
+    let is_org_member = if is_local_package
+        && let Some(scope) = scope
+        && let Some(org) = state
+            .repo
+            .get_org_by_name(scope)
+            .await
+            .map_err(WebError::CustomApiError)?
+    {
+        let is_member = state
+            .repo
+            .get_org_member(org.id, auth.user.id)
+            .await
+            .map_err(WebError::CustomApiError)?
+            .is_some();
+        if !is_member {
+            return Err(WebError::Forbidden(format!(
+                "\"{}\" is not a member of organization \"{scope}\"",
+                auth.user.name
+            )));
+        }
+        true
+    } else {
+        false
+    };
+    if !is_org_member {
+        check_scope_access(
+            scope,
+            &state.config.auth.allow_scopes,
+            state.config.auth.allow_publish_non_scope_package,
+        )?;
     }
-    Ok(())
+    if state
+        .repo
+        .is_maintainer(pkg.id, auth.user.id)
+        .await
+        .map_err(WebError::CustomApiError)?
+    {
+        return Ok(());
+    }
+    if is_local_package
+        && let Some(scope) = scope
+        && state
+            .repo
+            .user_is_org_manager_for_scope(scope, auth.user.id)
+            .await
+            .map_err(WebError::CustomApiError)?
+    {
+        return Ok(());
+    }
+    if is_local_package
+        && state
+            .repo
+            .user_has_team_access(pkg.id, auth.user.id, "write")
+            .await
+            .map_err(WebError::CustomApiError)?
+    {
+        return Ok(());
+    }
+    Err(WebError::Forbidden(format!(
+        "\"{}\" not authorized to modify {}, please contact maintainers",
+        auth.user.name, pkg.name
+    )))
 }
 
 pub fn generate_salt() -> String {

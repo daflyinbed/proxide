@@ -24,6 +24,25 @@ pub fn build_router(state: AppState) -> axum::Router {
         .routes(routes!(handlers::access::get_visibility))
         .routes(routes!(handlers::access::set_access))
         .routes(routes!(handlers::access::list_packages_by_user))
+        .routes(routes!(
+            handlers::orgs::roster,
+            handlers::orgs::set_member,
+            handlers::orgs::rm_member
+        ))
+        .routes(routes!(handlers::orgs::org_packages))
+        .routes(routes!(handlers::teams::create_team))
+        .routes(routes!(handlers::teams::destroy_team))
+        .routes(routes!(
+            handlers::teams::add_user,
+            handlers::teams::rm_user
+        ))
+        .routes(routes!(handlers::teams::list_teams))
+        .routes(routes!(handlers::teams::list_users))
+        .routes(routes!(handlers::access::list_team_packages))
+        .routes(routes!(
+            handlers::access::grant_team_package,
+            handlers::access::revoke_team_package
+        ))
         .fallback(handlers::package_dispatch::dispatch);
 
     let fast = OpenApiRouter::new()
@@ -78,7 +97,26 @@ mod tests {
             .routes(routes!(handlers::access::list_collaborators))
             .routes(routes!(handlers::access::get_visibility))
             .routes(routes!(handlers::access::set_access))
-            .routes(routes!(handlers::access::list_packages_by_user));
+            .routes(routes!(handlers::access::list_packages_by_user))
+            .routes(routes!(
+                handlers::orgs::roster,
+                handlers::orgs::set_member,
+                handlers::orgs::rm_member
+            ))
+            .routes(routes!(handlers::orgs::org_packages))
+            .routes(routes!(handlers::teams::create_team))
+            .routes(routes!(handlers::teams::destroy_team))
+            .routes(routes!(
+                handlers::teams::add_user,
+                handlers::teams::rm_user
+            ))
+            .routes(routes!(handlers::teams::list_teams))
+            .routes(routes!(handlers::teams::list_users))
+            .routes(routes!(handlers::access::list_team_packages))
+            .routes(routes!(
+                handlers::access::grant_team_package,
+                handlers::access::revoke_team_package
+            ));
         let fast = OpenApiRouter::new()
             .routes(routes!(handlers::fast_meta::resolve_version))
             .routes(routes!(handlers::fast_meta::get_versions))
@@ -125,7 +163,13 @@ mod tests {
             "/npm/-/package/{fullname}/collaborators",
             "/npm/-/package/{fullname}/visibility",
             "/npm/-/package/{fullname}/access",
-            "/npm/-/org/{username}/package",
+            "/npm/-/user/{username}/package",
+            "/npm/-/org/{org}/user",
+            "/npm/-/org/{org}/package",
+            "/npm/-/org/{scope}/team",
+            "/npm/-/team/{scope}/{team}",
+            "/npm/-/team/{scope}/{team}/user",
+            "/npm/-/team/{scope}/{team}/package",
             "/npm/{fullname}",
             "/npm/{fullname}/{version}",
             "/npm/{fullname}/-/{filename}",

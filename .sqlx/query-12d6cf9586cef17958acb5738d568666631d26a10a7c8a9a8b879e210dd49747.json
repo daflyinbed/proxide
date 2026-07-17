@@ -1,0 +1,34 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT u.name, om.role FROM org_members om JOIN users u ON u.id = om.user_id WHERE om.org_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "name",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL | MULTIPLE_KEY | NO_DEFAULT_VALUE",
+          "max_size": 1024
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "role",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL",
+          "max_size": 64
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "12d6cf9586cef17958acb5738d568666631d26a10a7c8a9a8b879e210dd49747"
+}

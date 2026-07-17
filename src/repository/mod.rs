@@ -7,6 +7,10 @@ use anyhow::Result;
 use async_trait::async_trait;
 use std::collections::HashMap;
 
+pub const MAINTAINER_SOURCE_TEAM: &str = "team";
+pub const MAINTAINER_SOURCE_MANUAL: &str = "manual";
+pub const MAINTAINER_SOURCE_UPSTREAM: &str = "upstream";
+
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct PackageRow {
     pub id: i64,
@@ -249,6 +253,50 @@ pub struct SyncTaskRow {
     pub finished_at: Option<chrono::NaiveDateTime>,
 }
 
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct OrganizationRow {
+    pub id: i64,
+    pub name: String,
+    pub description: Option<String>,
+    pub created_at: chrono::NaiveDateTime,
+    pub updated_at: chrono::NaiveDateTime,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct OrgMemberRow {
+    pub id: i64,
+    pub org_id: i64,
+    pub user_id: i64,
+    pub role: String,
+    pub created_at: chrono::NaiveDateTime,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct TeamRow {
+    pub id: i64,
+    pub org_id: i64,
+    pub name: String,
+    pub description: Option<String>,
+    pub created_at: chrono::NaiveDateTime,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct TeamMemberRow {
+    pub id: i64,
+    pub team_id: i64,
+    pub user_id: i64,
+    pub created_at: chrono::NaiveDateTime,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct PackageTeamPermissionRow {
+    pub id: i64,
+    pub package_id: i64,
+    pub team_id: i64,
+    pub permission: String,
+    pub created_at: chrono::NaiveDateTime,
+}
+
 #[async_trait]
 pub trait Repository: Send + Sync + 'static {
     async fn migrate(&self) -> Result<()>;
@@ -422,14 +470,127 @@ pub trait Repository: Send + Sync + 'static {
 
     // ── maintainers ──
 
-    async fn save_maintainer(&self, package_id: i64, user_id: i64) -> Result<()>;
+    async fn save_maintainer(&self, package_id: i64, user_id: i64, source: &str) -> Result<()>;
     async fn is_maintainer(&self, package_id: i64, user_id: i64) -> Result<bool>;
-    async fn sync_maintainers(&self, package_id: i64, user_ids: &[i64]) -> Result<()>;
+    async fn sync_maintainers(
+        &self,
+        package_id: i64,
+        user_ids: &[i64],
+        source: &str,
+    ) -> Result<()>;
+    async fn replace_maintainers(
+        &self,
+        package_id: i64,
+        user_ids: &[i64],
+        source: &str,
+    ) -> Result<()>;
+    async fn sync_maintainers_and_grant_team_permission(
+        &self,
+        package_id: i64,
+        user_ids: &[i64],
+        source: &str,
+        team_id: i64,
+        permission: &str,
+    ) -> Result<()>;
     async fn list_maintainers(&self, package_id: i64) -> Result<Vec<Maintainer>>;
     async fn list_packages_by_user_id(&self, user_id: i64) -> Result<Vec<PackageRow>>;
     async fn list_packages_by_user_id_readable(
         &self,
         target_user_id: i64,
+        viewer_user_id: i64,
+    ) -> Result<Vec<PackageRow>>;
+
+    // ── organizations ──
+
+    async fn create_org(&self, name: &str, description: Option<&str>) -> Result<i64>;
+    async fn create_org_with_owner(
+        &self,
+        name: &str,
+        owner_user_id: i64,
+        developers_team_name: &str,
+    ) -> Result<i64>;
+    async fn get_org_by_name(&self, name: &str) -> Result<Option<OrganizationRow>>;
+    async fn delete_org(&self, id: i64) -> Result<()>;
+
+    // ── org_members ──
+
+    async fn remove_org_member_cascade(&self, org_id: i64, user_id: i64) -> Result<bool>;
+    async fn set_org_member_role_and_join_developers(
+        &self,
+        org_id: i64,
+        user_id: i64,
+        role: &str,
+        developers_team_name: &str,
+    ) -> Result<bool>;
+    async fn list_org_members(&self, org_id: i64) -> Result<Vec<OrgMemberRow>>;
+    async fn list_org_member_roster(&self, org_id: i64) -> Result<Vec<(String, String)>>;
+    async fn get_org_member(
+        &self,
+        org_id: i64,
+        user_id: i64,
+    ) -> Result<Option<OrgMemberRow>>;
+    async fn count_org_owners(&self, org_id: i64) -> Result<i64>;
+    async fn count_org_members(&self, org_id: i64) -> Result<i64>;
+
+    // ── teams ──
+
+    async fn create_team(
+        &self,
+        org_id: i64,
+        name: &str,
+        description: Option<&str>,
+    ) -> Result<i64>;
+    async fn get_team_by_org_name(
+        &self,
+        org_id: i64,
+        team_name: &str,
+    ) -> Result<Option<TeamRow>>;
+    async fn delete_team(&self, team_id: i64) -> Result<()>;
+    async fn list_teams_in_org(&self, org_id: i64) -> Result<Vec<TeamRow>>;
+
+    // ── team_members ──
+
+    async fn add_team_member(&self, team_id: i64, user_id: i64) -> Result<()>;
+    async fn remove_team_member(&self, team_id: i64, user_id: i64) -> Result<()>;
+    async fn list_team_members(&self, team_id: i64) -> Result<Vec<TeamMemberRow>>;
+    async fn list_team_member_names(&self, team_id: i64) -> Result<Vec<String>>;
+
+    // ── package_team_permissions ──
+
+    async fn grant_team_permission(
+        &self,
+        package_id: i64,
+        team_id: i64,
+        permission: &str,
+    ) -> Result<()>;
+    async fn revoke_team_permission(&self, package_id: i64, team_id: i64) -> Result<()>;
+    async fn list_packages_for_team(
+        &self,
+        team_id: i64,
+    ) -> Result<Vec<(PackageRow, String)>>;
+    async fn list_org_package_viewer_permissions(
+        &self,
+        org_id: i64,
+        viewer_user_id: i64,
+    ) -> Result<HashMap<i64, bool>>;
+
+    // ── org/team auth helpers ──
+
+    async fn user_has_team_access(
+        &self,
+        package_id: i64,
+        user_id: i64,
+        min_permission: &str,
+    ) -> Result<bool>;
+    async fn user_is_org_manager_for_scope(
+        &self,
+        scope: &str,
+        user_id: i64,
+    ) -> Result<bool>;
+    async fn list_all_packages_in_org(&self, org_id: i64) -> Result<Vec<PackageRow>>;
+    async fn list_packages_in_org_viewable(
+        &self,
+        org_id: i64,
         viewer_user_id: i64,
     ) -> Result<Vec<PackageRow>>;
 

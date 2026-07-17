@@ -4,6 +4,7 @@ use fastrace::collector;
 use logforth::append;
 use logforth::record::LevelFilter;
 use proxide::config;
+use proxide::org_cli::{OrgAction, run_org};
 use proxide::routes::build_router;
 use proxide::state::AppState;
 use proxide::worker;
@@ -25,6 +26,10 @@ enum Commands {
     CleanupStorage,
     ReindexSearch,
     Bootstrap,
+    Org {
+        #[command(subcommand)]
+        action: OrgAction,
+    },
 }
 
 #[tokio::main]
@@ -51,6 +56,7 @@ async fn main() -> Result<()> {
         Commands::CleanupStorage => run_cleanup_storage(cfg).await,
         Commands::ReindexSearch => run_reindex_search(cfg).await,
         Commands::Bootstrap => run_bootstrap(cfg).await,
+        Commands::Org { action } => run_org(cfg, action).await,
     }
 }
 

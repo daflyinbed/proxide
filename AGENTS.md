@@ -12,7 +12,14 @@ cargo run -- worker             # Sync worker
 cargo run -- cleanup-storage    # Remove orphan storage objects
 cargo run -- reindex-search     # Rebuild Meilisearch index (requires [search] config)
 cargo run -- bootstrap          # Seed sync_tasks with all npm package names (empty registry only)
+cargo run -- org create <scope> <owner>  # Create org (bootstrap developers team + owner)
+cargo run -- org add-member <org> <user> [--role owner|admin|developer]
+cargo run -- org rm-member <org> <user>
+cargo run -- org ls <org>
+cargo run -- org delete <org>
 cargo check                     # Verify compilation
+cargo test                      # Run unit tests (crate needs DATABASE_URL or SQLX_OFFLINE=true to compile)
+cargo test <name>               # Run a single test by name substring
 sqlx migrate run                # Apply migrations (needs DATABASE_URL in .env)
 sqlx migrate revert             # Revert last migration
 cargo sqlx prepare              # Refresh .sqlx/ offline cache (required after schema changes)
@@ -32,7 +39,7 @@ pnpm test:e2e                   # End-to-end tests (requires Docker + cargo buil
 ## Database
 
 - MySQL 8.0 (local, credentials from `.env`)
-- Tables: `dists`, `packages` (has `access` column: `public`/`private`), `package_versions`, `package_tags`, `change_stream_cursors`, `sync_tasks`, `users`, `tokens`, `maintainers`, `package_downloads` (local, per-version per-day counters `d01`..`d31`), `upstream_package_downloads` (upstream npm, per-package per-day counters), `package_version_files` (per-file entries for CDN/jsdelivr serving, keyed by `(package_version_id, filepath)`)
+- Tables: `dists`, `packages` (has `access` column: `public`/`private`), `package_versions`, `package_tags`, `change_stream_cursors`, `sync_tasks`, `users`, `tokens`, `maintainers`, `package_downloads` (local, per-version per-day counters `d01`..`d31`), `upstream_package_downloads` (upstream npm, per-package per-day counters), `package_version_files` (per-file entries for CDN/jsdelivr serving, keyed by `(package_version_id, filepath)`), `organizations` (name == scope), `org_members` (role: `owner`/`admin`/`developer`), `teams` (scoped to org, reserved name `developers`), `team_members`, `package_team_permissions` (permission: `read`/`write`)
 - Migrations in `/migrations`, managed by sqlx-cli
 - Login sessions are **in-memory** (`LoginSessionMap` in `AppState`), not a DB table
 
@@ -55,13 +62,14 @@ docker compose up -d --wait    # Start all services
 
 ```
 src/
-  main.rs              # clap → server | worker | cleanup-storage | reindex-search
+  main.rs              # clap → server | worker | cleanup-storage | reindex-search | org
   lib.rs               # Module registration
   config.rs            # TOML config (camelCase keys)
   error.rs             # WebError → JSON responses
   routes.rs            # Route definitions, nests /npm, /fast, /api, /jsdelivr/{npm,api/npm}
   openapi.rs           # utoipa OpenAPI doc (Scalar UI served at GET /docs)
   state.rs             # AppState { repo, config, http, package_lock, login_sessions, tarball_downloads, download_counters, search, extraction_inflight }
+  org_cli.rs           # `proxide org` CLI subcommand (create/add-member/rm-member/ls/delete)
 
   npm/types.rs         # Packument, AbbreviatedPackument, FastMeta* types
   npm/mod.rs           # split_scope_name, decode_fullname
@@ -83,19 +91,19 @@ src/
 
   middleware/
     mod.rs             # Middleware module
-    auth.rs            # Auth middleware (token validation)
+    auth.rs            # Auth middleware (token validation, team/org permission checks)
 
   handlers/
     mod.rs
     registry.rs        # /npm/* package routes
     fast_meta.rs       # /fast/* fast-npm-meta routes
     tarball.rs         # Tarball download (on-demand proxy)
-    package_dispatch.rs # Fallback handler — routes GET/PUT by path pattern
-    publish.rs         # PUT publish (auth-protected)
+    package_dispatch.rs # Fallback handler — routes GET/PUT/DELETE by path pattern
+    publish.rs         # PUT publish (auth-protected); applies developers-team auto-grant on first publish
     dist_tags.rs       # GET/PUT/DELETE dist-tags
     tokens.rs          # npm v1 token CRUD: whoami, logout, list/create/revoke
     profile.rs         # GET/PUT user profile (/npm/-/npm/v1/user)
-    access.rs          # collaborators, visibility, set-access, list-by-user
+    access.rs          # collaborators, visibility, set-access, list-by-user, team package grant/revoke
     sync.rs            # PUT /-/package/{fullname}/syncs
     search.rs          # GET /npm/-/v1/search (Meilisearch)
     downloads.rs       # /api/downloads/{point,range}/* (npm download-counts API)
@@ -105,6 +113,8 @@ src/
     auth.rs            # PUT /-/user/org.couchdb.user:{name} (legacy login)
     web_login.rs       # POST /-/v1/login + GET poll done
     home.rs            # GET /-/ping
+    orgs.rs            # /npm/-/org/{org}/{user,package} — org roster & packages
+    teams.rs           # /npm/-/{org,team}/{scope}/{team}{,/user} — team CRUD & members
     sso/
       cas.rs           # CAS 2.0 callback handler
 
@@ -162,6 +172,10 @@ End-to-end tests in `e2e/` using Vitest. The global setup (`e2e/globalSetup.ts`)
 5. Clears the Meilisearch index (`proxide-e2e`)
 
 Run: `pnpm test:e2e`
+
+## CI
+
+`.github/workflows/opencode.yml` runs opencode in GitHub Actions when a PR comment or review comment starts with `/oc` or `/opencode`. Triggered via `anomalyco/opencode/github@latest` with model `zhipuai-coding-plan/glm-5.2`.
 
 ## Code Style
 

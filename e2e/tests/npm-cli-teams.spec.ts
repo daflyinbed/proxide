@@ -387,6 +387,36 @@ describe("npm access revoke (CLI)", () => {
     );
     expect(teamPkgs[pkgName]).toBeUndefined();
   });
+
+  it("removes write access from an org member when its team grant is revoked", async () => {
+    const { token: ownerToken, authDir: ownerAuthDir, scope } = await setupOrgOwner(
+      "e2e-cli-revoke-write-owner",
+      "e2e-cli-revoke-write",
+    );
+
+    const pkgName = uniqueScopedName(scope, "revoke-write");
+    await publishPackage(ownerToken, pkgName, "1.0.0", { access: "restricted" });
+
+    const revokeRes = await execNpm(
+      ["access", "revoke", `${scope}:developers`, pkgName],
+      { cwd: ownerAuthDir, env: npmrcEnv(ownerAuthDir) },
+    );
+    expect(revokeRes.exitCode).toBe(0);
+
+    const { token: memberToken, authDir: memberAuthDir } = await registerMember(
+      "e2e-cli-revoke-write-member",
+      scope,
+      "developer",
+    );
+
+    const pkgDir = await createTempPackageDir(pkgName, "2.0.0");
+    await writeNpmrc(pkgDir, memberToken);
+    const publishRes = await execNpm(["publish", "--access", "restricted"], {
+      cwd: pkgDir,
+      env: npmrcEnv(memberAuthDir),
+    });
+    expect(publishRes.exitCode).not.toBe(0);
+  });
 });
 
 describe("npm access list collaborators (CLI)", () => {

@@ -224,6 +224,24 @@ impl TarballInflight {
     pub fn snapshot(&self) -> TarballInflightSnapshot {
         self.tx.borrow().clone()
     }
+
+    pub async fn wait_for_completion(&self) -> Result<(), TarballInflightError> {
+        let mut rx = self.subscribe();
+        loop {
+            let snapshot = self.snapshot();
+            if let Some(error) = snapshot.error {
+                return Err(error);
+            }
+            if snapshot.completed {
+                return Ok(());
+            }
+            if rx.changed().await.is_err() {
+                return Err(TarballInflightError::Internal(
+                    "tarball inflight sender dropped".to_string(),
+                ));
+            }
+        }
+    }
 }
 
 #[derive(Clone, Default)]
@@ -251,6 +269,10 @@ impl TarballInflightMap {
                 (inflight, true)
             }
         }
+    }
+
+    pub fn get_inflight(&self, storage_key: &str) -> Option<Arc<TarballInflight>> {
+        self.inner.get(storage_key).map(|v| v.clone())
     }
 
     pub fn remove(&self, storage_key: &str) {

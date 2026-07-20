@@ -218,7 +218,23 @@ async fn cleanup_completed_cache_file(inflight: Arc<TarballInflight>) {
     }
 }
 
-async fn ensure_tarball_dist_link(
+pub(crate) fn build_tarball_request(
+    http: &reqwest::Client,
+    config: &crate::config::Config,
+    fullname: &str,
+    filename: &str,
+) -> reqwest::RequestBuilder {
+    let mut request = http.get(format!(
+        "{}/{fullname}/-/{filename}",
+        config.worker.upstream_registry
+    ));
+    if !config.worker.upstream_auth_token.is_empty() {
+        request = request.bearer_auth(&config.worker.upstream_auth_token);
+    }
+    request
+}
+
+pub(crate) async fn ensure_tarball_dist_link(
     state: &AppState,
     fullname: &str,
     filename: &str,
@@ -293,14 +309,12 @@ async fn run_tarball_producer(
             })?;
         }
 
-        let mut request = state.http.get(format!(
-            "{}/{fullname}/-/{filename}",
-            state.config.worker.upstream_registry
-        ));
-
-        if !state.config.worker.upstream_auth_token.is_empty() {
-            request = request.bearer_auth(&state.config.worker.upstream_auth_token);
-        }
+        let request = build_tarball_request(
+            &state.http,
+            &state.config,
+            &fullname,
+            &filename,
+        );
 
         let upstream_resp = request.send().await.map_err(|e| {
             TarballInflightError::Internal(format!(

@@ -97,34 +97,28 @@ async fn acquire_tarball(
         .await
         .map_err(WebError::CustomApiError)?
     {
-        let result = state
-            .repo
-            .storage_get_result(&storage_key)
-            .await
-            .map_err(WebError::CustomApiError)?;
-        let bytes = result
-            .bytes()
-            .await
-            .map_err(|e| WebError::CustomApiError(anyhow::anyhow!("{e:#}")))?
-            .to_vec();
-        return Ok(bytes);
+        return read_tarball_from_storage(state, &storage_key).await;
     }
 
-    let url = format!(
-        "{}/{fullname}/-/{tarball_filename}",
-        state.config.worker.upstream_registry
-    );
-    let mut request = state.http.get(&url);
-    if !state.config.worker.upstream_auth_token.is_empty() {
-        request = request.bearer_auth(&state.config.worker.upstream_auth_token);
+    if let Some(inflight) = state.tarball_downloads.get_inflight(&storage_key) {
+        if inflight.wait_for_completion().await.is_ok() {
+            return read_tarball_from_storage(state, &storage_key).await;
+        }
     }
+
+    let request = crate::handlers::tarball::build_tarball_request(
+        &state.http,
+        &state.config,
+        fullname,
+        tarball_filename,
+    );
     let resp = request
         .send()
         .await
         .map_err(|e| WebError::CustomApiError(anyhow::anyhow!("tarball fetch failed: {e:#}")))?;
     if !resp.status().is_success() {
         return Err(WebError::NotFound(format!(
-            "upstream tarball {url} returned status {}",
+            "upstream tarball for {fullname}/-/{tarball_filename} returned status {}",
             resp.status()
         )));
     }
@@ -153,42 +147,35 @@ async fn acquire_tarball(
         bytes.extend_from_slice(&chunk);
     }
 
-    if bytes.len() as u64 > limit {
-        return Err(WebError::BadRequest(format!(
-            "tarball for {fullname}/-/{tarball_filename} exceeds cdn.maxTarballSize ({limit})"
-        )));
-    }
-
     state
         .repo
         .put_storage(&storage_key, bytes.clone())
         .await
         .map_err(WebError::CustomApiError)?;
 
-    let dist_id = state
-        .repo
-        .create_dist(
-            tarball_filename,
-            &storage_key,
-            bytes.len() as i64,
-            None,
-            None,
-        )
-        .await
-        .map_err(WebError::CustomApiError)?;
-    state
-        .repo
-        .update_version_dists(
-            version.id,
-            version.abbrev_dist_id,
-            version.manifest_dist_id,
-            Some(dist_id),
-            version.readme_dist_id,
-        )
-        .await
-        .map_err(WebError::CustomApiError)?;
+    crate::handlers::tarball::ensure_tarball_dist_link(
+        state,
+        fullname,
+        tarball_filename,
+        &storage_key,
+        version,
+    )
+    .await?;
 
     Ok(bytes)
+}
+
+async fn read_tarball_from_storage(state: &AppState, storage_key: &str) -> WebResult<Vec<u8>> {
+    let result = state
+        .repo
+        .storage_get_result(storage_key)
+        .await
+        .map_err(WebError::CustomApiError)?;
+    result
+        .bytes()
+        .await
+        .map_err(|e| WebError::CustomApiError(anyhow::anyhow!("{e:#}")))
+        .map(|b| b.to_vec())
 }
 
 fn extract_entries(tarball_bytes: Vec<u8>, max_unpacked_size: u64) -> Result<Vec<ExtractedFile>> {

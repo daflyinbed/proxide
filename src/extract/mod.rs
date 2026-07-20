@@ -11,6 +11,7 @@ use sha2::{Digest, Sha256};
 use std::io::Cursor;
 use std::io::Read;
 use tar::Archive;
+use tokio::sync::mpsc;
 
 struct ExtractedFile {
     filepath: String,
@@ -37,20 +38,16 @@ pub async fn ensure_version_files(
     }
 
     let max_unpacked_size = state.config.cdn.max_unpacked_size;
-    let entries = tokio::task::spawn_blocking(move || {
-        extract_entries(tarball_bytes, max_unpacked_size)
-    })
-    .await
-    .map_err(|e| WebError::CustomApiError(anyhow::anyhow!("extraction join failed: {e}")))?
-    .map_err(WebError::CustomApiError)?;
+    let (tx, mut rx) = mpsc::channel::<ExtractedFile>(1);
 
-    let version_id = version.id;
-    let mut new_files = Vec::with_capacity(entries.len());
-    for f in entries {
-        let storage_key = format!(
-            "packages/{fullname}/{}/unpacked/{}",
-            version.version, f.filepath
-        );
+    let extract_handle = tokio::task::spawn_blocking(move || -> Result<()> {
+        extract_entries_streaming(tarball_bytes, max_unpacked_size, tx)
+    });
+
+    let version_str = &version.version;
+    let mut new_files = Vec::new();
+    while let Some(f) = rx.recv().await {
+        let storage_key = format!("packages/{fullname}/{version_str}/unpacked/{}", f.filepath);
         let actual_key = state
             .repo
             .put_storage_compressed(&storage_key, f.bytes)
@@ -65,9 +62,14 @@ pub async fn ensure_version_files(
         });
     }
 
+    extract_handle
+        .await
+        .map_err(|e| WebError::CustomApiError(anyhow::anyhow!("extraction join failed: {e}")))?
+        .map_err(WebError::CustomApiError)?;
+
     state
         .repo
-        .insert_version_files(version_id, &new_files)
+        .insert_version_files(version.id, &new_files)
         .await
         .map_err(WebError::CustomApiError)?;
 
@@ -178,10 +180,13 @@ async fn read_tarball_from_storage(state: &AppState, storage_key: &str) -> WebRe
         .map(|b| b.to_vec())
 }
 
-fn extract_entries(tarball_bytes: Vec<u8>, max_unpacked_size: u64) -> Result<Vec<ExtractedFile>> {
+fn extract_entries_streaming(
+    tarball_bytes: Vec<u8>,
+    max_unpacked_size: u64,
+    tx: mpsc::Sender<ExtractedFile>,
+) -> Result<()> {
     let decoder = GzDecoder::new(Cursor::new(tarball_bytes));
     let mut archive = Archive::new(decoder);
-    let mut out = Vec::new();
     let mut total: u64 = 0;
 
     for entry in archive.entries()? {
@@ -215,14 +220,20 @@ fn extract_entries(tarball_bytes: Vec<u8>, max_unpacked_size: u64) -> Result<Vec
         let size = bytes.len() as i64;
         let hash = base64::engine::general_purpose::STANDARD.encode(Sha256::digest(&bytes));
         let content_type = content_type::guess(rel);
-        out.push(ExtractedFile {
-            filepath: rel.to_string(),
-            bytes,
-            size,
-            hash,
-            content_type,
-        });
+
+        if tx
+            .blocking_send(ExtractedFile {
+                filepath: rel.to_string(),
+                bytes,
+                size,
+                hash,
+                content_type,
+            })
+            .is_err()
+        {
+            break;
+        }
     }
 
-    Ok(out)
+    Ok(())
 }

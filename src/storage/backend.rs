@@ -2,6 +2,7 @@ use crate::config::StorageConfig;
 use anyhow::{Context, Result};
 use futures::StreamExt;
 use object_store::ObjectStore;
+use object_store::PutPayload;
 use object_store::aws::AmazonS3Builder;
 use object_store::local::LocalFileSystem;
 use object_store::path::Path;
@@ -87,7 +88,7 @@ impl Storage {
             .with_context(|| format!("failed to get object: {key}"))
     }
 
-    pub async fn put(&self, key: &str, data: Vec<u8>) -> Result<()> {
+    pub async fn put(&self, key: &str, data: impl Into<PutPayload>) -> Result<()> {
         let path = Path::from(key);
         self.inner
             .put(&path, data.into())
@@ -125,6 +126,18 @@ impl Storage {
             Ok(_) => Ok(true),
             Err(object_store::Error::NotFound { .. }) => Ok(false),
             Err(e) => Err(e).with_context(|| format!("failed to check object existence: {key}")),
+        }
+    }
+
+    pub async fn health_check(&self) -> bool {
+        let mut stream = self.inner.list(None);
+        match stream.next().await {
+            None => true,
+            Some(Ok(_)) => true,
+            Some(Err(e)) => {
+                log::warn!(action = "storage_health"; "storage list failed: {e:#}");
+                false
+            }
         }
     }
 

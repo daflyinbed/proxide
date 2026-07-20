@@ -15,9 +15,18 @@ use utoipa::{IntoParams, ToSchema};
 const CACHE_META: &str = "public, s-maxage=600, max-age=60";
 const CACHE_META_PRIVATE: &str = "private, no-store";
 
+#[derive(Debug, Default, PartialEq, Eq, serde::Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum Structure {
+    Flat,
+    #[default]
+    Tree,
+}
+
 #[derive(Debug, Default, serde::Deserialize, IntoParams)]
 pub struct StructureQuery {
-    pub structure: Option<String>,
+    #[serde(default)]
+    pub structure: Structure,
 }
 
 #[utoipa::path(
@@ -65,7 +74,7 @@ pub async fn version_files(
         .await
         .map_err(WebError::CustomApiError)?;
 
-    let flat = matches!(query.structure.as_deref(), Some("flat"));
+    let flat = matches!(query.structure, Structure::Flat);
 
     let body = VersionFilesResponse {
         kind: "npm",

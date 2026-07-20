@@ -22,7 +22,7 @@ pub struct MysqlRepository {
 impl MysqlRepository {
     pub async fn new(db_config: &DatabaseConfig, storage_config: &StorageConfig) -> Result<Self> {
         let pool = sqlx::mysql::MySqlPoolOptions::new()
-            .max_connections(20)
+            .max_connections(db_config.max_connections)
             .connect(&db_config.uri)
             .await?;
         let storage = Storage::new(storage_config)?;
@@ -30,31 +30,14 @@ impl MysqlRepository {
     }
 
     pub async fn health_check(&self) -> bool {
-        sqlx::query_scalar!("SELECT 1")
+        if sqlx::query_scalar!("SELECT 1")
             .fetch_one(&self.pool)
             .await
-            .is_ok()
-    }
-
-    async fn insert_dist(
-        &self,
-        name: &str,
-        path: &str,
-        size: i64,
-        shasum: Option<&str>,
-        integrity: Option<&str>,
-    ) -> Result<i64> {
-        let result = sqlx::query!(
-            r#"INSERT INTO dists (name, path, size, shasum, integrity) VALUES (?, ?, ?, ?, ?)"#,
-            name,
-            path,
-            size,
-            shasum,
-            integrity
-        )
-        .execute(&self.pool)
-        .await?;
-        Ok(result.last_insert_id() as i64)
+            .is_err()
+        {
+            return false;
+        }
+        self.storage.health_check().await
     }
 
     async fn delete_dist(&self, id: i64) -> Result<()> {
@@ -106,7 +89,7 @@ impl Repository for MysqlRepository {
         let len = data.len() as i64;
         self.storage.put(storage_key, data).await?;
         let dist_id = self
-            .insert_dist(name, storage_key, len, shasum, integrity)
+            .create_dist(name, storage_key, len, shasum, integrity)
             .await?;
         Ok(dist_id)
     }
@@ -119,8 +102,17 @@ impl Repository for MysqlRepository {
         shasum: Option<&str>,
         integrity: Option<&str>,
     ) -> Result<i64> {
-        self.insert_dist(name, storage_key, size, shasum, integrity)
-            .await
+        let result = sqlx::query!(
+            r#"INSERT INTO dists (name, path, size, shasum, integrity) VALUES (?, ?, ?, ?, ?)"#,
+            name,
+            storage_key,
+            size,
+            shasum,
+            integrity
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.last_insert_id() as i64)
     }
 
     async fn delete_content(&self, dist_id: i64) -> Result<()> {

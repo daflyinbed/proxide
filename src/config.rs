@@ -21,6 +21,12 @@ pub struct Config {
 #[serde(rename_all = "camelCase")]
 pub struct DatabaseConfig {
     pub uri: String,
+    #[serde(default = "default_max_connections")]
+    pub max_connections: u32,
+}
+
+fn default_max_connections() -> u32 {
+    20
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -58,7 +64,7 @@ pub enum StorageConfig {
 #[serde(rename_all = "camelCase")]
 pub struct LocalConfig {
     pub directory: String,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub compress_json: bool,
     #[serde(default = "default_zstd_level")]
     pub zstd_level: i32,
@@ -75,10 +81,14 @@ pub struct S3Config {
     pub region: String,
     #[serde(default)]
     pub with_virtual_hosted_style_request: bool,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub compress_json: bool,
     #[serde(default = "default_zstd_level")]
     pub zstd_level: i32,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_zstd_level() -> i32 {

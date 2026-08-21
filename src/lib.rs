@@ -1,4 +1,5 @@
 pub mod config;
+pub mod dict_train;
 pub mod error;
 pub mod extract;
 pub mod handlers;

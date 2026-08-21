@@ -1,7 +1,7 @@
 use crate::config::Config;
 use crate::npm::types::*;
 use crate::npm::{
-    build_abbreviated_version, build_abbreviated_version_entry, is_prerelease, pad_version,
+    build_abbreviated_manifest, build_abbreviated_version, is_prerelease, pad_version,
     split_scope_name,
 };
 use crate::repository::{
@@ -15,28 +15,6 @@ use chrono::NaiveDateTime;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::error;
-
-fn build_abbreviated_manifest(packument: &Packument) -> AbbreviatedPackument {
-    let mut versions = HashMap::new();
-    for (ver, data) in &packument.versions {
-        versions.insert(
-            ver.clone(),
-            build_abbreviated_version_entry(data, packument.time.get(ver)),
-        );
-    }
-    let time = if packument.time.is_empty() {
-        None
-    } else {
-        Some(packument.time.clone())
-    };
-    AbbreviatedPackument {
-        name: packument.name.clone(),
-        modified: packument.time.get("modified").cloned(),
-        dist_tags: packument.dist_tags.clone(),
-        versions,
-        time,
-    }
-}
 
 pub enum SyncPackageError {
     Conflict(String),

@@ -26,6 +26,12 @@ enum Commands {
     CleanupStorage,
     ReindexSearch,
     Bootstrap,
+    TrainZstdDict {
+        #[arg(long, default_value = "zstd-dictionary.bin")]
+        output: String,
+        #[arg(long, default_value_t = proxide::dict_train::default_dict_size())]
+        max_dict_size: usize,
+    },
     Org {
         #[command(subcommand)]
         action: OrgAction,
@@ -56,6 +62,10 @@ async fn main() -> Result<()> {
         Commands::CleanupStorage => run_cleanup_storage(cfg).await,
         Commands::ReindexSearch => run_reindex_search(cfg).await,
         Commands::Bootstrap => run_bootstrap(cfg).await,
+        Commands::TrainZstdDict {
+            output,
+            max_dict_size,
+        } => run_train_zstd_dict(cfg, output, max_dict_size).await,
         Commands::Org { action } => run_org(cfg, action).await,
     }
 }
@@ -122,6 +132,18 @@ async fn run_bootstrap(config: config::Config) -> Result<()> {
     let state = AppState::new(config).await?;
     state.repo.migrate().await?;
     worker::bootstrap::bootstrap_all(state.repo, &state.config, &state.http).await
+}
+
+async fn run_train_zstd_dict(
+    config: config::Config,
+    output: String,
+    max_dict_size: usize,
+) -> Result<()> {
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(300))
+        .build()?;
+    proxide::dict_train::train_zstd_dict(&config, &client, &output, max_dict_size).await
 }
 
 async fn shutdown_signal() {

@@ -48,11 +48,20 @@ pub async fn ensure_version_files(
     let mut new_files = Vec::new();
     while let Some(f) = rx.recv().await {
         let storage_key = format!("packages/{fullname}/{version_str}/unpacked/{}", f.filepath);
-        let actual_key = state
-            .repo
-            .put_storage_compressed(&storage_key, f.bytes)
-            .await
-            .map_err(WebError::CustomApiError)?;
+        let actual_key = if content_type::is_compressible(&f.filepath, &f.content_type) {
+            state
+                .repo
+                .put_storage_compressed(&storage_key, f.bytes)
+                .await
+                .map_err(WebError::CustomApiError)?
+        } else {
+            state
+                .repo
+                .put_storage(&storage_key, f.bytes)
+                .await
+                .map_err(WebError::CustomApiError)?;
+            storage_key
+        };
         new_files.push(NewVersionFile {
             storage_key: actual_key,
             size: f.size,

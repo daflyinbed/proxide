@@ -1,7 +1,30 @@
 pub mod types;
 
-use crate::npm::types::{AbbreviatedVersion, PackageVersion};
+use crate::npm::types::{AbbreviatedPackument, AbbreviatedVersion, PackageVersion, Packument};
 use percent_encoding::percent_decode_str;
+use std::collections::HashMap;
+
+pub fn build_abbreviated_manifest(packument: &Packument) -> AbbreviatedPackument {
+    let mut versions = HashMap::new();
+    for (ver, data) in &packument.versions {
+        versions.insert(
+            ver.clone(),
+            build_abbreviated_version_entry(data, packument.time.get(ver)),
+        );
+    }
+    let time = if packument.time.is_empty() {
+        None
+    } else {
+        Some(packument.time.clone())
+    };
+    AbbreviatedPackument {
+        name: packument.name.clone(),
+        modified: packument.time.get("modified").cloned(),
+        dist_tags: packument.dist_tags.clone(),
+        versions,
+        time,
+    }
+}
 
 pub fn split_scope_name(fullname: &str) -> (Option<&str>, &str) {
     fullname

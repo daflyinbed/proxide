@@ -151,7 +151,14 @@ pub enum ExportsTarget {
     Null,
 }
 
-pub type Exports = BTreeMap<String, ExportsTarget>;
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+#[serde(untagged)]
+pub enum Exports {
+    Path(String),
+    Map(BTreeMap<String, ExportsTarget>),
+    #[schema(no_recursion)]
+    Alternatives(Vec<ExportsTarget>),
+}
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, ToSchema)]
 pub struct Directories {
@@ -318,7 +325,7 @@ pub struct PackageVersion {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exports: Option<Exports>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub imports: Option<BTreeMap<String, BTreeMap<String, ExportsTarget>>>,
+    pub imports: Option<BTreeMap<String, ExportsTarget>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scripts: Option<HashMap<String, String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -678,7 +685,7 @@ pub struct PublishVersion {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exports: Option<Exports>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub imports: Option<BTreeMap<String, BTreeMap<String, ExportsTarget>>>,
+    pub imports: Option<BTreeMap<String, ExportsTarget>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scripts: Option<HashMap<String, String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -936,24 +943,49 @@ mod tests {
             }"#,
         )
         .unwrap();
+        let Exports::Map(m) = &ex else {
+            panic!("expected map exports");
+        };
         assert!(matches!(
-            ex.get(".").unwrap(),
+            m.get(".").unwrap(),
             ExportsTarget::Conditions(_)
         ));
         assert!(matches!(
-            ex.get("./package.json").unwrap(),
+            m.get("./package.json").unwrap(),
             ExportsTarget::Path(_)
         ));
         assert!(matches!(
-            ex.get("./internal").unwrap(),
+            m.get("./internal").unwrap(),
             ExportsTarget::Null
         ));
-        if let ExportsTarget::Conditions(m) = ex.get(".").unwrap() {
+        if let ExportsTarget::Conditions(c) = m.get(".").unwrap() {
             assert!(matches!(
-                m.get("default").unwrap(),
+                c.get("default").unwrap(),
                 ExportsTarget::Alternatives(_)
             ));
         }
+        let roundtrip: Exports =
+            serde_json::from_str(&serde_json::to_string(&ex).unwrap()).unwrap();
+        assert!(matches!(roundtrip, Exports::Map(_)));
+    }
+
+    #[test]
+    fn exports_string_form() {
+        let ex: Exports = serde_json::from_str(r#""./source/index.js""#).unwrap();
+        assert!(matches!(ex, Exports::Path(_)));
+        let roundtrip: Exports =
+            serde_json::from_str(&serde_json::to_string(&ex).unwrap()).unwrap();
+        assert!(matches!(roundtrip, Exports::Path(_)));
+    }
+
+    #[test]
+    fn exports_top_level_alternatives() {
+        let ex: Exports =
+            serde_json::from_str(r#"["./a.js", {"default":"./b.js"}, null]"#).unwrap();
+        assert!(matches!(ex, Exports::Alternatives(_)));
+        let roundtrip: Exports =
+            serde_json::from_str(&serde_json::to_string(&ex).unwrap()).unwrap();
+        assert!(matches!(roundtrip, Exports::Alternatives(_)));
     }
 
     #[test]

@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-NPM registry mirror written in Rust. Five clap subcommands: `proxide server` (HTTP API), `proxide worker` (sync engine), `proxide cleanup-storage` (orphan storage object remover), `proxide reindex-search` (rebuild Meilisearch index from DB), `proxide bootstrap` (seed sync_tasks with all npm package names for initial sync).
+NPM registry mirror written in Rust. Six clap subcommands: `proxide server` (HTTP API), `proxide worker` (sync engine), `proxide cleanup-storage` (orphan storage object remover), `proxide reindex-search` (rebuild Meilisearch index from DB), `proxide bootstrap` (seed sync_tasks with all npm package names for initial sync), `proxide train-zstd-dict` (train a zstd dictionary from upstream packuments to improve storage compression).
 
 ## Commands
 
@@ -12,6 +12,7 @@ cargo run -- worker             # Sync worker
 cargo run -- cleanup-storage    # Remove orphan storage objects
 cargo run -- reindex-search     # Rebuild Meilisearch index (requires [search] config)
 cargo run -- bootstrap          # Seed sync_tasks with all npm package names (empty registry only)
+cargo run -- train-zstd-dict [--output <path>] [--max-dict-size <bytes>]  # Train a candidate zstd build asset (~160 upstream packuments, no DB needed; refuses overwrite)
 cargo run -- org create <scope> <owner>  # Create org (bootstrap developers team + owner)
 cargo run -- org add-member <org> <user> [--role owner|admin|developer]
 cargo run -- org rm-member <org> <user>
@@ -58,11 +59,16 @@ docker compose up -d --wait    # Start all services
 
 `proxide.toml` loaded from CWD. Keys are **camelCase** (serde `rename_all = "camelCase"`), not snake_case. Required sections: `database`, `server`, `storage` (Local or S3), `log`, `worker`. Optional sections: `auth`, `search`, `cdn` (defaults `enabled = true`; gates jsdelivr CDN serving + sets size limits). See `src/config.rs` for full schema and defaults.
 
+Storage compression: when `compressJson = true`, JSON objects up to 10MB are zstd-compressed (level `zstdLevel`) with the immutable dictionary embedded from `assets/zstd-dictionary.bin`; larger objects use plain dictionary-less zstd frames. The embedded dictionary improves small per-version objects by roughly 20-25%, requires no runtime configuration, and can read both dictionary-compressed and legacy plain frames. **Never replace the embedded dictionary after release** unless all previous dictionaries remain embedded and decoding selects them by dictionary ID; old objects require the exact dictionary that wrote them. `proxide train-zstd-dict` creates a new candidate file and refuses to overwrite an existing dictionary.
+
 ## Architecture
 
 ```
+assets/
+  zstd-dictionary.bin  # Immutable zstd dictionary embedded into the binary at compile time
+
 src/
-  main.rs              # clap → server | worker | cleanup-storage | reindex-search | org
+  main.rs              # clap → server | worker | cleanup-storage | reindex-search | bootstrap | train-zstd-dict | org
   lib.rs               # Module registration
   config.rs            # TOML config (camelCase keys)
   error.rs             # WebError → JSON responses
@@ -70,14 +76,15 @@ src/
   openapi.rs           # utoipa OpenAPI doc (Scalar UI served at GET /docs)
   state.rs             # AppState { repo, config, http, package_lock, login_sessions, tarball_downloads, download_counters, search, extraction_inflight }
   org_cli.rs           # `proxide org` CLI subcommand (create/add-member/rm-member/ls/delete)
+  dict_train.rs        # `proxide train-zstd-dict` — trains zstd dictionary from upstream packuments
 
   npm/types.rs         # Packument, AbbreviatedPackument, FastMeta* types
-  npm/mod.rs           # split_scope_name, decode_fullname
+  npm/mod.rs           # split_scope_name, decode_fullname, abbreviated-manifest builders
 
   extract/             # Tarball unpacking for CDN/jsdelivr file serving
     content_type.rs    # MIME guessing for extracted files
 
-  storage/backend.rs   # object_store crate (S3 + LocalFileSystem)
+  storage/backend.rs   # object_store crate (S3 + LocalFileSystem); embedded zstd dictionary compression from assets/zstd-dictionary.bin; decoder handles both dictionary and legacy plain frames
 
   repository/mod.rs    # Row types + Repository trait (async_trait)
   repository/mysql.rs  # MysqlRepository — all DB operations

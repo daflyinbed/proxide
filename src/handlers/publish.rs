@@ -3,7 +3,7 @@ use crate::middleware::auth::{AuthContext, is_admin};
 use crate::handlers::orgs::require_org_member;
 use crate::npm::types::*;
 use crate::npm::{build_abbreviated_manifest, is_prerelease, pad_version, split_scope_name};
-use crate::repository::{upload_and_commit_manifests, CommitVersionParams, MAINTAINER_SOURCE_MANUAL, MAINTAINER_SOURCE_TEAM, PendingDist, Repository};
+use crate::repository::{upload_and_commit_manifests, CommitVersionParams, MAINTAINER_SOURCE_MANUAL, MAINTAINER_SOURCE_TEAM, PendingDist};
 use crate::state::{AppState, LockOwner, UnlockGuard};
 use axum::Json;
 use axum::http::HeaderMap;
@@ -851,7 +851,7 @@ pub async fn unpublish_package_inner(
         }
     }
 
-    delete_package_completely(&*state.repo, &pkg)
+    delete_package_completely(state, &pkg)
         .await
         .map_err(WebError::CustomApiError)?;
 
@@ -972,9 +972,10 @@ fn ensure_local_package(source: Option<&str>, fullname: &str) -> WebResult<()> {
 }
 
 async fn delete_version_dist_objects(
-    repo: &dyn Repository,
+    state: &AppState,
     version: &crate::repository::PackageVersionRow,
 ) -> WebResult<()> {
+    let repo = &*state.repo;
     let dist_ids: Vec<i64> = [
         version.abbrev_dist_id,
         version.manifest_dist_id,
@@ -984,11 +985,6 @@ async fn delete_version_dist_objects(
     .into_iter()
     .flatten()
     .collect();
-
-    let file_dists = repo
-        .get_version_file_dist_ids(&[version.id])
-        .await
-        .map_err(WebError::CustomApiError)?;
 
     repo.delete_versions_by_ids(&[version.id])
         .await
@@ -1002,14 +998,8 @@ async fn delete_version_dist_objects(
             );
         }
     }
-    for (dist_id, _path) in file_dists {
-        if let Err(e) = repo.delete_content(dist_id).await {
-            log::error!(
-                action = "delete_version_file_dist";
-                "failed to delete version file dist {dist_id}: {e:#}"
-            );
-        }
-    }
+
+    state.unpacked.remove_version(version.id).await;
 
     Ok(())
 }
@@ -1021,7 +1011,7 @@ async fn remove_version_and_refresh(
     version: crate::repository::PackageVersionRow,
 ) -> WebResult<()> {
     state.download_counters.remove(&version.id);
-    delete_version_dist_objects(&*state.repo, &version).await?;
+    delete_version_dist_objects(state, &version).await?;
 
     let remaining = state
         .repo
@@ -1030,7 +1020,7 @@ async fn remove_version_and_refresh(
         .map_err(WebError::CustomApiError)?;
 
     if remaining.is_empty() {
-        delete_package_completely(&*state.repo, pkg)
+        delete_package_completely(state, pkg)
             .await
             .map_err(WebError::CustomApiError)?;
 
@@ -1121,9 +1111,10 @@ fn pick_latest_version(
 }
 
 async fn delete_package_completely(
-    repo: &dyn Repository,
+    state: &AppState,
     pkg: &crate::repository::PackageRow,
 ) -> anyhow::Result<()> {
+    let repo = &*state.repo;
     let versions = repo.list_versions(pkg.id).await?;
 
     let version_dist_ids: Vec<i64> = versions
@@ -1141,11 +1132,6 @@ async fn delete_package_completely(
         .collect();
 
     let version_ids: Vec<i64> = versions.iter().map(|v| v.id).collect();
-    let version_file_dists = if version_ids.is_empty() {
-        Vec::new()
-    } else {
-        repo.get_version_file_dist_ids(&version_ids).await.unwrap_or_default()
-    };
 
     let package_dist_ids: Vec<i64> = [pkg.abbreviated_dist_id, pkg.full_dist_id]
         .into_iter()
@@ -1162,13 +1148,8 @@ async fn delete_package_completely(
             );
         }
     }
-    for (dist_id, _path) in version_file_dists {
-        if let Err(e) = repo.delete_content(dist_id).await {
-            log::error!(
-                action = "delete_package_file_dist";
-                "failed to delete version file dist {dist_id}: {e:#}"
-            );
-        }
+    for version_id in version_ids {
+        state.unpacked.remove_version(version_id).await;
     }
     for dist_id in package_dist_ids {
         if let Err(e) = repo.delete_content(dist_id).await {

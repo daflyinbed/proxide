@@ -40,7 +40,7 @@ pnpm test:e2e                   # End-to-end tests (requires Docker + cargo buil
 ## Database
 
 - MySQL 8.0 (local, credentials from `.env`)
-- Tables: `dists`, `packages` (has `access` column: `public`/`private`), `package_versions`, `package_tags`, `change_stream_cursors`, `sync_tasks`, `users`, `tokens`, `maintainers`, `package_downloads` (local, per-version per-day counters `d01`..`d31`), `upstream_package_downloads` (upstream npm, per-package per-day counters), `package_version_files` (per-file entries for CDN/jsdelivr serving, keyed by `(package_version_id, filepath)`), `organizations` (name == scope), `org_members` (role: `owner`/`admin`/`developer`), `teams` (scoped to org, reserved name `developers`), `team_members`, `package_team_permissions` (permission: `read`/`write`)
+- Tables: `dists`, `packages` (has `access` column: `public`/`private`), `package_versions`, `package_tags`, `change_stream_cursors`, `sync_tasks`, `users`, `tokens`, `maintainers`, `package_downloads` (local, per-version per-day counters `d01`..`d31`), `upstream_package_downloads` (upstream npm, per-package per-day counters), `organizations` (name == scope), `org_members` (role: `owner`/`admin`/`developer`), `teams` (scoped to org, reserved name `developers`), `team_members`, `package_team_permissions` (permission: `read`/`write`)
 - Migrations in `/migrations`, managed by sqlx-cli
 - Login sessions are **in-memory** (`LoginSessionMap` in `AppState`), not a DB table
 
@@ -57,7 +57,7 @@ docker compose up -d --wait    # Start all services
 
 ## Configuration
 
-`proxide.toml` loaded from CWD. Keys are **camelCase** (serde `rename_all = "camelCase"`), not snake_case. Required sections: `database`, `server`, `storage` (Local or S3), `log`, `worker`. Optional sections: `auth`, `search`, `cdn` (defaults `enabled = true`; gates jsdelivr CDN serving + sets size limits). See `src/config.rs` for full schema and defaults.
+`proxide.toml` loaded from CWD. Keys are **camelCase** (serde `rename_all = "camelCase"`), not snake_case. Required sections: `database`, `server`, `storage` (Local or S3), `log`, `worker`. Optional sections: `auth`, `search`, `cdn` (defaults `enabled = true`; gates jsdelivr CDN serving + sets size limits; `unpackedDir`/`unpackedMaxBytes`/`unpackedEvictionIntervalSecs` control the local unpacked store — a size-bounded, LRU-evicted, rebuildable cache of extracted tarball files). See `src/config.rs` for full schema and defaults.
 
 Storage compression: when `compressJson = true`, JSON objects up to 10MB are zstd-compressed (level `zstdLevel`) with the immutable dictionary embedded from `assets/zstd-dictionary.bin`; larger objects use plain dictionary-less zstd frames. The embedded dictionary improves small per-version objects by roughly 20-25%, requires no runtime configuration, and can read both dictionary-compressed and legacy plain frames. **Never replace the embedded dictionary after release** unless all previous dictionaries remain embedded and decoding selects them by dictionary ID; old objects require the exact dictionary that wrote them. `proxide train-zstd-dict` creates a new candidate file and refuses to overwrite an existing dictionary.
 
@@ -74,15 +74,17 @@ src/
   error.rs             # WebError → JSON responses
   routes.rs            # Route definitions, nests /npm, /fast, /api, /jsdelivr/{npm,api/npm}
   openapi.rs           # utoipa OpenAPI doc (Scalar UI served at GET /docs)
-  state.rs             # AppState { repo, config, http, package_lock, login_sessions, tarball_downloads, download_counters, search, extraction_inflight }
+  state.rs             # AppState { repo, config, http, package_lock, login_sessions, tarball_downloads, download_counters, search, extraction_inflight, unpacked }
   org_cli.rs           # `proxide org` CLI subcommand (create/add-member/rm-member/ls/delete)
   dict_train.rs        # `proxide train-zstd-dict` — trains zstd dictionary from upstream packuments
 
   npm/types.rs         # Packument, AbbreviatedPackument, FastMeta* types
   npm/mod.rs           # split_scope_name, decode_fullname, abbreviated-manifest builders
 
-  extract/             # Tarball unpacking for CDN/jsdelivr file serving
+  extract/             # Tarball unpacking for CDN/jsdelivr file serving (staging dir + atomic move into the unpacked store)
     content_type.rs    # MIME guessing for extracted files
+
+  unpacked.rs          # Local unpacked store: 256-way sharded dirs + per-version sidecar manifest (`v-{id}.meta.json`, the commit point) + in-memory index; startup scan (garbage/zombie cleanup, runs before listening) + watermark eviction task (evicts whole versions, reuses extraction single-flight as mutex)
 
   storage/backend.rs   # object_store crate (S3 + LocalFileSystem); embedded zstd dictionary compression from assets/zstd-dictionary.bin; decoder handles both dictionary and legacy plain frames
 

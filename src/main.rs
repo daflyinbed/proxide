@@ -76,10 +76,23 @@ async fn run_server(config: config::Config) -> Result<()> {
     let state = AppState::new(config).await?;
     state.repo.migrate().await?;
 
+    if state.config.cdn.enabled {
+        proxide::unpacked::startup_scan(&state).await?;
+    }
+
     let flush_state = state.clone();
     let flush_handle = tokio::spawn(async move {
         proxide::server::run_download_flush(flush_state).await;
     });
+
+    let eviction_handle = if state.config.cdn.enabled {
+        let eviction_state = state.clone();
+        Some(tokio::spawn(async move {
+            proxide::unpacked::run_eviction(eviction_state).await;
+        }))
+    } else {
+        None
+    };
 
     let listener = TcpListener::bind(state.config.server.full_url()).await?;
     let shutdown_flush_state = state.clone();
@@ -90,6 +103,10 @@ async fn run_server(config: config::Config) -> Result<()> {
 
     flush_handle.abort();
     let _ = flush_handle.await;
+    if let Some(handle) = eviction_handle {
+        handle.abort();
+        let _ = handle.await;
+    }
 
     proxide::server::flush_download_counters(&shutdown_flush_state).await?;
 

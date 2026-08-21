@@ -2,8 +2,8 @@ use crate::error::{WebError, WebResult};
 use crate::handlers::jsdelivr_util::{
     ensure_version_files_single_flight, parse_pkg_spec_path, resolve_version,
 };
-use crate::repository::VersionFileRow;
 use crate::state::AppState;
+use crate::unpacked::ManifestFile;
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
@@ -14,6 +14,7 @@ use utoipa::{IntoParams, ToSchema};
 
 const CACHE_META: &str = "public, s-maxage=600, max-age=60";
 const CACHE_META_PRIVATE: &str = "private, no-store";
+const LIST_ATTEMPTS: usize = 3;
 
 #[derive(Debug, Default, PartialEq, Eq, serde::Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
@@ -66,13 +67,22 @@ pub async fn version_files(
         return Ok(Redirect::temporary(&location).into_response());
     }
 
-    ensure_version_files_single_flight(&state, &fullname, &resolved).await?;
-
-    let files = state
-        .repo
-        .list_version_files(resolved.version_row.id)
-        .await
-        .map_err(WebError::CustomApiError)?;
+    let mut manifest = None;
+    for _ in 0..LIST_ATTEMPTS {
+        ensure_version_files_single_flight(&state, &fullname, &resolved).await?;
+        if let Some(m) = state.unpacked.get(resolved.version_row.id) {
+            manifest = Some(m);
+            break;
+        }
+    }
+    let files = &manifest
+        .ok_or_else(|| {
+            WebError::CustomApiError(anyhow::anyhow!(
+                "unpacked manifest for version {} unavailable",
+                resolved.version_row.id
+            ))
+        })?
+        .files;
 
     let flat = matches!(query.structure, Structure::Flat);
 
@@ -83,7 +93,7 @@ pub async fn version_files(
         files: if flat {
             VersionFiles::Flat(files.iter().map(flat_file).collect())
         } else {
-            VersionFiles::Tree(build_tree(&files))
+            VersionFiles::Tree(build_tree(files))
         },
     };
 
@@ -101,11 +111,11 @@ pub async fn version_files(
     Ok(response)
 }
 
-fn flat_file(f: &VersionFileRow) -> FlatFile {
+fn flat_file(f: &ManifestFile) -> FlatFile {
     FlatFile {
-        name: format!("/{}", f.filepath),
-        hash: f.shasum.clone().unwrap_or_default(),
-        size: f.size,
+        name: format!("/{}", f.path),
+        hash: f.hash.clone(),
+        size: f.size as i64,
     }
 }
 
@@ -151,12 +161,11 @@ enum BuilderNode {
     File(String, i64),
 }
 
-fn build_tree(files: &[VersionFileRow]) -> Vec<TreeNode> {
+fn build_tree(files: &[ManifestFile]) -> Vec<TreeNode> {
     let mut root: BTreeMap<String, BuilderNode> = BTreeMap::new();
     for f in files {
-        let segments: Vec<&str> = f.filepath.split('/').collect();
-        let hash = f.shasum.clone().unwrap_or_default();
-        insert(&mut root, &segments, &hash, f.size);
+        let segments: Vec<&str> = f.path.split('/').collect();
+        insert(&mut root, &segments, &f.hash, f.size as i64);
     }
     serialize_children(&root)
 }

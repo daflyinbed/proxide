@@ -126,24 +126,14 @@ pub(crate) async fn ensure_version_files_single_flight(
 ) -> WebResult<()> {
     let version_id = resolved.version_row.id;
     loop {
-        if state
-            .repo
-            .has_version_files(version_id)
-            .await
-            .map_err(WebError::CustomApiError)?
-        {
+        if state.unpacked.contains(version_id) {
             return Ok(());
         }
 
         let (mut rx, is_leader) = state.extraction_inflight.get_or_insert(version_id);
         if is_leader {
             let _guard = state.extraction_inflight.guard(version_id);
-            if state
-                .repo
-                .has_version_files(version_id)
-                .await
-                .map_err(WebError::CustomApiError)?
-            {
+            if state.unpacked.contains(version_id) {
                 return Ok(());
             }
             return extract::ensure_version_files(

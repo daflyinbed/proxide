@@ -248,10 +248,31 @@ pub struct CdnConfig {
     pub enabled: bool,
     pub max_tarball_size: u64,
     pub max_unpacked_size: u64,
+    pub unpacked_dir: String,
+    pub unpacked_max_bytes: u64,
+    pub unpacked_eviction_interval_secs: u64,
 }
 
 fn default_max_unpacked_size() -> u64 {
     209_715_200
+}
+
+fn default_unpacked_dir() -> String {
+    "./unpacked".to_string()
+}
+
+fn default_unpacked_max_bytes() -> u64 {
+    53_687_091_200
+}
+
+fn default_unpacked_eviction_interval_secs() -> u64 {
+    30
+}
+
+impl CdnConfig {
+    pub fn unpacked_low_watermark_bytes(&self) -> u64 {
+        self.unpacked_max_bytes / 100 * 90
+    }
 }
 
 impl Default for CdnConfig {
@@ -260,6 +281,9 @@ impl Default for CdnConfig {
             enabled: true,
             max_tarball_size: 104_857_600,
             max_unpacked_size: default_max_unpacked_size(),
+            unpacked_dir: default_unpacked_dir(),
+            unpacked_max_bytes: default_unpacked_max_bytes(),
+            unpacked_eviction_interval_secs: default_unpacked_eviction_interval_secs(),
         }
     }
 }

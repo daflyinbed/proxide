@@ -1,5 +1,6 @@
 use crate::{
     config::Config, repository::Repository, repository::mysql::MysqlRepository, search::SearchIndex,
+    unpacked::UnpackedStore,
 };
 use anyhow::Result;
 use dashmap::DashMap;
@@ -337,6 +338,7 @@ pub struct AppState {
     pub download_counters: Arc<DashMap<i64, AtomicU64>>,
     pub search: Option<Arc<SearchIndex>>,
     pub extraction_inflight: ExtractionInflightMap,
+    pub unpacked: Arc<UnpackedStore>,
 }
 
 impl AppState {
@@ -352,6 +354,12 @@ impl AppState {
             log::warn!(action = "search_init"; "failed to ensure meilisearch index: {e:#}");
         }
 
+        let unpacked = Arc::new(UnpackedStore::new(
+            &config.cdn.unpacked_dir,
+            config.cdn.unpacked_max_bytes,
+            config.cdn.enabled,
+        )?);
+
         Ok(Self {
             repo: Arc::new(repo),
             config,
@@ -362,6 +370,7 @@ impl AppState {
             download_counters: Arc::new(DashMap::new()),
             search,
             extraction_inflight: ExtractionInflightMap::new(),
+            unpacked,
         })
     }
 }

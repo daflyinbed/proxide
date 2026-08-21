@@ -296,29 +296,17 @@ async function touchJsdelivrFiles(version: string): Promise<void> {
   }
 }
 
-describe("cleanup-storage reclaims orphan unpacked files", () => {
+describe("cleanup-storage reclaims orphan dists", () => {
   it(
-    "deletes unpacked storage objects when a version is removed by sync",
+    "deletes removed-version tarball objects when a version is removed by sync",
     async () => {
       await runSyncTask();
 
       await touchJsdelivrFiles(VERSION_1);
       await touchJsdelivrFiles(VERSION_2);
 
-      await waitForCondition(async () => {
-        const count = Number(
-          runMysql(
-            `SELECT COUNT(*) FROM package_version_files pvf JOIN package_versions pv ON pv.id = pvf.package_version_id WHERE pv.package_id = (SELECT id FROM packages WHERE name = '${PACKAGE_NAME}')`,
-          ),
-        );
-        return count > 0;
-      }, 30_000);
-
-      await waitForCondition(async () => {
-        await assertS3ObjectsExist(`packages/${PACKAGE_NAME}/${VERSION_1}/unpacked/`, true);
-        return true;
-      });
-      await assertS3ObjectsExist(`packages/${PACKAGE_NAME}/${VERSION_2}/unpacked/`, true);
+      await assertS3ObjectsExist(`packages/${PACKAGE_NAME}/${VERSION_1}/`, true);
+      await assertS3ObjectsExist(`packages/${PACKAGE_NAME}/${VERSION_2}/`, true);
 
       upstreamServer.close();
       await new Promise<void>((resolve) => upstreamServer.once("close", resolve));
@@ -339,14 +327,17 @@ describe("cleanup-storage reclaims orphan unpacked files", () => {
       }, 30_000);
 
       await waitForCondition(async () => {
-        await assertS3ObjectsExist(`packages/${PACKAGE_NAME}/${VERSION_1}/unpacked/`, false);
+        await assertS3ObjectsExist(`packages/${PACKAGE_NAME}/${VERSION_1}/`, false);
         return true;
       });
-      await assertS3ObjectsExist(`packages/${PACKAGE_NAME}/${VERSION_2}/unpacked/`, true);
+      await assertS3ObjectsExist(`packages/${PACKAGE_NAME}/${VERSION_2}/`, true);
+
+      const res = await fetch(`${BASE_URL}/jsdelivr/npm/${PACKAGE_NAME}@${VERSION_2}/package.json`);
+      expect(res.status).toBe(200);
 
       const orphanFileCount = Number(
         runMysql(
-          `SELECT COUNT(*) FROM dists d LEFT JOIN packages p ON p.abbreviated_dist_id = d.id OR p.full_dist_id = d.id LEFT JOIN package_versions pv ON pv.abbrev_dist_id = d.id OR pv.manifest_dist_id = d.id OR pv.tar_dist_id = d.id OR pv.readme_dist_id = d.id LEFT JOIN package_version_files pvf ON pvf.dist_id = d.id WHERE p.id IS NULL AND pv.id IS NULL AND pvf.id IS NULL`,
+          `SELECT COUNT(*) FROM dists d LEFT JOIN packages p ON p.abbreviated_dist_id = d.id OR p.full_dist_id = d.id LEFT JOIN package_versions pv ON pv.abbrev_dist_id = d.id OR pv.manifest_dist_id = d.id OR pv.tar_dist_id = d.id OR pv.readme_dist_id = d.id WHERE p.id IS NULL AND pv.id IS NULL`,
         ),
       );
       expect(orphanFileCount).toBe(0);
@@ -355,28 +346,12 @@ describe("cleanup-storage reclaims orphan unpacked files", () => {
   );
 
   it(
-    "cleanup-storage command deletes orphan unpacked files",
+    "cleanup-storage command deletes orphan dists",
     async () => {
       await runSyncTask();
 
-      await touchJsdelivrFiles(VERSION_2);
+      await assertS3ObjectsExist(`packages/${PACKAGE_NAME}/${VERSION_2}/`, true);
 
-      await waitForCondition(async () => {
-        const count = Number(
-          runMysql(
-            `SELECT COUNT(*) FROM package_version_files pvf JOIN package_versions pv ON pv.id = pvf.package_version_id WHERE pv.package_id = (SELECT id FROM packages WHERE name = '${PACKAGE_NAME}')`,
-          ),
-        );
-        return count > 0;
-      }, 30_000);
-
-      await assertS3ObjectsExist(`packages/${PACKAGE_NAME}/${VERSION_2}/unpacked/`, true);
-
-      runMysql(`
-        DELETE pvf FROM package_version_files pvf
-        JOIN package_versions pv ON pv.id = pvf.package_version_id
-        WHERE pv.package_id = (SELECT id FROM packages WHERE name = '${PACKAGE_NAME}');
-      `);
       runMysql(`DELETE FROM package_versions WHERE package_id = (SELECT id FROM packages WHERE name = '${PACKAGE_NAME}');`);
       runMysql(`DELETE FROM packages WHERE name = '${PACKAGE_NAME}';`);
 
@@ -399,7 +374,7 @@ describe("cleanup-storage reclaims orphan unpacked files", () => {
 
       expect(cleanupOutput).toContain("object(s) deleted");
 
-      await assertS3ObjectsExist(`packages/${PACKAGE_NAME}/${VERSION_2}/unpacked/`, false);
+      await assertS3ObjectsExist(`packages/${PACKAGE_NAME}/`, false);
     },
     120_000,
   );

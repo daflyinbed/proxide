@@ -223,19 +223,11 @@ pub async fn sync_package(
 
         let version_ids: Vec<i64> = versions_to_delete.iter().map(|v| v.id).collect();
 
-        let version_file_dists = repo.get_version_file_dist_ids(&version_ids).await?;
-
         repo.delete_versions_by_ids(&version_ids).await?;
 
         for &dist_id in &orphan_dist_ids {
             if let Err(e) = repo.delete_content(dist_id).await {
                 error!("failed to delete orphan dist {dist_id}: {e:#}");
-            }
-        }
-
-        for (dist_id, _path) in version_file_dists {
-            if let Err(e) = repo.delete_content(dist_id).await {
-                error!("failed to delete version file dist {dist_id}: {e:#}");
             }
         }
     }

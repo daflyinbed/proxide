@@ -141,8 +141,6 @@ pub struct CommitVersionParams {
     pub publish_time: chrono::NaiveDateTime,
     pub is_pre_release: bool,
     pub padding_version: Option<String>,
-    pub abbrev_dist: PendingDist,
-    pub manifest_dist: PendingDist,
     pub tar_dist: Option<PendingDist>,
     pub readme_dist: Option<PendingDist>,
 }

@@ -62,6 +62,27 @@ describe("publish flow", () => {
     expect(body.version).toBe(version);
   });
 
+  it("retrieves an abbreviated specific version", async () => {
+    const name = uniqueName("e2e-pkg-ver-abbrev");
+    const version = "2.0.0";
+    const token = await login(uniqueName("e2e-publisher-ver-abbrev"), "pass1234");
+
+    await publishPackage(token, name, version);
+
+    const res = await api(`${packagePath(name)}/${version}`, {
+      headers: { accept: "application/vnd.npm.install-v1+json" },
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain(
+      "application/vnd.npm.install-v1+json",
+    );
+    expect(res.headers.get("vary")).toContain("accept");
+    const body = await res.json();
+    expect(body.name).toBe(name);
+    expect(body.version).toBe(version);
+    expect(body.description).toBeUndefined();
+  });
+
   it("publishes and downloads the tarball", async () => {
     const name = uniqueName("e2e-pkg-tar");
     const version = "1.0.0";

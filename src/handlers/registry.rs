@@ -10,10 +10,12 @@ const ABBREVIATED_ACCEPT: &str = "application/vnd.npm.install-v1+json";
 
 fn is_abbreviated_request(headers: &HeaderMap) -> bool {
     headers
-        .get("accept")
-        .and_then(|v| v.to_str().ok())
-        .map(|v| v.contains(ABBREVIATED_ACCEPT))
-        .unwrap_or(false)
+        .get_all("accept")
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .filter_map(|value| value.split(';').next())
+        .any(|media_type| media_type.trim().eq_ignore_ascii_case(ABBREVIATED_ACCEPT))
 }
 
 async fn load_manifest_json(
@@ -96,6 +98,9 @@ pub async fn get_package_inner(
             ABBREVIATED_ACCEPT.parse().unwrap(),
         );
     }
+    response
+        .headers_mut()
+        .insert("vary", "accept".parse().unwrap());
 
     Ok(response)
 }
@@ -105,7 +110,7 @@ pub async fn get_package_version_inner(
     headers: &HeaderMap,
     fullname: &str,
     version: &str,
-) -> WebResult<Json<serde_json::Value>> {
+) -> WebResult<axum::response::Response> {
     let pkg = state
         .repo
         .get_package_by_name(fullname)
@@ -115,18 +120,54 @@ pub async fn get_package_version_inner(
 
     ensure_package_readable(state, headers, &pkg).await?;
 
-    let ver = state
-        .repo
-        .get_version(pkg.id, version)
-        .await
-        .map_err(WebError::CustomApiError)?
+    let abbreviated = is_abbreviated_request(headers);
+    let dist_id = if abbreviated {
+        pkg.abbreviated_dist_id
+    } else {
+        pkg.full_dist_id
+    }
+    .ok_or_else(|| WebError::CustomApiError(anyhow::anyhow!("package manifest not yet synced")))?;
+
+    let (mut json, _) = load_manifest_json(state, dist_id).await?;
+    let version_json = json
+        .get_mut("versions")
+        .and_then(|versions| versions.as_object_mut())
+        .and_then(|versions| versions.remove(version))
         .ok_or_else(|| WebError::NotFound(format!("{fullname}@{version} not found")))?;
-
-    let dist_id = ver
-        .manifest_dist_id
-        .ok_or_else(|| WebError::CustomApiError(anyhow::anyhow!("version manifest not synced")))?;
-
-    let (json, _) = load_manifest_json(state, dist_id).await?;
     // todo(review): compare cache-control with cnpmcore
-    Ok(Json(json))
+    let mut response = Json(version_json).into_response();
+    if abbreviated {
+        response.headers_mut().insert(
+            "content-type",
+            ABBREVIATED_ACCEPT.parse().unwrap(),
+        );
+    }
+    response
+        .headers_mut()
+        .insert("vary", "accept".parse().unwrap());
+    Ok(response)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_abbreviated_accept_across_multiple_media_types() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "accept",
+            "application/json, Application/Vnd.Npm.Install-V1+Json; q=0.9"
+                .parse()
+                .unwrap(),
+        );
+        assert!(is_abbreviated_request(&headers));
+    }
+
+    #[test]
+    fn rejects_regular_json_accept() {
+        let mut headers = HeaderMap::new();
+        headers.insert("accept", "application/json".parse().unwrap());
+        assert!(!is_abbreviated_request(&headers));
+    }
 }

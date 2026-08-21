@@ -601,26 +601,6 @@ impl Repository for MysqlRepository {
     async fn commit_version(&self, params: CommitVersionParams) -> Result<()> {
         let mut tx = self.pool.begin().await?;
 
-        let abbrev_dist_id = insert_dist_tx(
-            &mut tx,
-            &params.abbrev_dist.name,
-            &params.abbrev_dist.path,
-            params.abbrev_dist.size,
-            params.abbrev_dist.shasum.as_deref(),
-            params.abbrev_dist.integrity.as_deref(),
-        )
-        .await?;
-
-        let manifest_dist_id = insert_dist_tx(
-            &mut tx,
-            &params.manifest_dist.name,
-            &params.manifest_dist.path,
-            params.manifest_dist.size,
-            params.manifest_dist.shasum.as_deref(),
-            params.manifest_dist.integrity.as_deref(),
-        )
-        .await?;
-
         let tar_dist_id = if let Some(d) = &params.tar_dist {
             Some(
                 insert_dist_tx(
@@ -654,14 +634,12 @@ impl Repository for MysqlRepository {
         };
 
         sqlx::query!(
-            r#"INSERT INTO package_versions (package_id, version, publish_time, is_pre_release, padding_version, abbrev_dist_id, manifest_dist_id, tar_dist_id, readme_dist_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+            r#"INSERT INTO package_versions (package_id, version, publish_time, is_pre_release, padding_version, tar_dist_id, readme_dist_id) VALUES (?, ?, ?, ?, ?, ?, ?)"#,
             params.package_id,
             params.version,
             params.publish_time,
             params.is_pre_release,
             params.padding_version,
-            abbrev_dist_id,
-            manifest_dist_id,
             tar_dist_id,
             readme_dist_id
         )

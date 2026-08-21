@@ -48,12 +48,17 @@ pub async fn run_worker(
         }));
     }
 
-    let poller_handle = tokio::spawn({
-        let repo = repo.clone();
-        let config = config.clone();
-        let client = client.clone();
-        async move { changes_poller::run_changes_poller(repo, config, client).await }
-    });
+    let poller_handle = if config.worker.poller_enabled {
+        Some(tokio::spawn({
+            let repo = repo.clone();
+            let config = config.clone();
+            let client = client.clone();
+            async move { changes_poller::run_changes_poller(repo, config, client).await }
+        }))
+    } else {
+        log::info!(action = "poller_disabled"; "changes poller disabled by config");
+        None
+    };
 
     let cleanup_handle = tokio::spawn({
         let repo = repo.clone();
@@ -62,7 +67,15 @@ pub async fn run_worker(
     });
 
     let result = tokio::select! {
-        r = poller_handle => r?,
+        r = async {
+            match poller_handle {
+                Some(h) => h.await,
+                None => std::future::pending::<
+                    Result<anyhow::Result<()>, tokio::task::JoinError>,
+                >()
+                .await,
+            }
+        } => r?,
         r = cleanup_handle => r?,
         r = async {
             for h in consumer_handles {

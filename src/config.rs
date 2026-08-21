@@ -134,6 +134,8 @@ pub struct WorkerConfig {
     pub changes_stream_url: String,
     #[serde(default = "default_update_seq_url")]
     pub update_seq_url: String,
+    #[serde(default = "default_poller_enabled")]
+    pub poller_enabled: bool,
     #[serde(default = "default_cron_interval")]
     pub cron_interval_secs: u64,
     #[serde(default = "default_max_concurrent_syncs")]
@@ -156,6 +158,10 @@ fn default_upstream_registry() -> String {
 
 fn default_changes_stream_url() -> String {
     "https://replicate.npmjs.com/_changes".to_string()
+}
+
+fn default_poller_enabled() -> bool {
+    true
 }
 
 fn default_update_seq_url() -> String {

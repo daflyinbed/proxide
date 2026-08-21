@@ -3,7 +3,7 @@ pub mod content_type;
 use crate::error::{WebError, WebResult};
 use crate::repository::PackageVersionRow;
 use crate::state::AppState;
-use crate::unpacked::{ManifestFile, VersionManifest, manifest_from_entries};
+use crate::unpacked::{ManifestFile, VersionManifest, manifest_from_entries, version_disk_usage};
 use anyhow::{Context, Result};
 use base64::Engine;
 use flate2::read::GzDecoder;
@@ -70,7 +70,15 @@ pub async fn ensure_version_files(
         return Err(WebError::CustomApiError(e));
     }
 
-    state.unpacked.insert(version.id, Arc::new(manifest));
+    let disk_size = tokio::task::spawn_blocking({
+        let dir = final_dir.clone();
+        let manifest_path = state.unpacked.manifest_path(version.id);
+        move || version_disk_usage(&dir, &manifest_path)
+    })
+    .await
+    .map_err(|e| WebError::CustomApiError(anyhow::anyhow!("disk usage join failed: {e}")))?;
+
+    state.unpacked.insert(version.id, Arc::new(manifest), disk_size);
     Ok(())
 }
 

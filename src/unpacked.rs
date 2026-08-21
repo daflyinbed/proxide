@@ -55,6 +55,7 @@ pub fn validate_filepath(raw: &str) -> Option<String> {
 
 pub(crate) struct VersionEntry {
     pub manifest: Arc<VersionManifest>,
+    pub disk_size: u64,
     pub last_access: SystemTime,
 }
 
@@ -128,11 +129,12 @@ impl UnpackedStore {
         })
     }
 
-    pub fn insert(&self, version_id: i64, manifest: Arc<VersionManifest>) {
+    pub fn insert(&self, version_id: i64, manifest: Arc<VersionManifest>, disk_size: u64) {
         self.index.insert(
             version_id,
             VersionEntry {
                 manifest,
+                disk_size,
                 last_access: SystemTime::now(),
             },
         );
@@ -142,12 +144,14 @@ impl UnpackedStore {
         &self,
         version_id: i64,
         manifest: Arc<VersionManifest>,
+        disk_size: u64,
         last_access: SystemTime,
     ) {
         self.index.insert(
             version_id,
             VersionEntry {
                 manifest,
+                disk_size,
                 last_access,
             },
         );
@@ -160,7 +164,7 @@ impl UnpackedStore {
     fn snapshot_entries(&self) -> Vec<(i64, u64, SystemTime)> {
         self.index
             .iter()
-            .map(|e| (*e.key(), e.value().manifest.total_size, e.value().last_access))
+            .map(|e| (*e.key(), e.value().disk_size, e.value().last_access))
             .collect()
     }
 
@@ -209,6 +213,36 @@ fn remove_path(path: &Path) {
     }
 }
 
+pub(crate) fn version_disk_usage(version_dir: &Path, manifest_path: &Path) -> u64 {
+    path_disk_usage(version_dir).saturating_add(path_disk_usage(manifest_path))
+}
+
+fn path_disk_usage(path: &Path) -> u64 {
+    let Ok(meta) = std::fs::metadata(path) else {
+        return 0;
+    };
+    let mut total = allocated_bytes(&meta);
+    if meta.is_dir()
+        && let Ok(entries) = std::fs::read_dir(path)
+    {
+        for entry in entries.flatten() {
+            total = total.saturating_add(path_disk_usage(&entry.path()));
+        }
+    }
+    total
+}
+
+#[cfg(unix)]
+fn allocated_bytes(meta: &std::fs::Metadata) -> u64 {
+    use std::os::unix::fs::MetadataExt;
+    meta.blocks().saturating_mul(512)
+}
+
+#[cfg(not(unix))]
+fn allocated_bytes(meta: &std::fs::Metadata) -> u64 {
+    meta.len()
+}
+
 fn is_shard_name(name: &str) -> bool {
     name.len() == 2
         && name
@@ -230,6 +264,7 @@ fn parse_manifest_name(name: &str) -> Option<i64> {
 struct ScanFound {
     version_id: i64,
     manifest: Arc<VersionManifest>,
+    disk_size: u64,
     mtime: SystemTime,
 }
 
@@ -268,17 +303,17 @@ fn scan_shard(shard: &Path) -> Result<Vec<ScanFound>> {
         let dir = version_dirs.get(&id);
         let manifest = manifests.get(&id);
         let mut keep = None;
-        if dir.is_some()
-            && let Some(manifest) = manifest
-            && let Ok(bytes) = std::fs::read(manifest)
+        if let (Some(dir), Some(manifest_path)) = (dir, manifest)
+            && let Ok(bytes) = std::fs::read(manifest_path)
             && let Ok(parsed) = serde_json::from_slice::<VersionManifest>(&bytes)
             && !parsed.files.is_empty()
-            && let Ok(meta) = std::fs::metadata(manifest)
+            && let Ok(meta) = std::fs::metadata(manifest_path)
             && let Ok(mtime) = meta.modified()
         {
             keep = Some(ScanFound {
                 version_id: id,
                 manifest: Arc::new(parsed),
+                disk_size: version_disk_usage(dir, manifest_path),
                 mtime,
             });
         }
@@ -334,7 +369,7 @@ pub async fn startup_scan(state: &AppState) -> Result<usize> {
         if existing.contains(&f.version_id) {
             state
                 .unpacked
-                .insert_with_access(f.version_id, f.manifest, f.mtime);
+                .insert_with_access(f.version_id, f.manifest, f.disk_size, f.mtime);
             kept += 1;
         } else {
             state.unpacked.remove_version(f.version_id).await;
@@ -584,5 +619,56 @@ mod tests {
 
         let entries = vec![(1, 100, fresh)];
         assert!(select_eviction_candidates(entries, 100, 50, 40, now).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn disk_usage_counts_block_allocation_not_payload() {
+        let base = std::env::temp_dir().join(format!("proxide-unpacked-du-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+
+        let dir = base.join("v-1");
+        for i in 0..64 {
+            let p = dir.join(format!("f{i}.txt"));
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(p, b"x").unwrap();
+        }
+        let usage = path_disk_usage(&dir);
+        assert!(
+            usage > 64,
+            "expected allocated blocks ({} bytes) to exceed payload (64 bytes)",
+            usage
+        );
+
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scan_reports_disk_usage_above_payload_sum() {
+        let base = std::env::temp_dir().join(format!(
+            "proxide-unpacked-scan-du-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+
+        let names: Vec<String> = (0..32).map(|i| format!("f{i}.txt")).collect();
+        let paths: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
+        write_manifest(&base, 7, &paths);
+
+        let found = scan_disk(&base).unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].version_id, 7);
+        assert_eq!(found[0].manifest.total_size, 32);
+        assert!(
+            found[0].disk_size > found[0].manifest.total_size,
+            "disk usage ({}) should exceed payload sum ({})",
+            found[0].disk_size,
+            found[0].manifest.total_size
+        );
+
+        let _ = fs::remove_dir_all(&base);
     }
 }

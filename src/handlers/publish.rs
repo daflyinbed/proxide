@@ -2,9 +2,7 @@ use crate::error::{WebError, WebResult};
 use crate::middleware::auth::{AuthContext, is_admin};
 use crate::handlers::orgs::require_org_member;
 use crate::npm::types::*;
-use crate::npm::{
-    build_abbreviated_version, is_prerelease, pad_version, split_scope_name,
-};
+use crate::npm::{build_abbreviated_manifest, is_prerelease, pad_version, split_scope_name};
 use crate::repository::{upload_and_commit_manifests, CommitVersionParams, MAINTAINER_SOURCE_MANUAL, MAINTAINER_SOURCE_TEAM, PendingDist, Repository};
 use crate::state::{AppState, LockOwner, UnlockGuard};
 use axum::Json;
@@ -450,101 +448,13 @@ pub async fn publish_package_inner(
         }
     }
 
-    let manifest_data = serde_json::to_vec(&version_json).unwrap_or_default();
-    let manifest_base_key = format!("packages/{fullname}/{version_str}/package.json");
-
-    let abbrev_ver = PackageVersion {
-        id: None,
-        name: fullname.clone(),
-        version: version_str.clone(),
-        description: package_version.description.clone(),
-        keywords: package_version.keywords.clone(),
-        homepage: package_version.homepage.clone(),
-        license: package_version.license.clone(),
-        repository: package_version.repository.clone(),
-        author: package_version.author.clone(),
-        bugs: package_version.bugs.clone(),
-        contributors: package_version.contributors.clone(),
-        readme_filename: package_version.readme_filename.clone(),
-        deprecated: package_version.deprecated.clone(),
-        dependencies: package_version.dependencies.clone(),
-        dev_dependencies: package_version.dev_dependencies.clone(),
-        optional_dependencies: package_version.optional_dependencies.clone(),
-        peer_dependencies: package_version.peer_dependencies.clone(),
-        peer_dependencies_meta: package_version.peer_dependencies_meta.clone(),
-        bundle_dependencies: package_version.bundle_dependencies.clone(),
-        bin: package_version.bin.clone(),
-        directories: package_version.directories.clone(),
-        man: package_version.man.clone(),
-        dist: Dist {
-            shasum: Some(shasum.clone()),
-            tarball: format!(
-                "{}/npm/{fullname}/-/{attachment_filename}",
-                state.config.server.root_url
-            ),
-            integrity: Some(integrity.clone()),
-            file_count: None,
-            unpacked_size: None,
-            npm_signature: None,
-        },
-        engines: package_version.engines.clone(),
-        has_install_script: None,
-        _has_shrinkwrap: package_version._has_shrinkwrap,
-        funding: package_version.funding.clone(),
-        cpu: package_version.cpu.clone(),
-        os: package_version.os.clone(),
-        libc: package_version.libc.clone(),
-        workspaces: package_version.workspaces.clone(),
-        accept_dependencies: package_version.accept_dependencies.clone(),
-        _npm_user: Some(Person {
-            name: Some(auth.user.name.clone()),
-            email: auth.user.email.clone(),
-            url: None,
-        }),
-        _npm_version: None,
-        _node_version: None,
-        main: package_version.main.clone(),
-        module: package_version.module.clone(),
-        types: package_version.types.clone(),
-        typings: package_version.typings.clone(),
-        module_type: package_version.module_type.clone(),
-        browser: package_version.browser.clone(),
-        exports: package_version.exports.clone(),
-        imports: package_version.imports.clone(),
-        scripts: package_version.scripts.clone(),
-        config: package_version.config.clone(),
-        files: package_version.files.clone(),
-        publish_config: package_version.publish_config.clone(),
-        is_private: package_version.is_private,
-        prefer_global: package_version.prefer_global,
-        git_head: package_version.git_head.clone(),
-        types_versions: package_version.types_versions.clone(),
-        side_effects: package_version.side_effects.clone(),
-        unpkg: package_version.unpkg.clone(),
-        jsdelivr: package_version.jsdelivr.clone(),
-        jsnext_main: package_version.jsnext_main.clone(),
-        package_manager: package_version.package_manager.clone(),
-        overrides: package_version.overrides.clone(),
-        resolutions: package_version.resolutions.clone(),
-    };
-
-    let abbrev_data = build_abbreviated_version(&fullname, &abbrev_ver);
-    let abbrev_base_key = format!("packages/{fullname}/{version_str}/abbreviated.json");
+    let stored_version: PackageVersion = serde_json::from_value(version_json)
+        .map_err(|e| WebError::CustomApiError(e.into()))?;
 
     let readme_content = payload.readme.as_deref().unwrap_or("");
     let readme_data = readme_content.as_bytes().to_vec();
     let readme_base_key = format!("packages/{fullname}/{version_str}/readme.md");
 
-    let manifest_storage_key = state
-        .repo
-        .put_storage_compressed(&manifest_base_key, manifest_data.clone())
-        .await
-        .map_err(WebError::CustomApiError)?;
-    let abbrev_storage_key = state
-        .repo
-        .put_storage_compressed(&abbrev_base_key, abbrev_data.clone())
-        .await
-        .map_err(WebError::CustomApiError)?;
     let readme_storage_key = state
         .repo
         .put_storage_compressed(&readme_base_key, readme_data.clone())
@@ -557,20 +467,6 @@ pub async fn publish_package_inner(
         publish_time,
         is_pre_release,
         padding_version,
-        abbrev_dist: PendingDist {
-            name: format!("{fullname}@{version_str}-abbrev"),
-            path: abbrev_storage_key,
-            size: abbrev_data.len() as i64,
-            shasum: None,
-            integrity: None,
-        },
-        manifest_dist: PendingDist {
-            name: format!("{fullname}@{version_str}-manifest"),
-            path: manifest_storage_key,
-            size: manifest_data.len() as i64,
-            shasum: None,
-            integrity: None,
-        },
         tar_dist: Some(PendingDist {
             name: format!("{fullname}@{version_str}-tar"),
             path: tar_storage_key,
@@ -612,6 +508,7 @@ pub async fn publish_package_inner(
             &fullname,
             description,
             &dist_tags,
+            Some(stored_version),
         )
         .await?;
 
@@ -637,6 +534,7 @@ pub(crate) async fn refresh_manifests(
     fullname: &str,
     description: Option<&str>,
     dist_tags: &HashMap<String, String>,
+    new_version: Option<PackageVersion>,
 ) -> WebResult<Packument> {
     let all_versions = state
         .repo
@@ -644,8 +542,32 @@ pub(crate) async fn refresh_manifests(
         .await
         .map_err(WebError::CustomApiError)?;
 
-    let mut full_versions: HashMap<String, PackageVersion> = HashMap::new();
-    let mut abbrev_versions: HashMap<String, AbbreviatedVersion> = HashMap::new();
+    let pkg = state
+        .repo
+        .get_package_by_name(fullname)
+        .await
+        .map_err(WebError::CustomApiError)?
+        .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
+
+    let mut full_versions = if let Some(full_dist_id) = pkg.full_dist_id {
+        let (data, _) = state
+            .repo
+            .get_content(full_dist_id)
+            .await
+            .map_err(WebError::CustomApiError)?;
+        serde_json::from_slice::<Packument>(&data)
+            .map_err(|e| WebError::CustomApiError(e.into()))?
+            .versions
+    } else {
+        HashMap::new()
+    };
+    if let Some(version) = new_version {
+        full_versions.insert(version.version.clone(), version);
+    }
+
+    let remaining_versions: std::collections::HashSet<&str> =
+        all_versions.iter().map(|version| version.version.as_str()).collect();
+    full_versions.retain(|version, _| remaining_versions.contains(version.as_str()));
     let mut time_map: HashMap<String, String> = HashMap::new();
 
     for v in &all_versions {
@@ -654,21 +576,6 @@ pub(crate) async fn refresh_manifests(
             v_str.clone(),
             v.publish_time.format("%Y-%m-%dT%H:%M:%S%.f").to_string(),
         );
-
-        if let Some(abbrev_id) = v.abbrev_dist_id
-            && let Ok((data, _)) = state.repo.get_content(abbrev_id).await
-            && let Ok(val) = serde_json::from_slice::<serde_json::Value>(&data)
-            && let Ok(abbrev) = serde_json::from_value::<AbbreviatedVersion>(val.clone())
-        {
-            abbrev_versions.insert(v_str.clone(), abbrev);
-        }
-
-        if let Some(manifest_id) = v.manifest_dist_id
-            && let Ok((data, _)) = state.repo.get_content(manifest_id).await
-            && let Ok(ver) = serde_json::from_slice::<PackageVersion>(&data)
-        {
-            full_versions.insert(v_str.clone(), ver);
-        }
     }
 
     time_map.insert(
@@ -712,19 +619,6 @@ pub(crate) async fn refresh_manifests(
         .await
         .map_err(WebError::CustomApiError)?;
 
-    let abbrev_manifest = AbbreviatedPackument {
-        name: fullname.to_string(),
-        modified: time_map.get("modified").cloned(),
-        dist_tags: dist_tags.clone(),
-        versions: abbrev_versions,
-        time: if time_map.is_empty() {
-            None
-        } else {
-            Some(time_map.clone())
-        },
-    };
-    let abbrev_manifest_bytes = serde_json::to_vec(&abbrev_manifest).unwrap_or_default();
-
     let full_manifest = Packument {
         id: Some(fullname.to_string()),
         rev: Some(package_id.to_string()),
@@ -749,6 +643,8 @@ pub(crate) async fn refresh_manifests(
         contributors,
         users: None,
     };
+    let abbrev_manifest = build_abbreviated_manifest(&full_manifest);
+    let abbrev_manifest_bytes = serde_json::to_vec(&abbrev_manifest).unwrap_or_default();
     let full_manifest_bytes = serde_json::to_vec(&full_manifest).unwrap_or_default();
 
     upload_and_commit_manifests(
@@ -870,6 +766,7 @@ pub async fn update_maintainers_inner(
         &fullname,
         pkg.description.as_deref(),
         &tag_map,
+        None,
     )
     .await?;
 
@@ -1192,6 +1089,7 @@ async fn remove_version_and_refresh(
             fullname,
             pkg.description.as_deref(),
             &tag_map,
+            None,
         )
         .await?;
 

@@ -1,11 +1,8 @@
 use crate::config::Config;
 use crate::npm::types::*;
-use crate::npm::{
-    build_abbreviated_manifest, build_abbreviated_version, is_prerelease, pad_version,
-    split_scope_name,
-};
+use crate::npm::{build_abbreviated_manifest, is_prerelease, pad_version, split_scope_name};
 use crate::repository::{
-    CommitVersionParams, PackageVersionRow, PendingDist, Repository, MAINTAINER_SOURCE_UPSTREAM,
+    CommitVersionParams, PackageVersionRow, Repository, MAINTAINER_SOURCE_UPSTREAM,
     upload_and_commit_manifests,
 };
 use crate::search::SearchIndex;
@@ -128,13 +125,13 @@ pub async fn sync_package(
         .map(|v| (v.version.clone(), v))
         .collect();
 
-    // ── Phase 1: Upload each version independently (S3 then DB transaction) ──
+    // ── Phase 1: Insert version metadata ──
 
-    log::info!(action = "sync_progress"; "name={fullname} phase=upload_versions uploading version dists");
+    log::info!(action = "sync_progress"; "name={fullname} phase=insert_versions inserting version metadata");
 
     let mut new_count = 0u32;
 
-    for (ver_str, ver_data) in &packument.versions {
+    for ver_str in packument.versions.keys() {
         if existing_map.contains_key(ver_str) {
             continue;
         }
@@ -149,54 +146,12 @@ pub async fn sync_package(
         let is_pre_release = is_prerelease(ver_str);
         let padding_version = Some(pad_version(ver_str));
 
-        let abbrev_base_key = format!("packages/{fullname}/{ver_str}/abbreviated.json");
-        let manifest_base_key = format!("packages/{fullname}/{ver_str}/package.json");
-
-        let abbrev_data = build_abbreviated_version(&ver_data.name, ver_data);
-        let manifest_data = serde_json::to_vec(&ver_data).unwrap_or_default();
-
-        let abbrev_storage_key = match repo
-            .put_storage_compressed(&abbrev_base_key, abbrev_data.clone())
-            .await
-        {
-            Ok(k) => k,
-            Err(e) => {
-                error!("Storage upload failed for {fullname}@{ver_str} abbreviated: {e:#}");
-                continue;
-            }
-        };
-
-        let manifest_storage_key = match repo
-            .put_storage_compressed(&manifest_base_key, manifest_data.clone())
-            .await
-        {
-            Ok(k) => k,
-            Err(e) => {
-                error!("Storage upload failed for {fullname}@{ver_str} manifest: {e:#}");
-                continue;
-            }
-        };
-
         let version_params = CommitVersionParams {
             package_id,
             version: ver_str.clone(),
             publish_time,
             is_pre_release,
             padding_version,
-            abbrev_dist: PendingDist {
-                name: format!("{fullname}@{ver_str}-abbrev"),
-                path: abbrev_storage_key,
-                size: abbrev_data.len() as i64,
-                shasum: None,
-                integrity: None,
-            },
-            manifest_dist: PendingDist {
-                name: format!("{fullname}@{ver_str}-manifest"),
-                path: manifest_storage_key,
-                size: manifest_data.len() as i64,
-                shasum: None,
-                integrity: None,
-            },
             tar_dist: None,
             readme_dist: None,
         };

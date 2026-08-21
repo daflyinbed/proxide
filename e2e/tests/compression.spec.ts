@@ -53,6 +53,12 @@ describe("zstd storage compression", () => {
     const tgzPaths = allPaths.filter((p) => p.endsWith(".tgz"));
     expect(jsonPaths.length).toBeGreaterThan(0);
     expect(tgzPaths.length).toBe(1);
+    expect(
+      allPaths.some((p) => p.includes(`/${version}/package.json`)),
+    ).toBe(false);
+    expect(
+      allPaths.some((p) => p.includes(`/${version}/abbreviated.json`)),
+    ).toBe(false);
     for (const p of allPaths) {
       if (p.endsWith(".tgz")) {
         expect(p.endsWith(".zst")).toBe(false);

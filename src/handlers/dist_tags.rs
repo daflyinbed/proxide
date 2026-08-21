@@ -171,6 +171,7 @@ pub async fn set_dist_tag(
         &fullname,
         pkg.description.as_deref(),
         &tags,
+        None,
     )
     .await?;
 
@@ -256,6 +257,7 @@ pub async fn remove_dist_tag(
         &fullname,
         pkg.description.as_deref(),
         &tags,
+        None,
     )
     .await?;
 

@@ -3,7 +3,7 @@ use anyhow::{Context, Result};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
@@ -40,12 +40,27 @@ impl VersionManifest {
 
 pub fn validate_filepath(raw: &str) -> Option<String> {
     let trimmed = raw.trim_matches('/');
-    if trimmed.is_empty() || trimmed.len() > 4096 || trimmed.contains('\0') {
+    if trimmed.is_empty()
+        || trimmed.len() > 4096
+        || trimmed.contains('\0')
+        || trimmed.contains('\\')
+    {
+        return None;
+    }
+    if Path::new(trimmed)
+        .components()
+        .any(|component| !matches!(component, Component::Normal(_)))
+    {
         return None;
     }
     let mut segments = Vec::new();
     for seg in trimmed.split('/') {
-        if seg.is_empty() || seg == "." || seg == ".." {
+        let bytes = seg.as_bytes();
+        if seg.is_empty()
+            || seg == "."
+            || seg == ".."
+            || (bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':')
+        {
             return None;
         }
         segments.push(seg);
@@ -172,27 +187,33 @@ impl UnpackedStore {
         self.index.remove(&version_id);
         let dir = self.version_dir(version_id);
         let manifest = self.manifest_path(version_id);
-        let _ = tokio::task::spawn_blocking(move || {
+        if let Err(e) = tokio::task::spawn_blocking(move || {
             if let Err(e) = std::fs::remove_dir_all(&dir)
                 && e.kind() != std::io::ErrorKind::NotFound
             {
-                log::warn!(
+                log::error!(
                     action = "unpacked_remove";
-                    "failed to remove unpacked dir {}: {e}",
+                    "failed to remove unpacked dir {}; disk usage may be undercounted until restart: {e}",
                     dir.display()
                 );
             }
             if let Err(e) = std::fs::remove_file(&manifest)
                 && e.kind() != std::io::ErrorKind::NotFound
             {
-                log::warn!(
+                log::error!(
                     action = "unpacked_remove";
-                    "failed to remove unpacked manifest {}: {e}",
+                    "failed to remove unpacked manifest {}; disk usage may be undercounted until restart: {e}",
                     manifest.display()
                 );
             }
         })
-        .await;
+        .await
+        {
+            log::error!(
+                action = "unpacked_remove";
+                "unpacked removal task failed; disk usage may be undercounted until restart: {e}"
+            );
+        }
     }
 }
 
@@ -251,14 +272,36 @@ fn is_shard_name(name: &str) -> bool {
 }
 
 fn parse_version_dir_name(name: &str) -> Option<i64> {
-    name.strip_prefix("v-")?.parse().ok()
+    parse_version_id(name.strip_prefix("v-")?)
 }
 
 fn parse_manifest_name(name: &str) -> Option<i64> {
-    name.strip_suffix(MANIFEST_SUFFIX)?
-        .strip_prefix("v-")?
-        .parse()
-        .ok()
+    parse_version_id(name.strip_suffix(MANIFEST_SUFFIX)?.strip_prefix("v-")?)
+}
+
+fn parse_tmp_manifest_name(name: &str) -> Option<i64> {
+    parse_manifest_name(name.strip_suffix(".tmp")?)
+}
+
+fn parse_staging_name(name: &str) -> Option<i64> {
+    let rest = name.strip_prefix(STAGING_PREFIX)?.strip_prefix("v-")?;
+    let (id, token) = rest.split_once('-')?;
+    if token.len() != 32
+        || !token
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return None;
+    }
+    parse_version_id(id)
+}
+
+fn parse_version_id(raw: &str) -> Option<i64> {
+    raw.parse::<i64>().ok().filter(|id| *id > 0)
+}
+
+fn belongs_to_shard(version_id: i64, shard: u64) -> bool {
+    version_id.unsigned_abs() % SHARD_COUNT == shard
 }
 
 struct ScanFound {
@@ -268,30 +311,41 @@ struct ScanFound {
     mtime: SystemTime,
 }
 
-fn scan_shard(shard: &Path) -> Result<Vec<ScanFound>> {
+fn scan_shard(shard: &Path, shard_id: u64) -> Result<Vec<ScanFound>> {
     let mut version_dirs: HashMap<i64, PathBuf> = HashMap::new();
     let mut manifests: HashMap<i64, PathBuf> = HashMap::new();
-    let mut unknown: Vec<PathBuf> = Vec::new();
+    let mut garbage: Vec<PathBuf> = Vec::new();
 
     for entry in std::fs::read_dir(shard).with_context(|| format!("failed to read {}", shard.display()))? {
         let entry = entry?;
         let name = entry.file_name();
         let name = name.to_string_lossy();
         let path = entry.path();
-        if name.starts_with(STAGING_PREFIX) {
-            unknown.push(path);
+        let file_type = entry.file_type().ok();
+        if let Some(id) = parse_staging_name(&name)
+            && belongs_to_shard(id, shard_id)
+            && file_type.is_some_and(|t| t.is_dir())
+        {
+            garbage.push(path);
+        } else if let Some(id) = parse_tmp_manifest_name(&name)
+            && belongs_to_shard(id, shard_id)
+            && file_type.is_some_and(|t| t.is_file())
+        {
+            garbage.push(path);
         } else if let Some(id) = parse_version_dir_name(&name)
-            && entry.file_type().map(|t| t.is_dir()).unwrap_or(false)
+            && belongs_to_shard(id, shard_id)
+            && file_type.is_some_and(|t| t.is_dir())
         {
             version_dirs.insert(id, path);
-        } else if let Some(id) = parse_manifest_name(&name) {
+        } else if let Some(id) = parse_manifest_name(&name)
+            && belongs_to_shard(id, shard_id)
+            && file_type.is_some_and(|t| t.is_file())
+        {
             manifests.insert(id, path);
-        } else {
-            unknown.push(path);
         }
     }
 
-    for path in unknown {
+    for path in garbage {
         remove_path(&path);
     }
 
@@ -343,11 +397,11 @@ fn scan_disk(root: &Path) -> Result<Vec<ScanFound>> {
         let name = entry.file_name();
         let name = name.to_string_lossy().into_owned();
         let path = entry.path();
-        if !is_shard_name(&name) {
-            remove_path(&path);
+        if !is_shard_name(&name) || !entry.file_type().is_ok_and(|t| t.is_dir()) {
             continue;
         }
-        found.extend(scan_shard(&path)?);
+        let shard_id = u64::from_str_radix(&name, 16).expect("validated hexadecimal shard name");
+        found.extend(scan_shard(&path, shard_id)?);
     }
     Ok(found)
 }
@@ -519,6 +573,10 @@ mod tests {
         assert_eq!(validate_filepath("a//b"), None);
         assert_eq!(validate_filepath("a/./b"), None);
         assert_eq!(validate_filepath("a/\0b"), None);
+        assert_eq!(validate_filepath(r"C:\Windows\system.ini"), None);
+        assert_eq!(validate_filepath("C:/Windows/system.ini"), None);
+        assert_eq!(validate_filepath("C:Windows/system.ini"), None);
+        assert_eq!(validate_filepath(r"\\server\share\file.txt"), None);
         assert_eq!(validate_filepath(&"a".repeat(4097)), None);
     }
 
@@ -565,7 +623,7 @@ mod tests {
     }
 
     #[test]
-    fn scan_disk_cleans_garbage_and_keeps_valid_pairs() {
+    fn scan_disk_cleans_owned_garbage_and_preserves_unknown_paths() {
         let base = std::env::temp_dir().join(format!("proxide-unpacked-{}", std::process::id()));
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(&base).unwrap();
@@ -576,8 +634,11 @@ mod tests {
         let shard9 = base.join(format!("{:02x}", 9 % SHARD_COUNT as i64));
         fs::remove_file(shard9.join(format!("v-9{MANIFEST_SUFFIX}"))).unwrap();
         fs::create_dir_all(shard9.join(".staging-v-11-abc")).unwrap();
+        fs::create_dir_all(shard9.join(".staging-v-9-0123456789abcdef0123456789abcdef")).unwrap();
+        fs::write(shard9.join("v-9.meta.json.tmp"), b"partial").unwrap();
         fs::write(shard9.join("random-junk"), b"x").unwrap();
         fs::write(base.join("not-a-shard"), b"x").unwrap();
+        fs::write(base.join("00"), b"not a shard directory").unwrap();
 
         let manifest20 = base
             .join(format!("{:02x}", 20 % SHARD_COUNT as i64))
@@ -590,9 +651,14 @@ mod tests {
         assert_eq!(found[0].version_id, 7);
 
         assert!(!shard9.join("v-9").exists());
-        assert!(!shard9.join(".staging-v-11-abc").exists());
-        assert!(!shard9.join("random-junk").exists());
-        assert!(!base.join("not-a-shard").exists());
+        assert!(shard9.join(".staging-v-11-abc").exists());
+        assert!(!shard9
+            .join(".staging-v-9-0123456789abcdef0123456789abcdef")
+            .exists());
+        assert!(!shard9.join("v-9.meta.json.tmp").exists());
+        assert!(shard9.join("random-junk").exists());
+        assert!(base.join("not-a-shard").exists());
+        assert!(base.join("00").exists());
         assert!(!manifest20.exists());
         assert!(!manifest20
             .parent()

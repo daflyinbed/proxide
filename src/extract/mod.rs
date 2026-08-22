@@ -3,7 +3,9 @@ pub mod content_type;
 use crate::error::{WebError, WebResult};
 use crate::repository::PackageVersionRow;
 use crate::state::AppState;
-use crate::unpacked::{ManifestFile, VersionManifest, manifest_from_entries, version_disk_usage};
+use crate::unpacked::{
+    ManifestFile, VersionManifest, manifest_from_entries, validate_filepath, version_disk_usage,
+};
 use anyhow::{Context, Result};
 use base64::Engine;
 use flate2::read::GzDecoder;
@@ -252,9 +254,9 @@ fn extract_to_dir(
         if rel.is_empty() || rel.starts_with('/') {
             continue;
         }
-        if rel.split('/').any(|seg| seg == ".." || seg.is_empty() || seg == ".") {
+        let Some(rel) = validate_filepath(rel) else {
             continue;
-        }
+        };
         let declared_size = entry.header().size().unwrap_or(0);
         if total.saturating_add(declared_size) > max_unpacked_size {
             anyhow::bail!(
@@ -262,7 +264,7 @@ fn extract_to_dir(
             );
         }
 
-        let dest = staging.join(rel);
+        let dest = staging.join(&rel);
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create dir {}", parent.display()))?;
@@ -289,9 +291,9 @@ fn extract_to_dir(
         total = total.saturating_add(written);
         let size = written;
         let hash = base64::engine::general_purpose::STANDARD.encode(hasher.finalize());
-        let content_type = content_type::guess(rel);
-        if let Some(prev) = files.insert(rel.to_string(), ManifestFile {
-            path: rel.to_string(),
+        let content_type = content_type::guess(&rel);
+        if let Some(prev) = files.insert(rel.clone(), ManifestFile {
+            path: rel,
             size,
             hash,
             content_type,
@@ -338,6 +340,8 @@ mod tests {
             ("package/package.json", "{}"),
             ("package-ignored", "no package prefix is kept as-is"),
             ("./package/./dot.txt", "dot segment filtered"),
+            ("C:/Windows/system.ini", "drive path filtered"),
+            (r"package\..\escape.txt", "backslash path filtered"),
         ]);
 
         let manifest = extract_to_dir(&tgz, &base, 1024 * 1024).unwrap();
@@ -352,6 +356,8 @@ mod tests {
         assert!(names.contains(&"package.json"));
         assert!(names.contains(&"package-ignored"));
         assert!(!names.iter().any(|n| n.contains("..")));
+        assert!(!names.iter().any(|n| n.contains("Windows")));
+        assert!(!names.iter().any(|n| n.contains("escape")));
 
         let file = manifest.find("lib/deep/nested.txt").unwrap();
         assert_eq!(file.size, 5);

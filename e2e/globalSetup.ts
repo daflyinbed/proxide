@@ -1,5 +1,5 @@
 import { execSync, spawn } from "node:child_process";
-import { openSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { openSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { copyFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -76,7 +76,7 @@ export default async function setup() {
   for (let i = 0; i < 60; i++) {
     try {
       execSync(
-        `docker exec proxide-mysql mysql -uroot -proot -e "CREATE DATABASE IF NOT EXISTS proxide_e2e"`,
+        `docker exec proxide-mysql mysql -uroot -proot -e "DROP DATABASE IF EXISTS proxide_e2e; CREATE DATABASE proxide_e2e"`,
         { stdio: "pipe" },
       );
       break;
@@ -93,6 +93,7 @@ export default async function setup() {
 
   log("preparing run directory...");
   await mkdir(RUN_DIR, { recursive: true });
+  rmSync(join(RUN_DIR, "unpacked"), { recursive: true, force: true });
 
   const configDest = join(RUN_DIR, "proxide.toml");
   await copyFile(CONFIG_SRC, configDest);

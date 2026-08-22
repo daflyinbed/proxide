@@ -2,9 +2,9 @@ use crate::error::{WebError, WebResult};
 use crate::middleware::auth::ensure_package_readable;
 use crate::repository::{PackageDownloadRow, UpstreamPackageDownloadRow};
 use crate::state::AppState;
+use axum::Json;
 use axum::extract::Path;
 use axum::http::HeaderMap;
-use axum::Json;
 use chrono::{Datelike, NaiveDate};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -52,13 +52,11 @@ fn sum_row_days(row: &PackageDownloadRow, start: NaiveDate, end: NaiveDate) -> u
     let row_start = NaiveDate::from_ymd_opt(row.year as i32, row.month as u32, 1)
         .unwrap_or_else(|| NaiveDate::from_ymd_opt(2000, 1, 1).unwrap());
     let row_end = if row.month == 12 {
-        NaiveDate::from_ymd_opt(row.year as i32 + 1, 1, 1).unwrap_or_else(|| {
-            NaiveDate::from_ymd_opt(2000, 1, 1).unwrap()
-        })
+        NaiveDate::from_ymd_opt(row.year as i32 + 1, 1, 1)
+            .unwrap_or_else(|| NaiveDate::from_ymd_opt(2000, 1, 1).unwrap())
     } else {
-        NaiveDate::from_ymd_opt(row.year as i32, row.month as u32 + 1, 1).unwrap_or_else(|| {
-            NaiveDate::from_ymd_opt(2000, 1, 1).unwrap()
-        })
+        NaiveDate::from_ymd_opt(row.year as i32, row.month as u32 + 1, 1)
+            .unwrap_or_else(|| NaiveDate::from_ymd_opt(2000, 1, 1).unwrap())
     }
     .pred_opt()
     .unwrap_or(row_start);
@@ -79,7 +77,11 @@ fn sum_row_days(row: &PackageDownloadRow, start: NaiveDate, end: NaiveDate) -> u
     total
 }
 
-fn sum_upstream_row_days(row: &UpstreamPackageDownloadRow, start: NaiveDate, end: NaiveDate) -> u64 {
+fn sum_upstream_row_days(
+    row: &UpstreamPackageDownloadRow,
+    start: NaiveDate,
+    end: NaiveDate,
+) -> u64 {
     let days: [u32; 31] = [
         row.d01, row.d02, row.d03, row.d04, row.d05, row.d06, row.d07, row.d08, row.d09, row.d10,
         row.d11, row.d12, row.d13, row.d14, row.d15, row.d16, row.d17, row.d18, row.d19, row.d20,
@@ -90,13 +92,11 @@ fn sum_upstream_row_days(row: &UpstreamPackageDownloadRow, start: NaiveDate, end
     let row_start = NaiveDate::from_ymd_opt(row.year as i32, row.month as u32, 1)
         .unwrap_or_else(|| NaiveDate::from_ymd_opt(2000, 1, 1).unwrap());
     let row_end = if row.month == 12 {
-        NaiveDate::from_ymd_opt(row.year as i32 + 1, 1, 1).unwrap_or_else(|| {
-            NaiveDate::from_ymd_opt(2000, 1, 1).unwrap()
-        })
+        NaiveDate::from_ymd_opt(row.year as i32 + 1, 1, 1)
+            .unwrap_or_else(|| NaiveDate::from_ymd_opt(2000, 1, 1).unwrap())
     } else {
-        NaiveDate::from_ymd_opt(row.year as i32, row.month as u32 + 1, 1).unwrap_or_else(|| {
-            NaiveDate::from_ymd_opt(2000, 1, 1).unwrap()
-        })
+        NaiveDate::from_ymd_opt(row.year as i32, row.month as u32 + 1, 1)
+            .unwrap_or_else(|| NaiveDate::from_ymd_opt(2000, 1, 1).unwrap())
     }
     .pred_opt()
     .unwrap_or(row_start);
@@ -185,13 +185,11 @@ fn expand_to_day_map(
         let row_start = NaiveDate::from_ymd_opt(row.year as i32, row.month as u32, 1)
             .unwrap_or_else(|| NaiveDate::from_ymd_opt(2000, 1, 1).unwrap());
         let row_end = if row.month == 12 {
-            NaiveDate::from_ymd_opt(row.year as i32 + 1, 1, 1).unwrap_or_else(|| {
-                NaiveDate::from_ymd_opt(2000, 1, 1).unwrap()
-            })
+            NaiveDate::from_ymd_opt(row.year as i32 + 1, 1, 1)
+                .unwrap_or_else(|| NaiveDate::from_ymd_opt(2000, 1, 1).unwrap())
         } else {
-            NaiveDate::from_ymd_opt(row.year as i32, row.month as u32 + 1, 1).unwrap_or_else(|| {
-                NaiveDate::from_ymd_opt(2000, 1, 1).unwrap()
-            })
+            NaiveDate::from_ymd_opt(row.year as i32, row.month as u32 + 1, 1)
+                .unwrap_or_else(|| NaiveDate::from_ymd_opt(2000, 1, 1).unwrap())
         }
         .pred_opt()
         .unwrap_or(row_start);
@@ -247,7 +245,9 @@ async fn fetch_upstream_range(
     }
 
     let body: UpstreamResponse = resp.json().await.map_err(|e| {
-        WebError::CustomApiError(anyhow::anyhow!("failed to parse upstream download response: {e}"))
+        WebError::CustomApiError(anyhow::anyhow!(
+            "failed to parse upstream download response: {e}"
+        ))
     })?;
 
     Ok(body.downloads)
@@ -432,13 +432,11 @@ pub async fn downloads_range(
         let row_start = NaiveDate::from_ymd_opt(row.year as i32, row.month as u32, 1)
             .unwrap_or_else(|| NaiveDate::from_ymd_opt(2000, 1, 1).unwrap());
         let row_end = if row.month == 12 {
-            NaiveDate::from_ymd_opt(row.year as i32 + 1, 1, 1).unwrap_or_else(|| {
-                NaiveDate::from_ymd_opt(2000, 1, 1).unwrap()
-            })
+            NaiveDate::from_ymd_opt(row.year as i32 + 1, 1, 1)
+                .unwrap_or_else(|| NaiveDate::from_ymd_opt(2000, 1, 1).unwrap())
         } else {
-            NaiveDate::from_ymd_opt(row.year as i32, row.month as u32 + 1, 1).unwrap_or_else(|| {
-                NaiveDate::from_ymd_opt(2000, 1, 1).unwrap()
-            })
+            NaiveDate::from_ymd_opt(row.year as i32, row.month as u32 + 1, 1)
+                .unwrap_or_else(|| NaiveDate::from_ymd_opt(2000, 1, 1).unwrap())
         }
         .pred_opt()
         .unwrap_or(row_start);

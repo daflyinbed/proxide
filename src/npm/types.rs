@@ -277,7 +277,11 @@ pub struct PackageVersion {
     pub peer_dependencies: HashMap<String, String>,
     #[serde(default)]
     pub peer_dependencies_meta: HashMap<String, PeerDepMeta>,
-    #[serde(default, alias = "bundledDependencies", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        alias = "bundledDependencies",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub bundle_dependencies: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bin: Option<Bin>,
@@ -290,7 +294,11 @@ pub struct PackageVersion {
     pub engines: Option<HashMap<String, String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub has_install_script: Option<bool>,
-    #[serde(rename = "_hasShrinkwrap", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "_hasShrinkwrap",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub _has_shrinkwrap: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub funding: Option<Funding>,
@@ -302,13 +310,25 @@ pub struct PackageVersion {
     pub libc: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspaces: Option<Workspaces>,
-    #[serde(default, rename = "acceptDependencies", skip_serializing_if = "HashMap::is_empty")]
+    #[serde(
+        default,
+        rename = "acceptDependencies",
+        skip_serializing_if = "HashMap::is_empty"
+    )]
     pub accept_dependencies: HashMap<String, String>,
     #[serde(rename = "_npmUser", default, skip_serializing_if = "Option::is_none")]
     pub _npm_user: Option<Person>,
-    #[serde(rename = "_npmVersion", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "_npmVersion",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub _npm_version: Option<String>,
-    #[serde(rename = "_nodeVersion", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "_nodeVersion",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub _node_version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub main: Option<String>,
@@ -332,7 +352,11 @@ pub struct PackageVersion {
     pub config: Option<HashMap<String, serde_json::Value>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub files: Option<StringOrList>,
-    #[serde(default, rename = "publishConfig", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "publishConfig",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub publish_config: Option<PublishConfig>,
     #[serde(default, rename = "private", skip_serializing_if = "Option::is_none")]
     pub is_private: Option<bool>,
@@ -352,9 +376,17 @@ pub struct PackageVersion {
     pub unpkg: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jsdelivr: Option<String>,
-    #[serde(rename = "jsnext:main", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "jsnext:main",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub jsnext_main: Option<String>,
-    #[serde(rename = "packageManager", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "packageManager",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub package_manager: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub overrides: Option<BTreeMap<String, serde_json::Value>>,
@@ -375,9 +407,17 @@ pub struct Dist {
     pub integrity: Option<String>,
     #[serde(default, rename = "fileCount", skip_serializing_if = "Option::is_none")]
     pub file_count: Option<i64>,
-    #[serde(default, rename = "unpackedSize", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "unpackedSize",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub unpacked_size: Option<i64>,
-    #[serde(default, rename = "npm-signature", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "npm-signature",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub npm_signature: Option<String>,
 }
 
@@ -636,7 +676,11 @@ pub struct PublishVersion {
     pub peer_dependencies: HashMap<String, String>,
     #[serde(default)]
     pub peer_dependencies_meta: HashMap<String, PeerDepMeta>,
-    #[serde(default, alias = "bundledDependencies", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        alias = "bundledDependencies",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub bundle_dependencies: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bin: Option<Bin>,
@@ -648,7 +692,11 @@ pub struct PublishVersion {
     pub dist: PublishDist,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub engines: Option<HashMap<String, String>>,
-    #[serde(rename = "_hasShrinkwrap", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "_hasShrinkwrap",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub _has_shrinkwrap: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub funding: Option<Funding>,
@@ -660,15 +708,27 @@ pub struct PublishVersion {
     pub libc: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspaces: Option<Workspaces>,
-    #[serde(default, rename = "acceptDependencies", skip_serializing_if = "HashMap::is_empty")]
+    #[serde(
+        default,
+        rename = "acceptDependencies",
+        skip_serializing_if = "HashMap::is_empty"
+    )]
     pub accept_dependencies: HashMap<String, String>,
     #[serde(rename = "_id", default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     #[serde(rename = "_npmUser", default, skip_serializing_if = "Option::is_none")]
     pub _npm_user: Option<Person>,
-    #[serde(rename = "_npmVersion", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "_npmVersion",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub _npm_version: Option<String>,
-    #[serde(rename = "_nodeVersion", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "_nodeVersion",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub _node_version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub main: Option<String>,
@@ -692,7 +752,11 @@ pub struct PublishVersion {
     pub config: Option<HashMap<String, serde_json::Value>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub files: Option<StringOrList>,
-    #[serde(default, rename = "publishConfig", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "publishConfig",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub publish_config: Option<PublishConfig>,
     #[serde(default, rename = "private", skip_serializing_if = "Option::is_none")]
     pub is_private: Option<bool>,
@@ -712,9 +776,17 @@ pub struct PublishVersion {
     pub unpkg: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jsdelivr: Option<String>,
-    #[serde(rename = "jsnext:main", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "jsnext:main",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub jsnext_main: Option<String>,
-    #[serde(rename = "packageManager", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "packageManager",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub package_manager: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub overrides: Option<BTreeMap<String, serde_json::Value>>,
@@ -773,7 +845,6 @@ pub struct LoginResponse {
     pub rev: String,
     pub token: String,
 }
-
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct WhoAmIResponse {
@@ -946,18 +1017,12 @@ mod tests {
         let Exports::Map(m) = &ex else {
             panic!("expected map exports");
         };
-        assert!(matches!(
-            m.get(".").unwrap(),
-            ExportsTarget::Conditions(_)
-        ));
+        assert!(matches!(m.get(".").unwrap(), ExportsTarget::Conditions(_)));
         assert!(matches!(
             m.get("./package.json").unwrap(),
             ExportsTarget::Path(_)
         ));
-        assert!(matches!(
-            m.get("./internal").unwrap(),
-            ExportsTarget::Null
-        ));
+        assert!(matches!(m.get("./internal").unwrap(), ExportsTarget::Null));
         if let ExportsTarget::Conditions(c) = m.get(".").unwrap() {
             assert!(matches!(
                 c.get("default").unwrap(),
@@ -1034,10 +1099,7 @@ mod tests {
             r#"{"name":"x","version":"1.0.0","dist":{"tarball":"t"},"bundledDependencies":["foo"]}"#,
         )
         .unwrap();
-        assert_eq!(
-            pv.bundle_dependencies,
-            Some(vec!["foo".to_string()])
-        );
+        assert_eq!(pv.bundle_dependencies, Some(vec!["foo".to_string()]));
     }
 
     #[test]

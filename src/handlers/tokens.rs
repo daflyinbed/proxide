@@ -53,9 +53,7 @@ fn token_object(row: &TokenRow, masked: bool) -> TokenObject {
         (status = UNAUTHORIZED, body = crate::error::ApiErrorDetail),
     ),
 )]
-pub async fn whoami(
-    RequireAnyAuth(auth): RequireAnyAuth,
-) -> WebResult<Json<WhoAmIResponse>> {
+pub async fn whoami(RequireAnyAuth(auth): RequireAnyAuth) -> WebResult<Json<WhoAmIResponse>> {
     Ok(Json(WhoAmIResponse {
         username: auth.user.name,
     }))
@@ -109,7 +107,6 @@ pub async fn list_tokens(
     State(state): State<AppState>,
     RequireAuth(auth): RequireAuth,
 ) -> WebResult<Json<TokenListResponse>> {
-
     let rows = state
         .repo
         .list_tokens_by_user(auth.user.id)
@@ -143,9 +140,14 @@ pub async fn create_token(
     RequireAuth(auth): RequireAuth,
     Json(body): Json<TokenCreateRequest>,
 ) -> WebResult<Json<TokenObject>> {
-
-    let (Some(salt), Some(integrity)) = (auth.user.password_salt.as_deref(), auth.user.password_integrity.as_deref())
-        else { return Err(WebError::Forbidden("Password verification unavailable for this account".to_string())); };
+    let (Some(salt), Some(integrity)) = (
+        auth.user.password_salt.as_deref(),
+        auth.user.password_integrity.as_deref(),
+    ) else {
+        return Err(WebError::Forbidden(
+            "Password verification unavailable for this account".to_string(),
+        ));
+    };
 
     let password = body.password.as_deref().unwrap_or("");
     if !verify_password(salt, integrity, password) {
@@ -220,7 +222,6 @@ pub async fn revoke_token(
     RequireAuth(auth): RequireAuth,
     Path(key): Path<String>,
 ) -> WebResult<(StatusCode, Json<OkResponse>)> {
-
     let token = state
         .repo
         .find_token_by_key(&key)

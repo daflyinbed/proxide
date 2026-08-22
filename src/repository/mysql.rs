@@ -1,10 +1,10 @@
 use crate::config::{DatabaseConfig, StorageConfig};
 use crate::npm::types::Maintainer;
 use crate::repository::{
-    ChangeStreamCursorRow, CommitVersionParams, DistRow, MAINTAINER_SOURCE_MANUAL, NewVersionFile,
-    OrganizationRow, OrgMemberRow, PackageDownloadRow, PackageRow, PackageTagRow, PackageVersionRow,
-    Repository, SyncManifestParams, SyncTaskRow, TeamMemberRow, TeamRow, TokenRow,
-    UpstreamPackageDownloadRow, UserRow, VersionFileRow,
+    ChangeStreamCursorRow, CommitVersionParams, DistRow, MAINTAINER_SOURCE_MANUAL, OrgMemberRow,
+    OrganizationRow, PackageDownloadRow, PackageRow, PackageTagRow, PackageVersionRow, Repository,
+    SyncManifestParams, SyncTaskRow, TeamMemberRow, TeamRow, TokenRow, UpstreamPackageDownloadRow,
+    UserRow,
 };
 use crate::storage::Storage;
 use anyhow::Result;
@@ -441,8 +441,7 @@ impl Repository for MysqlRepository {
                FROM dists d
                LEFT JOIN packages p ON p.abbreviated_dist_id = d.id OR p.full_dist_id = d.id
                LEFT JOIN package_versions pv ON pv.abbrev_dist_id = d.id OR pv.manifest_dist_id = d.id OR pv.tar_dist_id = d.id OR pv.readme_dist_id = d.id
-               LEFT JOIN package_version_files pvf ON pvf.dist_id = d.id
-               WHERE p.id IS NULL AND pv.id IS NULL AND pvf.id IS NULL"#
+               WHERE p.id IS NULL AND pv.id IS NULL"#
         )
         .fetch_all(&self.pool)
         .await?;
@@ -461,117 +460,6 @@ impl Repository for MysqlRepository {
         }
         let result = query.execute(&self.pool).await?;
         Ok(result.rows_affected())
-    }
-
-    // ── package_version_files ──
-
-    async fn has_version_files(&self, version_id: i64) -> Result<bool> {
-        let row = sqlx::query_scalar!(
-            "SELECT 1 FROM package_version_files WHERE package_version_id = ? LIMIT 1",
-            version_id
-        )
-        .fetch_optional(&self.pool)
-        .await?;
-        Ok(row.is_some())
-    }
-
-    async fn get_version_file(
-        &self,
-        version_id: i64,
-        filepath: &str,
-    ) -> Result<Option<VersionFileRow>> {
-        let row = sqlx::query_as!(
-            VersionFileRow,
-            r#"SELECT pvf.filepath AS `filepath`,
-                      pvf.content_type AS `content_type`,
-                      d.size AS `size`,
-                      d.shasum AS `shasum`,
-                      d.path AS `storage_path`
-               FROM package_version_files pvf
-               JOIN dists d ON d.id = pvf.dist_id
-               WHERE pvf.package_version_id = ? AND pvf.filepath = ?
-               LIMIT 1"#,
-            version_id,
-            filepath
-        )
-        .fetch_optional(&self.pool)
-        .await?;
-        Ok(row)
-    }
-
-    async fn list_version_files(&self, version_id: i64) -> Result<Vec<VersionFileRow>> {
-        let rows = sqlx::query_as!(
-            VersionFileRow,
-            r#"SELECT pvf.filepath AS `filepath`,
-                      pvf.content_type AS `content_type`,
-                      d.size AS `size`,
-                      d.shasum AS `shasum`,
-                      d.path AS `storage_path`
-               FROM package_version_files pvf
-               JOIN dists d ON d.id = pvf.dist_id
-               WHERE pvf.package_version_id = ?
-               ORDER BY pvf.filepath"#,
-            version_id
-        )
-        .fetch_all(&self.pool)
-        .await?;
-        Ok(rows)
-    }
-
-    async fn insert_version_files(&self, version_id: i64, files: &[NewVersionFile]) -> Result<()> {
-        const DISTS_NAME_MAX: usize = 512;
-        let mut tx = self.pool.begin().await?;
-        for f in files {
-            if f.filepath.chars().count() > DISTS_NAME_MAX {
-                anyhow::bail!(
-                    "filepath for version {version_id} exceeds {DISTS_NAME_MAX} chars: {}",
-                    f.filepath
-                );
-            }
-            let dist_result = sqlx::query!(
-                r#"INSERT INTO dists (name, path, size, shasum, integrity) VALUES (?, ?, ?, ?, NULL)"#,
-                f.filepath,
-                f.storage_key,
-                f.size,
-                f.shasum,
-            )
-            .execute(&mut *tx)
-            .await?;
-            let dist_id = dist_result.last_insert_id() as i64;
-            sqlx::query!(
-                r#"INSERT INTO package_version_files
-                   (package_version_id, dist_id, filepath, content_type)
-                   VALUES (?, ?, ?, ?)"#,
-                version_id,
-                dist_id,
-                f.filepath,
-                f.content_type,
-            )
-            .execute(&mut *tx)
-            .await?;
-        }
-        tx.commit().await?;
-        Ok(())
-    }
-
-    async fn get_version_file_dist_ids(&self, version_ids: &[i64]) -> Result<Vec<(i64, String)>> {
-        if version_ids.is_empty() {
-            return Ok(Vec::new());
-        }
-        // sqlx::query! / query_as! require a fixed SQL string at compile time.
-        // The IN clause here contains one placeholder per runtime version id,
-        // so the query must be assembled dynamically.
-        let placeholders: Vec<String> = version_ids.iter().map(|_| "?".to_string()).collect();
-        let sql = format!(
-            "SELECT d.id, d.path FROM package_version_files pvf JOIN dists d ON d.id = pvf.dist_id WHERE pvf.package_version_id IN ({})",
-            placeholders.join(",")
-        );
-        let mut query = sqlx::query_as::<_, (i64, String)>(&sql);
-        for id in version_ids {
-            query = query.bind(id);
-        }
-        let rows = query.fetch_all(&self.pool).await?;
-        Ok(rows)
     }
 
     // ── change_stream_cursors ──
@@ -990,12 +878,7 @@ impl Repository for MysqlRepository {
 
     // ── maintainers ──
 
-    async fn save_maintainer(
-        &self,
-        package_id: i64,
-        user_id: i64,
-        source: &str,
-    ) -> Result<()> {
+    async fn save_maintainer(&self, package_id: i64, user_id: i64, source: &str) -> Result<()> {
         sqlx::query!(
             r#"INSERT IGNORE INTO maintainers (package_id, user_id, source) VALUES (?, ?, ?)"#,
             package_id,
@@ -1373,11 +1256,7 @@ impl Repository for MysqlRepository {
         Ok(rows.into_iter().map(|r| (r.name, r.role)).collect())
     }
 
-    async fn get_org_member(
-        &self,
-        org_id: i64,
-        user_id: i64,
-    ) -> Result<Option<OrgMemberRow>> {
+    async fn get_org_member(&self, org_id: i64, user_id: i64) -> Result<Option<OrgMemberRow>> {
         let row = sqlx::query_as!(
             OrgMemberRow,
             r#"SELECT id, org_id, user_id, role, created_at FROM org_members WHERE org_id = ? AND user_id = ?"#,
@@ -1411,12 +1290,7 @@ impl Repository for MysqlRepository {
 
     // ── teams ──
 
-    async fn create_team(
-        &self,
-        org_id: i64,
-        name: &str,
-        description: Option<&str>,
-    ) -> Result<i64> {
+    async fn create_team(&self, org_id: i64, name: &str, description: Option<&str>) -> Result<i64> {
         let result = sqlx::query!(
             r#"INSERT INTO teams (org_id, name, description) VALUES (?, ?, ?)"#,
             org_id,
@@ -1428,11 +1302,7 @@ impl Repository for MysqlRepository {
         Ok(result.last_insert_id() as i64)
     }
 
-    async fn get_team_by_org_name(
-        &self,
-        org_id: i64,
-        team_name: &str,
-    ) -> Result<Option<TeamRow>> {
+    async fn get_team_by_org_name(&self, org_id: i64, team_name: &str) -> Result<Option<TeamRow>> {
         let row = sqlx::query_as!(
             TeamRow,
             r#"SELECT id, org_id, name, description, created_at FROM teams WHERE org_id = ? AND name = ?"#,
@@ -1539,10 +1409,7 @@ impl Repository for MysqlRepository {
         Ok(())
     }
 
-    async fn list_packages_for_team(
-        &self,
-        team_id: i64,
-    ) -> Result<Vec<(PackageRow, String)>> {
+    async fn list_packages_for_team(&self, team_id: i64) -> Result<Vec<(PackageRow, String)>> {
         let rows = sqlx::query!(
             r#"SELECT p.id, p.name, p.scope, p.description, p.source, p.access,
                       p.abbreviated_dist_id, p.full_dist_id,
@@ -1638,11 +1505,7 @@ impl Repository for MysqlRepository {
         Ok(exists != 0)
     }
 
-    async fn user_is_org_manager_for_scope(
-        &self,
-        scope: &str,
-        user_id: i64,
-    ) -> Result<bool> {
+    async fn user_is_org_manager_for_scope(&self, scope: &str, user_id: i64) -> Result<bool> {
         let row = sqlx::query!(
             r#"SELECT EXISTS(
                 SELECT 1 FROM org_members om

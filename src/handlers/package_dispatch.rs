@@ -18,11 +18,26 @@ fn decode_path(path: &str) -> String {
 #[derive(Debug)]
 #[allow(dead_code)]
 enum PackageRoute {
-    Package { fullname: String },
-    Version { fullname: String, version: String },
-    Tarball { fullname: String, filename: String },
-    Rev { fullname: String, rev: String },
-    TarballRev { fullname: String, filename: String, rev: String },
+    Package {
+        fullname: String,
+    },
+    Version {
+        fullname: String,
+        version: String,
+    },
+    Tarball {
+        fullname: String,
+        filename: String,
+    },
+    Rev {
+        fullname: String,
+        rev: String,
+    },
+    TarballRev {
+        fullname: String,
+        filename: String,
+        rev: String,
+    },
 }
 
 fn parse_package_route(path: &str) -> WebResult<PackageRoute> {
@@ -206,7 +221,12 @@ mod tests {
     #[test]
     fn simple_package_tarball_rev() {
         let route = parse_package_route("lodash/-/lodash-4.17.21.tgz/-rev/12-abc").unwrap();
-        let PackageRoute::TarballRev { fullname, filename, rev } = route else {
+        let PackageRoute::TarballRev {
+            fullname,
+            filename,
+            rev,
+        } = route
+        else {
             panic!("expected TarballRev");
         };
         assert_eq!(fullname, "lodash");
@@ -217,7 +237,12 @@ mod tests {
     #[test]
     fn scoped_package_tarball_rev() {
         let route = parse_package_route("@babel/core/-/core-7.24.0.tgz/-rev/5-def").unwrap();
-        let PackageRoute::TarballRev { fullname, filename, rev } = route else {
+        let PackageRoute::TarballRev {
+            fullname,
+            filename,
+            rev,
+        } = route
+        else {
             panic!("expected TarballRev");
         };
         assert_eq!(fullname, "@babel/core");
@@ -255,7 +280,8 @@ pub async fn dispatch_get(
             registry::get_package_inner(&state, &headers, &fullname).await
         }
         PackageRoute::Version { fullname, version } => {
-            let json = registry::get_package_version_inner(&state, &headers, &fullname, &version).await?;
+            let json =
+                registry::get_package_version_inner(&state, &headers, &fullname, &version).await?;
             Ok(json.into_response())
         }
         PackageRoute::Tarball { fullname, filename } => {
@@ -345,9 +371,7 @@ pub async fn dispatch_delete(
             Ok(result.into_response())
         }
         PackageRoute::TarballRev {
-            fullname,
-            filename,
-            ..
+            fullname, filename, ..
         } => {
             let result =
                 publish::unpublish_version_inner(&state, &headers, &auth, &fullname, &filename)

@@ -50,7 +50,11 @@ fn validate_team_name(name: &str) -> WebResult<()> {
         .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_');
     if !valid
         || name.is_empty()
-        || !name.chars().next().map(|c| c.is_ascii_lowercase()).unwrap_or(false)
+        || !name
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_lowercase())
+            .unwrap_or(false)
     {
         return Err(WebError::BadRequest(
             "team names must be lowercase, start with a letter, and contain only lowercase letters, digits, hyphens, or underscores".to_string(),
@@ -327,7 +331,10 @@ pub async fn list_teams(
         .map_err(WebError::CustomApiError)?;
 
     if query.format.as_deref() == Some("cli") {
-        let names: Vec<String> = teams.into_iter().map(|t| format!("{scope}:{}", t.name)).collect();
+        let names: Vec<String> = teams
+            .into_iter()
+            .map(|t| format!("{scope}:{}", t.name))
+            .collect();
         Ok(Json(serde_json::to_value(names).unwrap()))
     } else {
         let mut res: BTreeMap<String, String> = BTreeMap::new();

@@ -264,7 +264,10 @@ pub struct RequireAuth(pub AuthContext);
 impl FromRequestParts<AppState> for RequireAuth {
     type Rejection = WebError;
 
-    async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, Self::Rejection> {
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
         Ok(Self(validate_auth(state, &parts.headers).await?))
     }
 }
@@ -274,7 +277,10 @@ pub struct RequireAnyAuth(pub AuthContext);
 impl FromRequestParts<AppState> for RequireAnyAuth {
     type Rejection = WebError;
 
-    async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, Self::Rejection> {
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
         Ok(Self(validate_auth_any(state, &parts.headers).await?))
     }
 }
@@ -284,7 +290,10 @@ pub struct OptionalAuth(pub Option<AuthContext>);
 impl FromRequestParts<AppState> for OptionalAuth {
     type Rejection = WebError;
 
-    async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, Self::Rejection> {
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
         match validate_auth_any(state, &parts.headers).await {
             Ok(auth) => Ok(Self(Some(auth))),
             Err(WebError::Unauthorized(_)) => Ok(Self(None)),

@@ -93,10 +93,9 @@ pub async fn get_package_inner(
     };
 
     if abbreviated {
-        response.headers_mut().insert(
-            "content-type",
-            ABBREVIATED_ACCEPT.parse().unwrap(),
-        );
+        response
+            .headers_mut()
+            .insert("content-type", ABBREVIATED_ACCEPT.parse().unwrap());
     }
     response
         .headers_mut()
@@ -137,10 +136,9 @@ pub async fn get_package_version_inner(
     // todo(review): compare cache-control with cnpmcore
     let mut response = Json(version_json).into_response();
     if abbreviated {
-        response.headers_mut().insert(
-            "content-type",
-            ABBREVIATED_ACCEPT.parse().unwrap(),
-        );
+        response
+            .headers_mut()
+            .insert("content-type", ABBREVIATED_ACCEPT.parse().unwrap());
     }
     response
         .headers_mut()

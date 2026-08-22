@@ -61,9 +61,7 @@ pub async fn flush_download_counters(state: &AppState) -> anyhow::Result<()> {
             .increment_package_download(package_version_id, year, month, day, count)
             .await
         {
-            log::error!(
-                "failed to flush download counter for pv_id={package_version_id}: {e:#}"
-            );
+            log::error!("failed to flush download counter for pv_id={package_version_id}: {e:#}");
             state
                 .download_counters
                 .entry(package_version_id)

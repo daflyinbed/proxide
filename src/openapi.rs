@@ -1,7 +1,9 @@
 use utoipa::OpenApi;
 
 use crate::error::ApiErrorDetail;
-use crate::npm::types::{AbbreviatedPackument, Packument, PublishAttachment, PublishDist, PublishResponse};
+use crate::npm::types::{
+    AbbreviatedPackument, Packument, PublishAttachment, PublishDist, PublishResponse,
+};
 
 #[utoipa::path(
     get,

@@ -301,8 +301,7 @@ pub async fn org_packages(
     {
         Some(o) => o,
         None => {
-            return crate::handlers::access::build_user_packages(&state, auth.as_ref(), &org)
-                .await;
+            return crate::handlers::access::build_user_packages(&state, auth.as_ref(), &org).await;
         }
     };
 

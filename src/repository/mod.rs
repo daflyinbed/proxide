@@ -81,24 +81,6 @@ pub struct DistRow {
     pub integrity: Option<String>,
 }
 
-#[derive(Debug, Clone)]
-pub struct VersionFileRow {
-    pub filepath: String,
-    pub content_type: String,
-    pub size: i64,
-    pub shasum: Option<String>,
-    pub storage_path: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct NewVersionFile {
-    pub storage_key: String,
-    pub size: i64,
-    pub shasum: Option<String>,
-    pub filepath: String,
-    pub content_type: String,
-}
-
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct UserRow {
     pub id: i64,
@@ -398,18 +380,6 @@ pub trait Repository: Send + Sync + 'static {
     async fn list_orphan_dists(&self) -> Result<Vec<DistRow>>;
     async fn delete_dists_by_ids(&self, ids: &[i64]) -> Result<u64>;
 
-    // ── package_version_files ──
-
-    async fn has_version_files(&self, version_id: i64) -> Result<bool>;
-    async fn get_version_file(
-        &self,
-        version_id: i64,
-        filepath: &str,
-    ) -> Result<Option<VersionFileRow>>;
-    async fn list_version_files(&self, version_id: i64) -> Result<Vec<VersionFileRow>>;
-    async fn insert_version_files(&self, version_id: i64, files: &[NewVersionFile]) -> Result<()>;
-    async fn get_version_file_dist_ids(&self, version_ids: &[i64]) -> Result<Vec<(i64, String)>>;
-
     // ── change_stream_cursors ──
 
     async fn get_cursor(&self) -> Result<Option<ChangeStreamCursorRow>>;
@@ -470,12 +440,8 @@ pub trait Repository: Send + Sync + 'static {
 
     async fn save_maintainer(&self, package_id: i64, user_id: i64, source: &str) -> Result<()>;
     async fn is_maintainer(&self, package_id: i64, user_id: i64) -> Result<bool>;
-    async fn sync_maintainers(
-        &self,
-        package_id: i64,
-        user_ids: &[i64],
-        source: &str,
-    ) -> Result<()>;
+    async fn sync_maintainers(&self, package_id: i64, user_ids: &[i64], source: &str)
+    -> Result<()>;
     async fn replace_maintainers(
         &self,
         package_id: i64,
@@ -522,27 +488,14 @@ pub trait Repository: Send + Sync + 'static {
     ) -> Result<bool>;
     async fn list_org_members(&self, org_id: i64) -> Result<Vec<OrgMemberRow>>;
     async fn list_org_member_roster(&self, org_id: i64) -> Result<Vec<(String, String)>>;
-    async fn get_org_member(
-        &self,
-        org_id: i64,
-        user_id: i64,
-    ) -> Result<Option<OrgMemberRow>>;
+    async fn get_org_member(&self, org_id: i64, user_id: i64) -> Result<Option<OrgMemberRow>>;
     async fn count_org_owners(&self, org_id: i64) -> Result<i64>;
     async fn count_org_members(&self, org_id: i64) -> Result<i64>;
 
     // ── teams ──
 
-    async fn create_team(
-        &self,
-        org_id: i64,
-        name: &str,
-        description: Option<&str>,
-    ) -> Result<i64>;
-    async fn get_team_by_org_name(
-        &self,
-        org_id: i64,
-        team_name: &str,
-    ) -> Result<Option<TeamRow>>;
+    async fn create_team(&self, org_id: i64, name: &str, description: Option<&str>) -> Result<i64>;
+    async fn get_team_by_org_name(&self, org_id: i64, team_name: &str) -> Result<Option<TeamRow>>;
     async fn delete_team(&self, team_id: i64) -> Result<()>;
     async fn list_teams_in_org(&self, org_id: i64) -> Result<Vec<TeamRow>>;
 
@@ -562,10 +515,7 @@ pub trait Repository: Send + Sync + 'static {
         permission: &str,
     ) -> Result<()>;
     async fn revoke_team_permission(&self, package_id: i64, team_id: i64) -> Result<()>;
-    async fn list_packages_for_team(
-        &self,
-        team_id: i64,
-    ) -> Result<Vec<(PackageRow, String)>>;
+    async fn list_packages_for_team(&self, team_id: i64) -> Result<Vec<(PackageRow, String)>>;
     async fn list_org_package_viewer_permissions(
         &self,
         org_id: i64,
@@ -580,11 +530,7 @@ pub trait Repository: Send + Sync + 'static {
         user_id: i64,
         min_permission: &str,
     ) -> Result<bool>;
-    async fn user_is_org_manager_for_scope(
-        &self,
-        scope: &str,
-        user_id: i64,
-    ) -> Result<bool>;
+    async fn user_is_org_manager_for_scope(&self, scope: &str, user_id: i64) -> Result<bool>;
     async fn list_all_packages_in_org(&self, org_id: i64) -> Result<Vec<PackageRow>>;
     async fn list_packages_in_org_viewable(
         &self,

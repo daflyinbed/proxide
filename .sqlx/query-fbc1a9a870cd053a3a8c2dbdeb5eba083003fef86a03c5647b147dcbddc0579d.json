@@ -1,6 +1,6 @@
 {
   "db_name": "MySQL",
-  "query": "SELECT d.id, d.name, d.path, d.size, d.shasum, d.integrity\n               FROM dists d\n               LEFT JOIN packages p ON p.abbreviated_dist_id = d.id OR p.full_dist_id = d.id\n               LEFT JOIN package_versions pv ON pv.abbrev_dist_id = d.id OR pv.manifest_dist_id = d.id OR pv.tar_dist_id = d.id OR pv.readme_dist_id = d.id\n               LEFT JOIN package_version_files pvf ON pvf.dist_id = d.id\n               WHERE p.id IS NULL AND pv.id IS NULL AND pvf.id IS NULL",
+  "query": "SELECT d.id, d.name, d.path, d.size, d.shasum, d.integrity\n               FROM dists d\n               LEFT JOIN packages p ON p.abbreviated_dist_id = d.id OR p.full_dist_id = d.id\n               LEFT JOIN package_versions pv ON pv.abbrev_dist_id = d.id OR pv.manifest_dist_id = d.id OR pv.tar_dist_id = d.id OR pv.readme_dist_id = d.id\n               WHERE p.id IS NULL AND pv.id IS NULL",
   "describe": {
     "columns": [
       {
@@ -70,5 +70,5 @@
       true
     ]
   },
-  "hash": "1d247b1d6529722ce0f37819ed26337f3013e0aaae08a484415f226814a84bfa"
+  "hash": "fbc1a9a870cd053a3a8c2dbdeb5eba083003fef86a03c5647b147dcbddc0579d"
 }

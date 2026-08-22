@@ -25,9 +25,15 @@ pub async fn run_task_consumer(
                 );
 
                 let start = std::time::Instant::now();
-                let result =
-                    sync_package::sync_package(&repo, &config, &task.name, &client, &package_lock, search.as_deref())
-                        .await;
+                let result = sync_package::sync_package(
+                    &repo,
+                    &config,
+                    &task.name,
+                    &client,
+                    &package_lock,
+                    search.as_deref(),
+                )
+                .await;
                 let elapsed = start.elapsed().as_millis() as u64;
 
                 match result {

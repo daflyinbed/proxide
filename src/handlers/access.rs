@@ -194,11 +194,7 @@ pub async fn set_access(
     let normalized = match access {
         "public" => "public",
         "restricted" | "private" => "restricted",
-        other => {
-            return Err(WebError::BadRequest(format!(
-                "invalid access: {other}"
-            )))
-        }
+        other => return Err(WebError::BadRequest(format!("invalid access: {other}"))),
     };
 
     let pkg = state
@@ -224,10 +220,7 @@ pub async fn set_access(
 
     ensure_package_write_access(&state, &auth, &pkg).await?;
 
-    if !state
-        .package_lock
-        .try_lock(&fullname, LockOwner::Access)
-    {
+    if !state.package_lock.try_lock(&fullname, LockOwner::Access) {
         let owner = state
             .package_lock
             .get_owner(&fullname)

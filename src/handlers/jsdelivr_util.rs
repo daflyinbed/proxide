@@ -108,7 +108,11 @@ pub(crate) async fn resolve_version(
         .ok_or_else(|| WebError::NotFound(format!("no tarball for {fullname}@{resolved}")))?
         .dist
         .tarball;
-    let tarball_filename = tarball_url.rsplit('/').next().unwrap_or(tarball_url).to_string();
+    let tarball_filename = tarball_url
+        .rsplit('/')
+        .next()
+        .unwrap_or(tarball_url)
+        .to_string();
 
     Ok(ResolvedVersion {
         version_row,
@@ -126,24 +130,14 @@ pub(crate) async fn ensure_version_files_single_flight(
 ) -> WebResult<()> {
     let version_id = resolved.version_row.id;
     loop {
-        if state
-            .repo
-            .has_version_files(version_id)
-            .await
-            .map_err(WebError::CustomApiError)?
-        {
+        if state.unpacked.contains(version_id) {
             return Ok(());
         }
 
         let (mut rx, is_leader) = state.extraction_inflight.get_or_insert(version_id);
         if is_leader {
             let _guard = state.extraction_inflight.guard(version_id);
-            if state
-                .repo
-                .has_version_files(version_id)
-                .await
-                .map_err(WebError::CustomApiError)?
-            {
+            if state.unpacked.contains(version_id) {
                 return Ok(());
             }
             return extract::ensure_version_files(
@@ -167,7 +161,11 @@ mod tests {
     fn simple_pkg_with_version_and_file() {
         assert_eq!(
             parse_pkg_spec_path("lodash@4.17.21/index.js"),
-            ("lodash".to_string(), "4.17.21".to_string(), "index.js".to_string())
+            (
+                "lodash".to_string(),
+                "4.17.21".to_string(),
+                "index.js".to_string()
+            )
         );
     }
 
@@ -183,7 +181,11 @@ mod tests {
     fn simple_pkg_with_nested_file() {
         assert_eq!(
             parse_pkg_spec_path("lodash@4.17.21/dist/lodash.js"),
-            ("lodash".to_string(), "4.17.21".to_string(), "dist/lodash.js".to_string())
+            (
+                "lodash".to_string(),
+                "4.17.21".to_string(),
+                "dist/lodash.js".to_string()
+            )
         );
     }
 
@@ -199,7 +201,11 @@ mod tests {
     fn simple_pkg_latest_with_file() {
         assert_eq!(
             parse_pkg_spec_path("lodash/index.js"),
-            ("lodash".to_string(), "latest".to_string(), "index.js".to_string())
+            (
+                "lodash".to_string(),
+                "latest".to_string(),
+                "index.js".to_string()
+            )
         );
     }
 
@@ -207,7 +213,11 @@ mod tests {
     fn scoped_pkg_with_version_and_file() {
         assert_eq!(
             parse_pkg_spec_path("@babel/core@7.24.0/lib/index.js"),
-            ("@babel/core".to_string(), "7.24.0".to_string(), "lib/index.js".to_string())
+            (
+                "@babel/core".to_string(),
+                "7.24.0".to_string(),
+                "lib/index.js".to_string()
+            )
         );
     }
 
@@ -215,7 +225,11 @@ mod tests {
     fn scoped_pkg_with_version_no_file() {
         assert_eq!(
             parse_pkg_spec_path("@babel/core@7.24.0"),
-            ("@babel/core".to_string(), "7.24.0".to_string(), String::new())
+            (
+                "@babel/core".to_string(),
+                "7.24.0".to_string(),
+                String::new()
+            )
         );
     }
 
@@ -223,7 +237,11 @@ mod tests {
     fn scoped_pkg_dist_tag() {
         assert_eq!(
             parse_pkg_spec_path("@babel/core@next/dist.js"),
-            ("@babel/core".to_string(), "next".to_string(), "dist.js".to_string())
+            (
+                "@babel/core".to_string(),
+                "next".to_string(),
+                "dist.js".to_string()
+            )
         );
     }
 
@@ -231,7 +249,11 @@ mod tests {
     fn scoped_pkg_latest() {
         assert_eq!(
             parse_pkg_spec_path("@babel/core"),
-            ("@babel/core".to_string(), "latest".to_string(), String::new())
+            (
+                "@babel/core".to_string(),
+                "latest".to_string(),
+                String::new()
+            )
         );
     }
 
@@ -239,7 +261,11 @@ mod tests {
     fn scoped_pkg_latest_with_nested_file() {
         assert_eq!(
             parse_pkg_spec_path("@babel/core/lib/index.js"),
-            ("@babel/core".to_string(), "latest".to_string(), "lib/index.js".to_string())
+            (
+                "@babel/core".to_string(),
+                "latest".to_string(),
+                "lib/index.js".to_string()
+            )
         );
     }
 
@@ -247,7 +273,11 @@ mod tests {
     fn leading_slash_stripped() {
         assert_eq!(
             parse_pkg_spec_path("/lodash@1.0.0/file.js"),
-            ("lodash".to_string(), "1.0.0".to_string(), "file.js".to_string())
+            (
+                "lodash".to_string(),
+                "1.0.0".to_string(),
+                "file.js".to_string()
+            )
         );
     }
 
@@ -255,7 +285,11 @@ mod tests {
     fn leading_slash_scoped() {
         assert_eq!(
             parse_pkg_spec_path("/@babel/core@7.24.0/file.js"),
-            ("@babel/core".to_string(), "7.24.0".to_string(), "file.js".to_string())
+            (
+                "@babel/core".to_string(),
+                "7.24.0".to_string(),
+                "file.js".to_string()
+            )
         );
     }
 
@@ -263,7 +297,11 @@ mod tests {
     fn percent_encoded_scope() {
         assert_eq!(
             parse_pkg_spec_path("@babel%2Fcore@7.24.0"),
-            ("@babel/core".to_string(), "7.24.0".to_string(), String::new())
+            (
+                "@babel/core".to_string(),
+                "7.24.0".to_string(),
+                String::new()
+            )
         );
     }
 
@@ -271,7 +309,11 @@ mod tests {
     fn percent_encoded_at_and_slash() {
         assert_eq!(
             parse_pkg_spec_path("lodash%404.17.21%2Findex.js"),
-            ("lodash".to_string(), "4.17.21".to_string(), "index.js".to_string())
+            (
+                "lodash".to_string(),
+                "4.17.21".to_string(),
+                "index.js".to_string()
+            )
         );
     }
 
@@ -279,7 +321,11 @@ mod tests {
     fn caret_range_spec() {
         assert_eq!(
             parse_pkg_spec_path("lodash@^4.17.0/index.js"),
-            ("lodash".to_string(), "^4.17.0".to_string(), "index.js".to_string())
+            (
+                "lodash".to_string(),
+                "^4.17.0".to_string(),
+                "index.js".to_string()
+            )
         );
     }
 
@@ -287,7 +333,11 @@ mod tests {
     fn file_containing_at_sign() {
         assert_eq!(
             parse_pkg_spec_path("lodash@1.0.0/foo@bar.js"),
-            ("lodash".to_string(), "1.0.0".to_string(), "foo@bar.js".to_string())
+            (
+                "lodash".to_string(),
+                "1.0.0".to_string(),
+                "foo@bar.js".to_string()
+            )
         );
     }
 
@@ -295,7 +345,11 @@ mod tests {
     fn latest_with_file_containing_at_sign() {
         assert_eq!(
             parse_pkg_spec_path("lodash/foo@bar.js"),
-            ("lodash".to_string(), "latest".to_string(), "foo@bar.js".to_string())
+            (
+                "lodash".to_string(),
+                "latest".to_string(),
+                "foo@bar.js".to_string()
+            )
         );
     }
 

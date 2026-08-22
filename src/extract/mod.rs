@@ -44,7 +44,6 @@ pub async fn ensure_version_files(
 
     let extract_result = tokio::task::spawn_blocking({
         let staging = staging.clone();
-        let tarball_bytes = tarball_bytes.clone();
         move || extract_to_dir(&tarball_bytes, &staging, max_unpacked_size)
     })
     .await

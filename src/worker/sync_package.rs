@@ -2,7 +2,7 @@ use crate::config::Config;
 use crate::npm::types::*;
 use crate::npm::{build_abbreviated_manifest, is_prerelease, pad_version, split_scope_name};
 use crate::repository::{
-    CommitVersionParams, PackageVersionRow, Repository, MAINTAINER_SOURCE_UPSTREAM,
+    CommitVersionParams, MAINTAINER_SOURCE_UPSTREAM, PackageVersionRow, Repository,
     upload_and_commit_manifests,
 };
 use crate::search::SearchIndex;

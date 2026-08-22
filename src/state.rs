@@ -1,6 +1,6 @@
 use crate::{
-    config::Config, repository::Repository, repository::mysql::MysqlRepository, search::SearchIndex,
-    unpacked::UnpackedStore,
+    config::Config, repository::Repository, repository::mysql::MysqlRepository,
+    search::SearchIndex, unpacked::UnpackedStore,
 };
 use anyhow::Result;
 use dashmap::DashMap;

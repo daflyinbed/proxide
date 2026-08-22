@@ -143,7 +143,9 @@ async fn rm_member(state: &AppState, raw_org: &str, user_name: &str) -> Result<(
         .repo
         .get_org_member(org.id, user.id)
         .await?
-        .ok_or_else(|| anyhow::anyhow!("user \"{user_name}\" is not a member of organization \"{org_name}\""))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!("user \"{user_name}\" is not a member of organization \"{org_name}\"")
+        })?;
 
     if existing.role == "owner" {
         let owner_count = state.repo.count_org_owners(org.id).await?;

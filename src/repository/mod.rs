@@ -440,12 +440,8 @@ pub trait Repository: Send + Sync + 'static {
 
     async fn save_maintainer(&self, package_id: i64, user_id: i64, source: &str) -> Result<()>;
     async fn is_maintainer(&self, package_id: i64, user_id: i64) -> Result<bool>;
-    async fn sync_maintainers(
-        &self,
-        package_id: i64,
-        user_ids: &[i64],
-        source: &str,
-    ) -> Result<()>;
+    async fn sync_maintainers(&self, package_id: i64, user_ids: &[i64], source: &str)
+    -> Result<()>;
     async fn replace_maintainers(
         &self,
         package_id: i64,
@@ -492,27 +488,14 @@ pub trait Repository: Send + Sync + 'static {
     ) -> Result<bool>;
     async fn list_org_members(&self, org_id: i64) -> Result<Vec<OrgMemberRow>>;
     async fn list_org_member_roster(&self, org_id: i64) -> Result<Vec<(String, String)>>;
-    async fn get_org_member(
-        &self,
-        org_id: i64,
-        user_id: i64,
-    ) -> Result<Option<OrgMemberRow>>;
+    async fn get_org_member(&self, org_id: i64, user_id: i64) -> Result<Option<OrgMemberRow>>;
     async fn count_org_owners(&self, org_id: i64) -> Result<i64>;
     async fn count_org_members(&self, org_id: i64) -> Result<i64>;
 
     // ── teams ──
 
-    async fn create_team(
-        &self,
-        org_id: i64,
-        name: &str,
-        description: Option<&str>,
-    ) -> Result<i64>;
-    async fn get_team_by_org_name(
-        &self,
-        org_id: i64,
-        team_name: &str,
-    ) -> Result<Option<TeamRow>>;
+    async fn create_team(&self, org_id: i64, name: &str, description: Option<&str>) -> Result<i64>;
+    async fn get_team_by_org_name(&self, org_id: i64, team_name: &str) -> Result<Option<TeamRow>>;
     async fn delete_team(&self, team_id: i64) -> Result<()>;
     async fn list_teams_in_org(&self, org_id: i64) -> Result<Vec<TeamRow>>;
 
@@ -532,10 +515,7 @@ pub trait Repository: Send + Sync + 'static {
         permission: &str,
     ) -> Result<()>;
     async fn revoke_team_permission(&self, package_id: i64, team_id: i64) -> Result<()>;
-    async fn list_packages_for_team(
-        &self,
-        team_id: i64,
-    ) -> Result<Vec<(PackageRow, String)>>;
+    async fn list_packages_for_team(&self, team_id: i64) -> Result<Vec<(PackageRow, String)>>;
     async fn list_org_package_viewer_permissions(
         &self,
         org_id: i64,
@@ -550,11 +530,7 @@ pub trait Repository: Send + Sync + 'static {
         user_id: i64,
         min_permission: &str,
     ) -> Result<bool>;
-    async fn user_is_org_manager_for_scope(
-        &self,
-        scope: &str,
-        user_id: i64,
-    ) -> Result<bool>;
+    async fn user_is_org_manager_for_scope(&self, scope: &str, user_id: i64) -> Result<bool>;
     async fn list_all_packages_in_org(&self, org_id: i64) -> Result<Vec<PackageRow>>;
     async fn list_packages_in_org_viewable(
         &self,

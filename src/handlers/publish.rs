@@ -1,9 +1,12 @@
 use crate::error::{WebError, WebResult};
-use crate::middleware::auth::{AuthContext, is_admin};
 use crate::handlers::orgs::require_org_member;
+use crate::middleware::auth::{AuthContext, is_admin};
 use crate::npm::types::*;
 use crate::npm::{build_abbreviated_manifest, is_prerelease, pad_version, split_scope_name};
-use crate::repository::{upload_and_commit_manifests, CommitVersionParams, MAINTAINER_SOURCE_MANUAL, MAINTAINER_SOURCE_TEAM, PendingDist};
+use crate::repository::{
+    CommitVersionParams, MAINTAINER_SOURCE_MANUAL, MAINTAINER_SOURCE_TEAM, PendingDist,
+    upload_and_commit_manifests,
+};
 use crate::state::{AppState, LockOwner, UnlockGuard};
 use axum::Json;
 use axum::http::HeaderMap;
@@ -322,69 +325,62 @@ pub async fn publish_package_inner(
         .map(|s| if s.len() > 10240 { &s[..10240] } else { s });
 
     let pkg_exists = pkg.is_some();
-    let requested_access = payload
-        .access
-        .as_deref()
-        .or_else(|| {
-            package_version
-                .publish_config
-                .as_ref()
-                .and_then(|c| c.access.as_deref())
-        });
+    let requested_access = payload.access.as_deref().or_else(|| {
+        package_version
+            .publish_config
+            .as_ref()
+            .and_then(|c| c.access.as_deref())
+    });
     if let Some(access) = requested_access
         && !matches!(access, "public" | "restricted" | "private")
     {
         return Err(WebError::BadRequest(format!("invalid access: {access}")));
     }
-    if scope.is_none()
-        && matches!(requested_access, Some("restricted") | Some("private"))
-    {
+    if scope.is_none() && matches!(requested_access, Some("restricted") | Some("private")) {
         return Err(WebError::BadRequest(
             "unscoped packages are always public; restricted access requires a scope".to_string(),
         ));
     }
-    let (desired_access, package_access): (Option<&str>, &str) =
-        if !pkg_exists && scope.is_some() {
-            let access = if requested_access == Some("public") {
-                "public"
+    let (desired_access, package_access): (Option<&str>, &str) = if !pkg_exists && scope.is_some() {
+        let access = if requested_access == Some("public") {
+            "public"
+        } else {
+            "restricted"
+        };
+        (
+            if access == "restricted" {
+                Some(access)
             } else {
-                "restricted"
-            };
+                None
+            },
+            access,
+        )
+    } else if pkg_exists && scope.is_some() {
+        let current = pkg.as_ref().map(|p| p.access.as_str()).unwrap_or("public");
+        let access = match requested_access {
+            Some("public") => "public",
+            Some("restricted") | Some("private") => "restricted",
+            _ => current,
+        };
+        if access != current {
+            (Some(access), access)
+        } else {
             (
-                if access == "restricted" { Some(access) } else { None },
+                if access == "restricted" {
+                    Some(access)
+                } else {
+                    None
+                },
                 access,
             )
-        } else if pkg_exists && scope.is_some() {
-            let current = pkg
-                .as_ref()
-                .map(|p| p.access.as_str())
-                .unwrap_or("public");
-            let access = match requested_access {
-                Some("public") => "public",
-                Some("restricted") | Some("private") => "restricted",
-                _ => current,
-            };
-            if access != current {
-                (Some(access), access)
-            } else {
-                (
-                    if access == "restricted" { Some(access) } else { None },
-                    access,
-                )
-            }
-        } else {
-            (None, "public")
-        };
+        }
+    } else {
+        (None, "public")
+    };
 
     let (package_id, existing_source) = state
         .repo
-        .upsert_package_for_publish(
-            &fullname,
-            scope,
-            description,
-            auth.user.id,
-            desired_access,
-        )
+        .upsert_package_for_publish(&fullname, scope, description, auth.user.id, desired_access)
         .await
         .map_err(WebError::CustomApiError)?;
 
@@ -448,8 +444,8 @@ pub async fn publish_package_inner(
         }
     }
 
-    let stored_version: PackageVersion = serde_json::from_value(version_json)
-        .map_err(|e| WebError::CustomApiError(e.into()))?;
+    let stored_version: PackageVersion =
+        serde_json::from_value(version_json).map_err(|e| WebError::CustomApiError(e.into()))?;
 
     let readme_content = payload.readme.as_deref().unwrap_or("");
     let readme_data = readme_content.as_bytes().to_vec();
@@ -501,19 +497,25 @@ pub async fn publish_package_inner(
         apply_developers_team_default(state, package_id, scope, auth.user.id).await?;
     }
 
-    let full_manifest =
-        refresh_manifests(
-            state,
-            package_id,
-            &fullname,
-            description,
-            &dist_tags,
-            Some(stored_version),
-        )
-        .await?;
+    let full_manifest = refresh_manifests(
+        state,
+        package_id,
+        &fullname,
+        description,
+        &dist_tags,
+        Some(stored_version),
+    )
+    .await?;
 
     if let Some(idx) = &state.search {
-        crate::search::upsert_search_document(&*state.repo, idx, package_id, package_access, &full_manifest).await;
+        crate::search::upsert_search_document(
+            &*state.repo,
+            idx,
+            package_id,
+            package_access,
+            &full_manifest,
+        )
+        .await;
     }
 
     log::info!(
@@ -565,8 +567,10 @@ pub(crate) async fn refresh_manifests(
         full_versions.insert(version.version.clone(), version);
     }
 
-    let remaining_versions: std::collections::HashSet<&str> =
-        all_versions.iter().map(|version| version.version.as_str()).collect();
+    let remaining_versions: std::collections::HashSet<&str> = all_versions
+        .iter()
+        .map(|version| version.version.as_str())
+        .collect();
     full_versions.retain(|version, _| remaining_versions.contains(version.as_str()));
     let mut time_map: HashMap<String, String> = HashMap::new();
 
@@ -593,9 +597,7 @@ pub(crate) async fn refresh_manifests(
         });
     }
 
-    let latest_version = dist_tags
-        .get("latest")
-        .and_then(|v| full_versions.get(v));
+    let latest_version = dist_tags.get("latest").and_then(|v| full_versions.get(v));
 
     let (author, keywords, homepage, license, repository, bugs, contributors, readme_filename) =
         if let Some(latest) = latest_version {
@@ -711,10 +713,7 @@ pub async fn update_maintainers_inner(
     crate::middleware::auth::ensure_package_write_access(state, auth, &pkg).await?;
     ensure_local_package(pkg.source.as_deref(), &fullname)?;
 
-    if !state
-        .package_lock
-        .try_lock(&fullname, LockOwner::Publish)
-    {
+    if !state.package_lock.try_lock(&fullname, LockOwner::Publish) {
         let owner = state
             .package_lock
             .get_owner(&fullname)
@@ -740,9 +739,7 @@ pub async fn update_maintainers_inner(
             .get_user_by_name(&m.name)
             .await
             .map_err(WebError::CustomApiError)?
-            .ok_or_else(|| {
-                WebError::BadRequest(format!("Maintainer \"{}\" not exists", m.name))
-            })?;
+            .ok_or_else(|| WebError::BadRequest(format!("Maintainer \"{}\" not exists", m.name)))?;
         user_ids.push(user.id);
     }
 
@@ -757,8 +754,7 @@ pub async fn update_maintainers_inner(
         .list_tags(pkg.id)
         .await
         .map_err(WebError::CustomApiError)?;
-    let tag_map: HashMap<String, String> =
-        tags.into_iter().map(|t| (t.tag, t.version)).collect();
+    let tag_map: HashMap<String, String> = tags.into_iter().map(|t| (t.tag, t.version)).collect();
 
     let full_manifest = refresh_manifests(
         state,
@@ -823,10 +819,7 @@ pub async fn unpublish_package_inner(
     crate::middleware::auth::ensure_package_write_access(state, auth, &pkg).await?;
     ensure_local_package(pkg.source.as_deref(), &fullname)?;
 
-    if !state
-        .package_lock
-        .try_lock(&fullname, LockOwner::Publish)
-    {
+    if !state.package_lock.try_lock(&fullname, LockOwner::Publish) {
         let owner = state
             .package_lock
             .get_owner(&fullname)
@@ -907,10 +900,7 @@ pub async fn unpublish_version_inner(
     crate::middleware::auth::ensure_package_write_access(state, auth, &pkg).await?;
     ensure_local_package(pkg.source.as_deref(), &fullname)?;
 
-    if !state
-        .package_lock
-        .try_lock(&fullname, LockOwner::Publish)
-    {
+    if !state.package_lock.try_lock(&fullname, LockOwner::Publish) {
         let owner = state
             .package_lock
             .get_owner(&fullname)
@@ -937,9 +927,7 @@ pub async fn unpublish_version_inner(
         .get_version(pkg.id, &version_name)
         .await
         .map_err(WebError::CustomApiError)?
-        .ok_or_else(|| {
-            WebError::NotFound(format!("{fullname}@{version_name} not found"))
-        })?;
+        .ok_or_else(|| WebError::NotFound(format!("{fullname}@{version_name} not found")))?;
 
     let version_str = version.version.clone();
     remove_version_and_refresh(state, &fullname, &pkg, version).await?;
@@ -1058,9 +1046,7 @@ async fn remove_version_and_refresh(
             keep
         });
 
-        if latest_dangling
-            && let Some(new_latest) = pick_latest_version(&remaining)
-        {
+        if latest_dangling && let Some(new_latest) = pick_latest_version(&remaining) {
             tag_map.insert("latest".to_string(), new_latest);
             tags_changed = true;
         }
@@ -1098,14 +1084,10 @@ async fn remove_version_and_refresh(
     Ok(())
 }
 
-fn pick_latest_version(
-    versions: &[crate::repository::PackageVersionRow],
-) -> Option<String> {
+fn pick_latest_version(versions: &[crate::repository::PackageVersionRow]) -> Option<String> {
     versions
         .iter()
-        .filter_map(|v| {
-            semver::Version::parse(&v.version).ok().map(|sv| (v, sv))
-        })
+        .filter_map(|v| semver::Version::parse(&v.version).ok().map(|sv| (v, sv)))
         .max_by(|(_, asv), (_, bsv)| asv.cmp(bsv))
         .map(|(v, _)| v.version.clone())
 }

@@ -39,7 +39,10 @@ pub struct PackageDoc {
     pub modified: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deprecated: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none", rename = "_source_registry_name")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        rename = "_source_registry_name"
+    )]
     pub source_registry_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", rename = "_npmUser")]
     pub npm_user: Option<NpmUserDoc>,
@@ -96,8 +99,7 @@ pub fn build_search_document(
     access: &str,
 ) -> SearchDocument {
     let latest_version = packument.dist_tags.get("latest");
-    let latest_manifest = latest_version
-        .and_then(|v| packument.versions.get(v));
+    let latest_manifest = latest_version.and_then(|v| packument.versions.get(v));
     let scope = split_scope_name(&packument.name)
         .0
         .map(|s| s.to_string())
@@ -117,7 +119,9 @@ pub fn build_search_document(
     let modified = packument.time.get("modified").cloned();
 
     let deprecated = latest_manifest.and_then(|m| m.deprecated.clone());
-    let npm_user = latest_manifest.and_then(|m| m._npm_user.as_ref()).map(person_to_npm_user);
+    let npm_user = latest_manifest
+        .and_then(|m| m._npm_user.as_ref())
+        .map(person_to_npm_user);
     let publish_time = latest_manifest
         .and_then(|m| packument.time.get(&m.version))
         .and_then(|t| {
@@ -129,8 +133,11 @@ pub fn build_search_document(
 
     let mut versions: Vec<String> = packument.versions.keys().cloned().collect();
     versions.sort();
-    let dist_tags: std::collections::BTreeMap<String, String> =
-        packument.dist_tags.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    let dist_tags: std::collections::BTreeMap<String, String> = packument
+        .dist_tags
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
 
     let package = PackageDoc {
         name: packument.name.clone(),
@@ -165,7 +172,9 @@ pub fn sum_downloads(rows: &[UpstreamPackageDownloadRow]) -> u64 {
 }
 
 pub fn sum_local_downloads(rows: &[(i64, String, PackageDownloadRow)]) -> u64 {
-    rows.iter().map(|(_, _, r)| sum_local_row_downloads(r)).sum()
+    rows.iter()
+        .map(|(_, _, r)| sum_local_row_downloads(r))
+        .sum()
 }
 
 fn row_days_u64(row: &[u32; 31]) -> u64 {
@@ -174,21 +183,19 @@ fn row_days_u64(row: &[u32; 31]) -> u64 {
 
 fn sum_row_downloads(row: &UpstreamPackageDownloadRow) -> u64 {
     row_days_u64(&[
-        row.d01, row.d02, row.d03, row.d04, row.d05, row.d06, row.d07,
-        row.d08, row.d09, row.d10, row.d11, row.d12, row.d13, row.d14,
-        row.d15, row.d16, row.d17, row.d18, row.d19, row.d20, row.d21,
-        row.d22, row.d23, row.d24, row.d25, row.d26, row.d27, row.d28,
-        row.d29, row.d30, row.d31,
+        row.d01, row.d02, row.d03, row.d04, row.d05, row.d06, row.d07, row.d08, row.d09, row.d10,
+        row.d11, row.d12, row.d13, row.d14, row.d15, row.d16, row.d17, row.d18, row.d19, row.d20,
+        row.d21, row.d22, row.d23, row.d24, row.d25, row.d26, row.d27, row.d28, row.d29, row.d30,
+        row.d31,
     ])
 }
 
 fn sum_local_row_downloads(row: &PackageDownloadRow) -> u64 {
     row_days_u64(&[
-        row.d01, row.d02, row.d03, row.d04, row.d05, row.d06, row.d07,
-        row.d08, row.d09, row.d10, row.d11, row.d12, row.d13, row.d14,
-        row.d15, row.d16, row.d17, row.d18, row.d19, row.d20, row.d21,
-        row.d22, row.d23, row.d24, row.d25, row.d26, row.d27, row.d28,
-        row.d29, row.d30, row.d31,
+        row.d01, row.d02, row.d03, row.d04, row.d05, row.d06, row.d07, row.d08, row.d09, row.d10,
+        row.d11, row.d12, row.d13, row.d14, row.d15, row.d16, row.d17, row.d18, row.d19, row.d20,
+        row.d21, row.d22, row.d23, row.d24, row.d25, row.d26, row.d27, row.d28, row.d29, row.d30,
+        row.d31,
     ])
 }
 
@@ -266,7 +273,10 @@ mod tests {
         let packument = packument_with_time("2021-09-30T20:34:49.756Z");
         let doc = build_search_document(1, &packument, 0, 0, "public");
         assert_eq!(doc.package.publish_time, Some(1_633_034_089_756));
-        assert_eq!(doc.package.date.as_deref(), Some("2021-09-30T20:34:49.756Z"));
+        assert_eq!(
+            doc.package.date.as_deref(),
+            Some("2021-09-30T20:34:49.756Z")
+        );
     }
 
     #[test]
@@ -291,18 +301,53 @@ mod tests {
         assert_eq!(doc.downloads.local, 3);
         assert_eq!(doc.package.access, "public");
         assert_eq!(doc.package.versions, vec!["1.2.3".to_string()]);
-        assert_eq!(doc.package.dist_tags.get("latest").map(String::as_str), Some("1.2.3"));
-        assert_eq!(doc.package.created.as_deref(), Some("2020-01-01T00:00:00.000Z"));
-        assert_eq!(doc.package.modified.as_deref(), Some("2021-09-30T20:34:49.756Z"));
+        assert_eq!(
+            doc.package.dist_tags.get("latest").map(String::as_str),
+            Some("1.2.3")
+        );
+        assert_eq!(
+            doc.package.created.as_deref(),
+            Some("2020-01-01T00:00:00.000Z")
+        );
+        assert_eq!(
+            doc.package.modified.as_deref(),
+            Some("2021-09-30T20:34:49.756Z")
+        );
     }
 
     #[test]
     fn build_search_document_uses_unique_db_id() {
-        assert_eq!(build_search_document(1, &packument_with_time("2021-09-30T20:34:49.756Z"), 0, 0, "public").id, "1");
-        assert_eq!(build_search_document(999, &packument_with_time("2021-09-30T20:34:49.756Z"), 0, 0, "public").id, "999");
+        assert_eq!(
+            build_search_document(
+                1,
+                &packument_with_time("2021-09-30T20:34:49.756Z"),
+                0,
+                0,
+                "public"
+            )
+            .id,
+            "1"
+        );
+        assert_eq!(
+            build_search_document(
+                999,
+                &packument_with_time("2021-09-30T20:34:49.756Z"),
+                0,
+                0,
+                "public"
+            )
+            .id,
+            "999"
+        );
     }
 
-    fn local_row(version_id: i64, version: &str, d01: u32, d15: u32, d31: u32) -> (i64, String, PackageDownloadRow) {
+    fn local_row(
+        version_id: i64,
+        version: &str,
+        d01: u32,
+        d15: u32,
+        d31: u32,
+    ) -> (i64, String, PackageDownloadRow) {
         (
             version_id,
             version.to_string(),
@@ -311,11 +356,37 @@ mod tests {
                 package_version_id: version_id,
                 year: 2025,
                 month: 6,
-                d01, d02: 0, d03: 0, d04: 0, d05: 0, d06: 0, d07: 0,
-                d08: 0, d09: 0, d10: 0, d11: 0, d12: 0, d13: 0, d14: 0,
-                d15, d16: 0, d17: 0, d18: 0, d19: 0, d20: 0, d21: 0,
-                d22: 0, d23: 0, d24: 0, d25: 0, d26: 0, d27: 0, d28: 0,
-                d29: 0, d30: 0, d31,
+                d01,
+                d02: 0,
+                d03: 0,
+                d04: 0,
+                d05: 0,
+                d06: 0,
+                d07: 0,
+                d08: 0,
+                d09: 0,
+                d10: 0,
+                d11: 0,
+                d12: 0,
+                d13: 0,
+                d14: 0,
+                d15,
+                d16: 0,
+                d17: 0,
+                d18: 0,
+                d19: 0,
+                d20: 0,
+                d21: 0,
+                d22: 0,
+                d23: 0,
+                d24: 0,
+                d25: 0,
+                d26: 0,
+                d27: 0,
+                d28: 0,
+                d29: 0,
+                d30: 0,
+                d31,
             },
         )
     }

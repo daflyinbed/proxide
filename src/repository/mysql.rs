@@ -1,10 +1,10 @@
 use crate::config::{DatabaseConfig, StorageConfig};
 use crate::npm::types::Maintainer;
 use crate::repository::{
-    ChangeStreamCursorRow, CommitVersionParams, DistRow, MAINTAINER_SOURCE_MANUAL,
-    OrganizationRow, OrgMemberRow, PackageDownloadRow, PackageRow, PackageTagRow, PackageVersionRow,
-    Repository, SyncManifestParams, SyncTaskRow, TeamMemberRow, TeamRow, TokenRow,
-    UpstreamPackageDownloadRow, UserRow,
+    ChangeStreamCursorRow, CommitVersionParams, DistRow, MAINTAINER_SOURCE_MANUAL, OrgMemberRow,
+    OrganizationRow, PackageDownloadRow, PackageRow, PackageTagRow, PackageVersionRow, Repository,
+    SyncManifestParams, SyncTaskRow, TeamMemberRow, TeamRow, TokenRow, UpstreamPackageDownloadRow,
+    UserRow,
 };
 use crate::storage::Storage;
 use anyhow::Result;
@@ -878,12 +878,7 @@ impl Repository for MysqlRepository {
 
     // ── maintainers ──
 
-    async fn save_maintainer(
-        &self,
-        package_id: i64,
-        user_id: i64,
-        source: &str,
-    ) -> Result<()> {
+    async fn save_maintainer(&self, package_id: i64, user_id: i64, source: &str) -> Result<()> {
         sqlx::query!(
             r#"INSERT IGNORE INTO maintainers (package_id, user_id, source) VALUES (?, ?, ?)"#,
             package_id,
@@ -1261,11 +1256,7 @@ impl Repository for MysqlRepository {
         Ok(rows.into_iter().map(|r| (r.name, r.role)).collect())
     }
 
-    async fn get_org_member(
-        &self,
-        org_id: i64,
-        user_id: i64,
-    ) -> Result<Option<OrgMemberRow>> {
+    async fn get_org_member(&self, org_id: i64, user_id: i64) -> Result<Option<OrgMemberRow>> {
         let row = sqlx::query_as!(
             OrgMemberRow,
             r#"SELECT id, org_id, user_id, role, created_at FROM org_members WHERE org_id = ? AND user_id = ?"#,
@@ -1299,12 +1290,7 @@ impl Repository for MysqlRepository {
 
     // ── teams ──
 
-    async fn create_team(
-        &self,
-        org_id: i64,
-        name: &str,
-        description: Option<&str>,
-    ) -> Result<i64> {
+    async fn create_team(&self, org_id: i64, name: &str, description: Option<&str>) -> Result<i64> {
         let result = sqlx::query!(
             r#"INSERT INTO teams (org_id, name, description) VALUES (?, ?, ?)"#,
             org_id,
@@ -1316,11 +1302,7 @@ impl Repository for MysqlRepository {
         Ok(result.last_insert_id() as i64)
     }
 
-    async fn get_team_by_org_name(
-        &self,
-        org_id: i64,
-        team_name: &str,
-    ) -> Result<Option<TeamRow>> {
+    async fn get_team_by_org_name(&self, org_id: i64, team_name: &str) -> Result<Option<TeamRow>> {
         let row = sqlx::query_as!(
             TeamRow,
             r#"SELECT id, org_id, name, description, created_at FROM teams WHERE org_id = ? AND name = ?"#,
@@ -1427,10 +1409,7 @@ impl Repository for MysqlRepository {
         Ok(())
     }
 
-    async fn list_packages_for_team(
-        &self,
-        team_id: i64,
-    ) -> Result<Vec<(PackageRow, String)>> {
+    async fn list_packages_for_team(&self, team_id: i64) -> Result<Vec<(PackageRow, String)>> {
         let rows = sqlx::query!(
             r#"SELECT p.id, p.name, p.scope, p.description, p.source, p.access,
                       p.abbreviated_dist_id, p.full_dist_id,
@@ -1526,11 +1505,7 @@ impl Repository for MysqlRepository {
         Ok(exists != 0)
     }
 
-    async fn user_is_org_manager_for_scope(
-        &self,
-        scope: &str,
-        user_id: i64,
-    ) -> Result<bool> {
+    async fn user_is_org_manager_for_scope(&self, scope: &str, user_id: i64) -> Result<bool> {
         let row = sqlx::query!(
             r#"SELECT EXISTS(
                 SELECT 1 FROM org_members om

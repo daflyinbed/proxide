@@ -61,9 +61,8 @@ pub async fn serve_file(
         )));
     }
 
-    let filepath_query = validate_filepath(&filepath).ok_or_else(|| {
-        WebError::BadRequest(format!("invalid file path: /{filepath}"))
-    })?;
+    let filepath_query = validate_filepath(&filepath)
+        .ok_or_else(|| WebError::BadRequest(format!("invalid file path: /{filepath}")))?;
 
     let version_id = resolved.version_row.id;
 

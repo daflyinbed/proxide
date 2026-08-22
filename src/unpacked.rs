@@ -316,7 +316,9 @@ fn scan_shard(shard: &Path, shard_id: u64) -> Result<Vec<ScanFound>> {
     let mut manifests: HashMap<i64, PathBuf> = HashMap::new();
     let mut garbage: Vec<PathBuf> = Vec::new();
 
-    for entry in std::fs::read_dir(shard).with_context(|| format!("failed to read {}", shard.display()))? {
+    for entry in
+        std::fs::read_dir(shard).with_context(|| format!("failed to read {}", shard.display()))?
+    {
         let entry = entry?;
         let name = entry.file_name();
         let name = name.to_string_lossy();
@@ -392,7 +394,9 @@ fn scan_disk(root: &Path) -> Result<Vec<ScanFound>> {
         return Ok(Vec::new());
     }
     let mut found = Vec::new();
-    for entry in std::fs::read_dir(root).with_context(|| format!("failed to read {}", root.display()))? {
+    for entry in
+        std::fs::read_dir(root).with_context(|| format!("failed to read {}", root.display()))?
+    {
         let entry = entry?;
         let name = entry.file_name();
         let name = name.to_string_lossy().into_owned();
@@ -451,9 +455,7 @@ fn select_eviction_candidates(
         if total.saturating_sub(freed) <= low_bytes {
             break;
         }
-        let age = now
-            .duration_since(last_access)
-            .unwrap_or(Duration::ZERO);
+        let age = now.duration_since(last_access).unwrap_or(Duration::ZERO);
         if age < MIN_ACCESS_AGE {
             continue;
         }
@@ -473,7 +475,8 @@ async fn evict_once(state: &AppState) -> Result<(usize, u64)> {
     let entries = store.snapshot_entries();
     let total: u64 = entries.iter().map(|(_, size, _)| size).sum();
     let low_bytes = state.config.cdn.unpacked_low_watermark_bytes();
-    let candidates = select_eviction_candidates(entries, total, max_bytes, low_bytes, SystemTime::now());
+    let candidates =
+        select_eviction_candidates(entries, total, max_bytes, low_bytes, SystemTime::now());
     if candidates.is_empty() {
         return Ok((0, 0));
     }
@@ -560,7 +563,10 @@ mod tests {
             validate_filepath("/leading/slash").as_deref(),
             Some("leading/slash")
         );
-        assert_eq!(validate_filepath("foo@bar.js").as_deref(), Some("foo@bar.js"));
+        assert_eq!(
+            validate_filepath("foo@bar.js").as_deref(),
+            Some("foo@bar.js")
+        );
     }
 
     #[test]
@@ -652,19 +658,17 @@ mod tests {
 
         assert!(!shard9.join("v-9").exists());
         assert!(shard9.join(".staging-v-11-abc").exists());
-        assert!(!shard9
-            .join(".staging-v-9-0123456789abcdef0123456789abcdef")
-            .exists());
+        assert!(
+            !shard9
+                .join(".staging-v-9-0123456789abcdef0123456789abcdef")
+                .exists()
+        );
         assert!(!shard9.join("v-9.meta.json.tmp").exists());
         assert!(shard9.join("random-junk").exists());
         assert!(base.join("not-a-shard").exists());
         assert!(base.join("00").exists());
         assert!(!manifest20.exists());
-        assert!(!manifest20
-            .parent()
-            .unwrap()
-            .join("v-20")
-            .exists());
+        assert!(!manifest20.parent().unwrap().join("v-20").exists());
 
         let _ = fs::remove_dir_all(&base);
     }
@@ -713,10 +717,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn scan_reports_disk_usage_above_payload_sum() {
-        let base = std::env::temp_dir().join(format!(
-            "proxide-unpacked-scan-du-{}",
-            std::process::id()
-        ));
+        let base =
+            std::env::temp_dir().join(format!("proxide-unpacked-scan-du-{}", std::process::id()));
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(&base).unwrap();
 

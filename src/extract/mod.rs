@@ -79,7 +79,9 @@ pub async fn ensure_version_files(
     .await
     .map_err(|e| WebError::CustomApiError(anyhow::anyhow!("disk usage join failed: {e}")))?;
 
-    state.unpacked.insert(version.id, Arc::new(manifest), disk_size);
+    state
+        .unpacked
+        .insert(version.id, Arc::new(manifest), disk_size);
     Ok(())
 }
 
@@ -113,7 +115,10 @@ async fn commit_staging(
     let manifest_path = state.unpacked.manifest_path(version_id);
     let tmp_path = manifest_path.with_file_name(format!(
         "{}.tmp",
-        manifest_path.file_name().unwrap_or_default().to_string_lossy()
+        manifest_path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
     ));
     let bytes = serde_json::to_vec(manifest)?;
     let mut file = tokio::fs::File::create(&tmp_path).await?;
@@ -291,12 +296,15 @@ fn extract_to_dir(
         let size = written;
         let hash = base64::engine::general_purpose::STANDARD.encode(hasher.finalize());
         let content_type = content_type::guess(&rel);
-        if let Some(prev) = files.insert(rel.clone(), ManifestFile {
-            path: rel,
-            size,
-            hash,
-            content_type,
-        }) {
+        if let Some(prev) = files.insert(
+            rel.clone(),
+            ManifestFile {
+                path: rel,
+                size,
+                hash,
+                content_type,
+            },
+        ) {
             total = total.saturating_sub(prev.size);
         }
     }
@@ -307,8 +315,8 @@ fn extract_to_dir(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use flate2::write::GzEncoder;
     use flate2::Compression;
+    use flate2::write::GzEncoder;
     use std::fs;
 
     fn build_tgz(entries: &[(&str, &str)]) -> Vec<u8> {
@@ -320,7 +328,8 @@ mod tests {
                 header.set_size(content.len() as u64);
                 header.set_mode(0o644);
                 header.set_cksum();
-                tar.append_data(&mut header, name, content.as_bytes()).unwrap();
+                tar.append_data(&mut header, name, content.as_bytes())
+                    .unwrap();
             }
             tar.into_inner().unwrap();
         }
@@ -371,13 +380,17 @@ mod tests {
 
     #[test]
     fn extract_enforces_unpacked_limit() {
-        let base = std::env::temp_dir().join(format!("proxide-extract-limit-{}", std::process::id()));
+        let base =
+            std::env::temp_dir().join(format!("proxide-extract-limit-{}", std::process::id()));
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(&base).unwrap();
 
         let tgz = build_tgz(&[("package/big.bin", "0123456789")]);
         let err = extract_to_dir(&tgz, &base, 5).unwrap_err();
-        assert!(format!("{err:#}").contains("maxUnpackedSize"), "got: {err:#}");
+        assert!(
+            format!("{err:#}").contains("maxUnpackedSize"),
+            "got: {err:#}"
+        );
 
         let _ = fs::remove_dir_all(&base);
     }

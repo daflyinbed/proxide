@@ -74,9 +74,7 @@ pub async fn search_packages(
                 ))
             }
         }
-        None => Some(
-            r#"package.access = "public" OR package.access NOT EXISTS"#.to_string(),
-        ),
+        None => Some(r#"package.access = "public" OR package.access NOT EXISTS"#.to_string()),
     };
 
     let results = idx

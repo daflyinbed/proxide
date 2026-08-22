@@ -50,7 +50,9 @@ pub(crate) fn validate_dist_tag(tag: &str) -> WebResult<()> {
         return Err(WebError::BadRequest("tag is empty".to_string()));
     }
     if tag.len() > MAX_TAG_LEN {
-        return Err(WebError::BadRequest("tag cannot exceed 214 characters".to_string()));
+        return Err(WebError::BadRequest(
+            "tag cannot exceed 214 characters".to_string(),
+        ));
     }
     if semver::VersionReq::parse(tag).is_ok() {
         return Err(WebError::BadRequest(format!(
@@ -176,7 +178,14 @@ pub async fn set_dist_tag(
     .await?;
 
     if let Some(idx) = &state.search {
-        crate::search::upsert_search_document(&*state.repo, idx, pkg.id, &pkg.access, &full_manifest).await;
+        crate::search::upsert_search_document(
+            &*state.repo,
+            idx,
+            pkg.id,
+            &pkg.access,
+            &full_manifest,
+        )
+        .await;
     }
 
     log::info!(
@@ -262,7 +271,14 @@ pub async fn remove_dist_tag(
     .await?;
 
     if let Some(idx) = &state.search {
-        crate::search::upsert_search_document(&*state.repo, idx, pkg.id, &pkg.access, &full_manifest).await;
+        crate::search::upsert_search_document(
+            &*state.repo,
+            idx,
+            pkg.id,
+            &pkg.access,
+            &full_manifest,
+        )
+        .await;
     }
 
     log::info!(

@@ -137,10 +137,9 @@ async fn run_cleanup_storage(config: config::Config) -> Result<()> {
 async fn run_reindex_search(config: config::Config) -> Result<()> {
     let state = AppState::new(config).await?;
     state.repo.migrate().await?;
-    let search = state
-        .search
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("search is not enabled (configure [search] in proxide.toml)"))?;
+    let search = state.search.as_ref().ok_or_else(|| {
+        anyhow::anyhow!("search is not enabled (configure [search] in proxide.toml)")
+    })?;
     search.ensure_index().await?;
     proxide::search::reindex_all(&*state.repo, search).await
 }

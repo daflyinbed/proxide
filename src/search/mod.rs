@@ -1,8 +1,6 @@
 pub mod document;
 
-pub use document::{
-    build_search_document, sum_downloads, sum_local_downloads, SearchDocument,
-};
+pub use document::{SearchDocument, build_search_document, sum_downloads, sum_local_downloads};
 
 use anyhow::{Context, Result};
 use meilisearch_sdk::client::Client;
@@ -43,11 +41,7 @@ impl SearchIndex {
     }
 
     pub async fn ensure_index(&self) -> Result<()> {
-        match self
-            .client
-            .create_index(&self.index_uid, Some("id"))
-            .await
-        {
+        match self.client.create_index(&self.index_uid, Some("id")).await {
             Ok(task) => {
                 let outcome = task
                     .wait_for_completion(&self.client, None, None)
@@ -65,8 +59,7 @@ impl SearchIndex {
                         );
                     }
                     Task::Failed { content } => {
-                        return Err(content.error)
-                            .context("index creation task failed");
+                        return Err(content.error).context("index creation task failed");
                     }
                     other => {
                         return Err(anyhow::anyhow!(
@@ -75,9 +68,7 @@ impl SearchIndex {
                     }
                 }
             }
-            Err(MeiliError::Meilisearch(e))
-                if e.error_code == ErrorCode::IndexAlreadyExists =>
-            {
+            Err(MeiliError::Meilisearch(e)) if e.error_code == ErrorCode::IndexAlreadyExists => {
                 log::info!(
                     action = "search_init";
                     "meilisearch index `{}` already exists; proceeding to apply settings",

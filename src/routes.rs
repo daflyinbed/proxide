@@ -2,7 +2,7 @@ use crate::handlers;
 use crate::openapi::ApiDoc;
 use crate::state::AppState;
 use utoipa::OpenApi;
-use utoipa_axum::{routes, router::OpenApiRouter};
+use utoipa_axum::{router::OpenApiRouter, routes};
 use utoipa_scalar::{Scalar, Servable};
 
 pub fn build_router(state: AppState) -> axum::Router {
@@ -13,13 +13,22 @@ pub fn build_router(state: AppState) -> axum::Router {
         .routes(routes!(handlers::web_login::poll_done))
         .routes(routes!(handlers::sync::trigger_sync))
         .routes(routes!(handlers::dist_tags::list_dist_tags))
-        .routes(routes!(handlers::dist_tags::set_dist_tag, handlers::dist_tags::remove_dist_tag))
+        .routes(routes!(
+            handlers::dist_tags::set_dist_tag,
+            handlers::dist_tags::remove_dist_tag
+        ))
         .routes(routes!(handlers::search::search_packages))
         .routes(routes!(handlers::tokens::whoami))
         .routes(routes!(handlers::tokens::logout))
-        .routes(routes!(handlers::tokens::list_tokens, handlers::tokens::create_token))
+        .routes(routes!(
+            handlers::tokens::list_tokens,
+            handlers::tokens::create_token
+        ))
         .routes(routes!(handlers::tokens::revoke_token))
-        .routes(routes!(handlers::profile::get_profile, handlers::profile::update_profile))
+        .routes(routes!(
+            handlers::profile::get_profile,
+            handlers::profile::update_profile
+        ))
         .routes(routes!(handlers::access::list_collaborators))
         .routes(routes!(handlers::access::get_visibility))
         .routes(routes!(handlers::access::set_access))
@@ -32,10 +41,7 @@ pub fn build_router(state: AppState) -> axum::Router {
         .routes(routes!(handlers::orgs::org_packages))
         .routes(routes!(handlers::teams::create_team))
         .routes(routes!(handlers::teams::destroy_team))
-        .routes(routes!(
-            handlers::teams::add_user,
-            handlers::teams::rm_user
-        ))
+        .routes(routes!(handlers::teams::add_user, handlers::teams::rm_user))
         .routes(routes!(handlers::teams::list_teams))
         .routes(routes!(handlers::teams::list_users))
         .routes(routes!(handlers::access::list_team_packages))
@@ -78,22 +84,31 @@ mod tests {
     use utoipa::OpenApi;
 
     fn collect_paths() -> Vec<String> {
-        let mut router = OpenApiRouter::with_openapi(ApiDoc::openapi())
-            .routes(routes!(handlers::home::ping));
+        let mut router =
+            OpenApiRouter::with_openapi(ApiDoc::openapi()).routes(routes!(handlers::home::ping));
         let npm = OpenApiRouter::new()
             .routes(routes!(handlers::registry::registry_root))
-        .routes(routes!(handlers::auth::login, handlers::auth::show_user))
+            .routes(routes!(handlers::auth::login, handlers::auth::show_user))
             .routes(routes!(handlers::web_login::init_login))
             .routes(routes!(handlers::web_login::poll_done))
             .routes(routes!(handlers::sync::trigger_sync))
             .routes(routes!(handlers::dist_tags::list_dist_tags))
-            .routes(routes!(handlers::dist_tags::set_dist_tag, handlers::dist_tags::remove_dist_tag))
+            .routes(routes!(
+                handlers::dist_tags::set_dist_tag,
+                handlers::dist_tags::remove_dist_tag
+            ))
             .routes(routes!(handlers::search::search_packages))
             .routes(routes!(handlers::tokens::whoami))
             .routes(routes!(handlers::tokens::logout))
-            .routes(routes!(handlers::tokens::list_tokens, handlers::tokens::create_token))
+            .routes(routes!(
+                handlers::tokens::list_tokens,
+                handlers::tokens::create_token
+            ))
             .routes(routes!(handlers::tokens::revoke_token))
-            .routes(routes!(handlers::profile::get_profile, handlers::profile::update_profile))
+            .routes(routes!(
+                handlers::profile::get_profile,
+                handlers::profile::update_profile
+            ))
             .routes(routes!(handlers::access::list_collaborators))
             .routes(routes!(handlers::access::get_visibility))
             .routes(routes!(handlers::access::set_access))
@@ -106,10 +121,7 @@ mod tests {
             .routes(routes!(handlers::orgs::org_packages))
             .routes(routes!(handlers::teams::create_team))
             .routes(routes!(handlers::teams::destroy_team))
-            .routes(routes!(
-                handlers::teams::add_user,
-                handlers::teams::rm_user
-            ))
+            .routes(routes!(handlers::teams::add_user, handlers::teams::rm_user))
             .routes(routes!(handlers::teams::list_teams))
             .routes(routes!(handlers::teams::list_users))
             .routes(routes!(handlers::access::list_team_packages))
@@ -133,13 +145,7 @@ mod tests {
             .nest("/api", api)
             .nest("/jsdelivr/npm", jsdelivr_npm)
             .nest("/jsdelivr/api/npm", jsdelivr_api);
-        router
-            .to_openapi()
-            .paths
-            .paths
-            .keys()
-            .cloned()
-            .collect()
+        router.to_openapi().paths.paths.keys().cloned().collect()
     }
 
     #[test]
@@ -183,7 +189,10 @@ mod tests {
             "/jsdelivr/api/npm/{*rest}",
         ];
         for e in expected {
-            assert!(paths.contains(&e.to_string()), "missing OpenAPI path: {e}\ngot: {paths:?}");
+            assert!(
+                paths.contains(&e.to_string()),
+                "missing OpenAPI path: {e}\ngot: {paths:?}"
+            );
         }
     }
 }

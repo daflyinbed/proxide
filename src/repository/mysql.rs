@@ -12,7 +12,7 @@ use crate::storage::backend::{EncodedFile, EncodedObject};
 use anyhow::Result;
 use async_trait::async_trait;
 use sha2::{Digest, Sha256};
-use sqlx::{MySql, Pool};
+use sqlx::{Connection, MySql, MySqlConnection, Pool};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
@@ -122,18 +122,20 @@ impl Repository for MysqlRepository {
     }
 
     async fn try_acquire_process_lock(&self, name: &str) -> Result<Option<ProcessLock>> {
-        let mut connection = self.pool.acquire().await?;
+        let options = self.pool.connect_options();
+        let mut connection = MySqlConnection::connect_with(options.as_ref()).await?;
         let database = sqlx::query_scalar!(r#"SELECT DATABASE() AS `database!`"#)
-            .fetch_one(&mut *connection)
+            .fetch_one(&mut connection)
             .await?;
         let namespace = hex::encode(Sha256::digest(database.as_bytes()));
         let name = format!("proxide:{}:{name}", &namespace[..16]);
         let acquired = sqlx::query_scalar!(r#"SELECT GET_LOCK(?, 0) AS `acquired`"#, name)
-            .fetch_one(&mut *connection)
+            .fetch_one(&mut connection)
             .await?;
         if acquired == Some(1) {
             Ok(Some(ProcessLock::new(name, connection)))
         } else {
+            connection.close().await?;
             Ok(None)
         }
     }

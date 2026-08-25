@@ -5,8 +5,7 @@ pub mod mysql;
 use crate::npm::types::Maintainer;
 use anyhow::Result;
 use async_trait::async_trait;
-use sqlx::MySql;
-use sqlx::pool::PoolConnection;
+use sqlx::{Connection, MySqlConnection};
 use std::collections::HashMap;
 
 pub const MAINTAINER_SOURCE_TEAM: &str = "team";
@@ -227,11 +226,11 @@ pub struct StorageObjectMeta {
 
 pub struct ProcessLock {
     name: String,
-    connection: Option<PoolConnection<MySql>>,
+    connection: Option<MySqlConnection>,
 }
 
 impl ProcessLock {
-    pub(crate) fn new(name: String, connection: PoolConnection<MySql>) -> Self {
+    pub(crate) fn new(name: String, connection: MySqlConnection) -> Self {
         Self {
             name,
             connection: Some(connection),
@@ -247,7 +246,7 @@ impl ProcessLock {
             r#"SELECT IF(IS_USED_LOCK(?) = CONNECTION_ID(), 1, 0) AS `held!`"#,
             self.name
         )
-        .fetch_one(&mut **connection)
+        .fetch_one(&mut *connection)
         .await?;
         if held != 1 {
             anyhow::bail!("lost process lock {}", self.name);
@@ -259,8 +258,9 @@ impl ProcessLock {
         if let Some(mut connection) = self.connection.take() {
             let released =
                 sqlx::query_scalar!(r#"SELECT RELEASE_LOCK(?) AS `released`"#, self.name)
-                    .fetch_one(&mut *connection)
+                    .fetch_one(&mut connection)
                     .await?;
+            connection.close().await?;
             if released != Some(1) {
                 anyhow::bail!("failed to release process lock {}", self.name);
             }

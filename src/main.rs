@@ -5,9 +5,11 @@ use logforth::append;
 use logforth::record::LevelFilter;
 use proxide::config;
 use proxide::org_cli::{OrgAction, run_org};
+use proxide::repository::ProcessLock;
 use proxide::routes::build_router;
 use proxide::state::AppState;
 use proxide::worker;
+use std::future::{Future, IntoFuture};
 use tokio::net::TcpListener;
 use tokio::signal;
 use tracing_subscriber::layer::SubscriberExt;
@@ -23,7 +25,10 @@ struct Cli {
 enum Commands {
     Server,
     Worker,
-    CleanupStorage,
+    CleanupStorage {
+        #[arg(long)]
+        full_scan: bool,
+    },
     ReindexSearch,
     Bootstrap,
     TrainZstdDict {
@@ -59,7 +64,7 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Server => run_server(cfg).await,
         Commands::Worker => run_worker(cfg).await,
-        Commands::CleanupStorage => run_cleanup_storage(cfg).await,
+        Commands::CleanupStorage { full_scan } => run_cleanup_storage(cfg, full_scan).await,
         Commands::ReindexSearch => run_reindex_search(cfg).await,
         Commands::Bootstrap => run_bootstrap(cfg).await,
         Commands::TrainZstdDict {
@@ -74,7 +79,29 @@ async fn run_server(config: config::Config) -> Result<()> {
     log::info!("Proxide server starting up...");
 
     let state = AppState::new(config).await?;
+    let mut server_lock = state
+        .repo
+        .try_acquire_process_lock("server-writer")
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("another proxide server writer is active"))?;
     state.repo.migrate().await?;
+
+    if state.config.storage_gc.startup_enabled {
+        if let Some(mut worker_lock) = state.repo.try_acquire_process_lock("worker-writer").await? {
+            let deleted = run_while_locks_held(
+                worker::cleanup_storage::cleanup_orphan_storage(
+                    &state.repo,
+                    &state.config.storage_gc,
+                ),
+                &mut [&mut server_lock, &mut worker_lock],
+            )
+            .await?;
+            worker_lock.release().await?;
+            log::info!(action = "storage_gc_complete"; "deleted={deleted}");
+        } else {
+            log::warn!(action = "storage_gc_skipped"; "worker writer is active");
+        }
+    }
 
     if state.config.cdn.enabled {
         proxide::unpacked::startup_scan(&state).await?;
@@ -97,9 +124,16 @@ async fn run_server(config: config::Config) -> Result<()> {
     let listener = TcpListener::bind(state.config.server.full_url()).await?;
     let shutdown_flush_state = state.clone();
     let router = build_router(state);
-    axum::serve(listener, router)
+    let server = axum::serve(listener, router)
         .with_graceful_shutdown(shutdown_signal())
-        .await?;
+        .into_future();
+    tokio::pin!(server);
+    tokio::select! {
+        result = &mut server => result?,
+        result = monitor_process_lock(server_lock) => {
+            return Err(result.expect_err("process lock monitor returned unexpectedly"));
+        }
+    }
 
     flush_handle.abort();
     let _ = flush_handle.await;
@@ -117,21 +151,85 @@ async fn run_worker(config: config::Config) -> Result<()> {
     log::info!("Proxide worker starting up...");
 
     let state = AppState::new(config).await?;
-    state.repo.migrate().await?;
-    worker::run_worker(
+    let ping_url = format!(
+        "{}/-/ping",
+        state.config.server.root_url.trim_end_matches('/')
+    );
+    let health_client = reqwest::Client::builder()
+        .no_proxy()
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .timeout(std::time::Duration::from_secs(10))
+        .build()?;
+    let ping = health_client
+        .get(&ping_url)
+        .send()
+        .await
+        .map_err(|error| anyhow::anyhow!("server is not healthy at {ping_url}: {error}"))?;
+    if !ping.status().is_success() {
+        anyhow::bail!(
+            "server is not healthy at {ping_url}: status {}",
+            ping.status()
+        );
+    }
+    let worker_lock = state
+        .repo
+        .try_acquire_process_lock("worker-writer")
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("another proxide worker writer is active"))?;
+    let worker = worker::run_worker(
         state.repo,
         state.config,
         state.http,
         state.package_lock,
         state.search,
-    )
-    .await
+    );
+    tokio::pin!(worker);
+    tokio::select! {
+        result = &mut worker => result,
+        result = monitor_process_lock(worker_lock) => {
+            Err(result.expect_err("process lock monitor returned unexpectedly"))
+        }
+    }
 }
 
-async fn run_cleanup_storage(config: config::Config) -> Result<()> {
+async fn run_cleanup_storage(config: config::Config, full_scan: bool) -> Result<()> {
     let state = AppState::new(config).await?;
+    let mut server_lock = state
+        .repo
+        .try_acquire_process_lock("server-writer")
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("server writer is active; refusing storage cleanup"))?;
+    let mut worker_lock = state
+        .repo
+        .try_acquire_process_lock("worker-writer")
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("worker writer is active; refusing storage cleanup"))?;
     state.repo.migrate().await?;
-    worker::cleanup_storage::cleanup_orphan_storage(&state.repo).await
+    let (deleted, untracked) = run_while_locks_held(
+        async {
+            let deleted = worker::cleanup_storage::cleanup_orphan_storage(
+                &state.repo,
+                &state.config.storage_gc,
+            )
+            .await?;
+            let untracked = if full_scan {
+                worker::cleanup_storage::cleanup_untracked_storage(
+                    &state.repo,
+                    &state.config.storage_gc,
+                )
+                .await?
+            } else {
+                0
+            };
+            Ok((deleted, untracked))
+        },
+        &mut [&mut server_lock, &mut worker_lock],
+    )
+    .await?;
+    worker_lock.release().await?;
+    server_lock.release().await?;
+    println!("Deleted {deleted} orphan dist object(s) and {untracked} untracked object(s).");
+    Ok(())
 }
 
 async fn run_reindex_search(config: config::Config) -> Result<()> {
@@ -183,5 +281,31 @@ async fn shutdown_signal() {
     tokio::select! {
         () = ctrl_c => {},
         () = terminate => {},
+    }
+}
+
+async fn monitor_process_lock(mut lock: ProcessLock) -> Result<()> {
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+    loop {
+        interval.tick().await;
+        lock.check().await?;
+    }
+}
+
+async fn run_while_locks_held<F, T>(future: F, locks: &mut [&mut ProcessLock]) -> Result<T>
+where
+    F: Future<Output = Result<T>>,
+{
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+    tokio::pin!(future);
+    loop {
+        tokio::select! {
+            result = &mut future => return result,
+            _ = interval.tick() => {
+                for lock in locks.iter_mut() {
+                    lock.check().await?;
+                }
+            }
+        }
     }
 }

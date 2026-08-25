@@ -1,6 +1,6 @@
 {
   "db_name": "MySQL",
-  "query": "SELECT id, package_id, version, abbrev_dist_id, manifest_dist_id, tar_dist_id, readme_dist_id, publish_time, is_pre_release as \"is_pre_release: bool\", padding_version FROM package_versions WHERE package_id = ? AND version = ?",
+  "query": "SELECT id, package_id, version, tar_dist_id, readme_dist_id, tar_size,\n                      tar_shasum as \"tar_shasum: String\", tar_integrity as \"tar_integrity: String\",\n                      publish_time, is_pre_release as \"is_pre_release: bool\", padding_version\n               FROM package_versions WHERE package_id = ? ORDER BY publish_time DESC",
   "describe": {
     "columns": [
       {
@@ -32,25 +32,25 @@
       },
       {
         "ordinal": 3,
-        "name": "abbrev_dist_id",
+        "name": "tar_dist_id",
         "type_info": {
           "type": "LongLong",
-          "flags": "",
+          "flags": "MULTIPLE_KEY",
           "max_size": 20
         }
       },
       {
         "ordinal": 4,
-        "name": "manifest_dist_id",
+        "name": "readme_dist_id",
         "type_info": {
           "type": "LongLong",
-          "flags": "",
+          "flags": "MULTIPLE_KEY",
           "max_size": 20
         }
       },
       {
         "ordinal": 5,
-        "name": "tar_dist_id",
+        "name": "tar_size",
         "type_info": {
           "type": "LongLong",
           "flags": "",
@@ -59,15 +59,24 @@
       },
       {
         "ordinal": 6,
-        "name": "readme_dist_id",
+        "name": "tar_shasum: String",
         "type_info": {
-          "type": "LongLong",
-          "flags": "",
-          "max_size": 20
+          "type": "VarString",
+          "flags": "BINARY",
+          "max_size": 512
         }
       },
       {
         "ordinal": 7,
+        "name": "tar_integrity: String",
+        "type_info": {
+          "type": "VarString",
+          "flags": "BINARY",
+          "max_size": 4096
+        }
+      },
+      {
+        "ordinal": 8,
         "name": "publish_time",
         "type_info": {
           "type": "Datetime",
@@ -76,7 +85,7 @@
         }
       },
       {
-        "ordinal": 8,
+        "ordinal": 9,
         "name": "is_pre_release: bool",
         "type_info": {
           "type": "Tiny",
@@ -85,7 +94,7 @@
         }
       },
       {
-        "ordinal": 9,
+        "ordinal": 10,
         "name": "padding_version",
         "type_info": {
           "type": "VarString",
@@ -95,7 +104,7 @@
       }
     ],
     "parameters": {
-      "Right": 2
+      "Right": 1
     },
     "nullable": [
       false,
@@ -105,10 +114,11 @@
       true,
       true,
       true,
+      true,
       false,
       false,
       true
     ]
   },
-  "hash": "143f5c7a9a50f9d253bee329dfdbe881c883953fa0a7e189ad1cb088fe14aaa5"
+  "hash": "aba08fdaebf7d46e8ecc13bbd9bffd3c74d207757d5accaf93da6dfa61163a56"
 }

@@ -1,6 +1,7 @@
 use crate::error::{WebError, WebResult};
+use crate::handlers::publish::verify_integrity_digests;
 use crate::middleware::auth::ensure_package_readable;
-use crate::repository::PackageVersionRow;
+use crate::repository::AttachDistOutcome;
 use crate::state::{AppState, TarballInflight, TarballInflightError};
 use axum::body::Body;
 use axum::http::HeaderMap;
@@ -8,6 +9,8 @@ use axum::response::Response;
 use bytes::Bytes;
 use futures::{StreamExt, stream};
 use reqwest::StatusCode;
+use sha1::Sha1;
+use sha2::{Digest, Sha512};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -19,7 +22,6 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 const TARBALL_CONTENT_TYPE: &str = "application/octet-stream";
 const CACHE_READ_CHUNK_SIZE: usize = 64 * 1024;
-const MULTIPART_UPLOAD_CONCURRENCY: usize = 4;
 
 fn tarball_response(body: Body, content_length: Option<u64>) -> Response {
     let mut builder = Response::builder()
@@ -65,12 +67,18 @@ fn inflight_error_to_io(error: TarballInflightError) -> io::Error {
     }
 }
 
-async fn stream_storage_tarball(state: &AppState, storage_key: &str) -> WebResult<Response> {
+async fn stream_storage_tarball(state: &AppState, dist_id: i64) -> WebResult<Response> {
+    let dist = state
+        .repo
+        .get_dist(dist_id)
+        .await
+        .map_err(WebError::CustomApiError)?
+        .ok_or_else(|| WebError::ServiceUnavailable(anyhow::anyhow!("dist {dist_id} not found")))?;
     let result = state
         .repo
-        .storage_get_result(storage_key)
+        .storage_get_result(&dist.path)
         .await
-        .map_err(WebError::CustomApiError)?;
+        .map_err(WebError::ServiceUnavailable)?;
     let content_length = result.meta.size;
     let body = Body::from_stream(result.into_stream());
     Ok(tarball_response(body, Some(content_length)))
@@ -178,18 +186,19 @@ async fn open_cache_reader(file_path: &Path, offset: u64) -> io::Result<File> {
     Ok(file)
 }
 
-async fn stream_inflight_tarball(inflight: Arc<TarballInflight>) -> WebResult<Response> {
-    wait_for_inflight_ready(&inflight).await?;
-    inflight.add_reader();
-    let stream = stream_local_cache(inflight.clone()).await.map_err(|e| {
-        inflight.remove_reader();
-        WebError::CustomApiError(e.into())
-    })?;
+async fn stream_inflight_tarball(
+    inflight: Arc<TarballInflight>,
+    cleanup: CacheStreamCleanup,
+) -> WebResult<Response> {
+    let content_length = wait_for_inflight_ready(&inflight).await?;
+    let stream = stream_local_cache(inflight.clone())
+        .await
+        .map_err(|e| WebError::CustomApiError(e.into()))?;
     let stream = LocalCacheStream {
         inner: Box::pin(stream),
-        _cleanup: CacheStreamCleanup { inflight },
+        _cleanup: cleanup,
     };
-    Ok(tarball_response(Body::from_stream(stream), None))
+    Ok(tarball_response(Body::from_stream(stream), content_length))
 }
 
 async fn cleanup_failed_cache_file(file_path: &Path) {
@@ -234,65 +243,10 @@ pub(crate) fn build_tarball_request(
     request
 }
 
-pub(crate) async fn ensure_tarball_dist_link(
-    state: &AppState,
-    fullname: &str,
-    filename: &str,
-    storage_key: &str,
-    version: &PackageVersionRow,
-) -> WebResult<()> {
-    if version.tar_dist_id.is_some() {
-        return Ok(());
-    }
-
-    let dist = state
-        .repo
-        .get_dist_by_path(storage_key)
-        .await
-        .map_err(WebError::CustomApiError)?;
-
-    let dist_id = if let Some(dist) = dist {
-        dist.id
-    } else {
-        let size = state
-            .repo
-            .storage_get_result(storage_key)
-            .await
-            .map_err(WebError::CustomApiError)?
-            .meta
-            .size;
-
-        state
-            .repo
-            .create_dist(filename, storage_key, size as i64, None, None)
-            .await
-            .map_err(WebError::CustomApiError)?
-    };
-
-    state
-        .repo
-        .update_version_dists(
-            version.id,
-            version.abbrev_dist_id,
-            version.manifest_dist_id,
-            Some(dist_id),
-            version.readme_dist_id,
-        )
-        .await
-        .map_err(|e| {
-            WebError::CustomApiError(anyhow::anyhow!(
-                "failed to update tar dist for {fullname}@{}: {e:#}",
-                version.version
-            ))
-        })?;
-
-    Ok(())
-}
-
 async fn run_tarball_producer(
     state: AppState,
     inflight: Arc<TarballInflight>,
-    storage_key: String,
+    inflight_key: String,
     fullname: String,
     package_id: i64,
     version_name: String,
@@ -335,7 +289,6 @@ async fn run_tarball_producer(
             )));
         }
 
-        let content_length = upstream_resp.content_length();
         let mut cache_file = File::create(&file_path).await.map_err(|e| {
             TarballInflightError::Internal(format!(
                 "failed to create cache file {}: {e}",
@@ -343,21 +296,9 @@ async fn run_tarball_producer(
             ))
         })?;
 
-        let mut upload = Some(
-            state
-                .repo
-                .storage_put_multipart(&storage_key)
-                .await
-                .map_err(|e| {
-                    TarballInflightError::Internal(format!(
-                        "failed to start multipart upload for {storage_key}: {e:#}"
-                    ))
-                })?,
-        );
-
-        inflight.mark_ready(content_length);
-
         let mut bytes_written = 0u64;
+        let mut sha1 = Sha1::new();
+        let mut sha512 = Sha512::new();
         let mut upstream_stream = upstream_resp.bytes_stream();
 
         while let Some(chunk) = upstream_stream.next().await {
@@ -374,26 +315,12 @@ async fn run_tarball_producer(
                 ))
             })?;
 
-            upload
-                .as_mut()
-                .expect("multipart upload should exist while streaming")
-                .wait_for_capacity(MULTIPART_UPLOAD_CONCURRENCY)
-                .await
-                .map_err(|e| {
-                    TarballInflightError::Internal(format!(
-                        "failed waiting for multipart upload capacity on {storage_key}: {e:#}"
-                    ))
-                })?;
-            upload
-                .as_mut()
-                .expect("multipart upload should exist while streaming")
-                .put(chunk.clone());
-
+            sha1.update(&chunk);
+            sha512.update(&chunk);
             bytes_written += chunk.len() as u64;
             let max_tarball_size = state.config.cdn.max_tarball_size;
             if bytes_written > max_tarball_size {
                 cache_file.flush().await.ok();
-                drop(std::mem::take(&mut upload));
                 let _ = fs::remove_file(&file_path).await;
                 return Err(TarballInflightError::Internal(format!(
                     "tarball for {fullname}/-/{filename} exceeds cdn.maxTarballSize ({max_tarball_size})"
@@ -409,17 +336,6 @@ async fn run_tarball_producer(
             ))
         })?;
 
-        upload
-            .take()
-            .expect("multipart upload should exist before completion")
-            .finish()
-            .await
-            .map_err(|e| {
-                TarballInflightError::Internal(format!(
-                    "failed completing multipart upload for {storage_key}: {e:#}"
-                ))
-            })?;
-
         let latest_version = state
             .repo
             .get_version(package_id, &version_name)
@@ -430,48 +346,50 @@ async fn run_tarball_producer(
                 ))
             })?;
 
-        if latest_version
-            .as_ref()
-            .and_then(|v| v.tar_dist_id)
-            .is_none()
+        let version = latest_version.ok_or_else(|| {
+            TarballInflightError::NotFound(format!("{fullname}@{version_name} not found"))
+        })?;
+        let sha1_digest = sha1.finalize();
+        let sha512_digest = sha512.finalize();
+        if let Some(expected) = version.tar_integrity.as_deref()
+            && !verify_integrity_digests(&sha1_digest, &sha512_digest, expected)
         {
-            let dist_id = state
-                .repo
-                .create_dist(
-                    filename.as_str(),
-                    &storage_key,
-                    bytes_written as i64,
-                    None,
-                    None,
-                )
-                .await
-                .map_err(|e| {
-                    TarballInflightError::Internal(format!(
-                        "failed to insert dist metadata for {storage_key}: {e:#}"
-                    ))
-                })?;
-
-            let version = latest_version.ok_or_else(|| {
-                TarballInflightError::NotFound(format!("{fullname}@{version_name} not found"))
+            return Err(TarballInflightError::Internal(format!(
+                "upstream integrity mismatch for {fullname}@{version_name}"
+            )));
+        }
+        if let Some(expected) = version.tar_shasum.as_deref()
+            && hex::encode(sha1_digest) != expected
+        {
+            return Err(TarballInflightError::Internal(format!(
+                "upstream shasum mismatch for {fullname}@{version_name}"
+            )));
+        }
+        let prepared = state
+            .repo
+            .prepare_raw_dist_file(&file_path)
+            .await
+            .map_err(|e| {
+                TarballInflightError::Internal(format!(
+                    "failed preparing tar dist for {fullname}@{version_name}: {e:#}"
+                ))
             })?;
-
-            state
-                .repo
-                .update_version_dists(
-                    version.id,
-                    version.abbrev_dist_id,
-                    version.manifest_dist_id,
-                    Some(dist_id),
-                    version.readme_dist_id,
-                )
-                .await
-                .map_err(|e| {
-                    TarballInflightError::Internal(format!(
-                        "failed to update tar dist for {fullname}@{version_name}: {e:#}"
-                    ))
-                })?;
+        let outcome = state
+            .repo
+            .attach_tar_dist(version.id, &prepared, bytes_written as i64)
+            .await
+            .map_err(|e| {
+                TarballInflightError::Internal(format!(
+                    "failed attaching tar dist for {fullname}@{version_name}: {e:#}"
+                ))
+            })?;
+        if outcome == AttachDistOutcome::VersionDeleted {
+            return Err(TarballInflightError::NotFound(format!(
+                "{fullname}@{version_name} not found"
+            )));
         }
 
+        inflight.mark_ready(Some(bytes_written));
         inflight.finish();
 
         Ok::<(), TarballInflightError>(())
@@ -480,7 +398,7 @@ async fn run_tarball_producer(
 
     match result {
         Ok(()) => {
-            state.tarball_downloads.remove(&storage_key);
+            state.tarball_downloads.remove(&inflight_key);
             cleanup_completed_cache_file(inflight).await;
         }
         Err(error_kind) => {
@@ -491,13 +409,13 @@ async fn run_tarball_producer(
                 cleanup_failed_cache_file(&inflight.file_path).await;
             }
 
-            state.tarball_downloads.remove(&storage_key);
+            state.tarball_downloads.remove(&inflight_key);
             if download_completed {
                 cleanup_completed_cache_file(inflight).await;
             }
 
             if let TarballInflightError::Internal(message) = error_kind {
-                log::error!("tarball background download failed for {storage_key}: {message}");
+                log::error!("tarball background download failed for {inflight_key}: {message}");
             }
         }
     }
@@ -541,26 +459,27 @@ pub async fn download_tarball_inner(
         .or_insert(AtomicU64::new(0))
         .fetch_add(1, Ordering::Relaxed);
 
-    let storage_key = format!("packages/{fullname}/{version_name}/{filename}");
-    if state
-        .repo
-        .storage_exists(&storage_key)
-        .await
-        .map_err(WebError::CustomApiError)?
-    {
-        ensure_tarball_dist_link(state, fullname, filename, &storage_key, &version).await?;
-        return stream_storage_tarball(state, &storage_key).await;
+    if let Some(dist_id) = version.tar_dist_id {
+        return stream_storage_tarball(state, dist_id).await;
     }
 
-    let cache_file_path = tarball_cache_path(&state.config.server.tarball_cache_dir, &storage_key);
+    let inflight_key = format!("{fullname}@{version_name}");
+    let cache_file_path = tarball_cache_path(
+        &state.config.server.tarball_cache_dir,
+        &format!("{fullname}/{version_name}/{filename}"),
+    );
     let (inflight, is_leader) = state
         .tarball_downloads
-        .get_or_insert(&storage_key, cache_file_path);
+        .get_or_insert(&inflight_key, cache_file_path);
+    inflight.add_reader();
+    let cleanup = CacheStreamCleanup {
+        inflight: inflight.clone(),
+    };
 
     if is_leader {
         let state = state.clone();
         let inflight = inflight.clone();
-        let storage_key = storage_key.clone();
+        let inflight_key = inflight_key.clone();
         let fullname = fullname.to_string();
         let version_name = version_name.clone();
         let filename = filename.to_string();
@@ -568,7 +487,7 @@ pub async fn download_tarball_inner(
             run_tarball_producer(
                 state,
                 inflight,
-                storage_key,
+                inflight_key,
                 fullname,
                 pkg.id,
                 version_name,
@@ -578,7 +497,7 @@ pub async fn download_tarball_inner(
         });
     }
 
-    stream_inflight_tarball(inflight).await
+    stream_inflight_tarball(inflight, cleanup).await
 }
 
 #[cfg(test)]

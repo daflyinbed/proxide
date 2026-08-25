@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO dists (storage_sha256, path, stored_size)\n               VALUES (?, ?, ?)\n               ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "bad741e226e49c74746440c6494baec35d9af9e3926ec6520fb6a37488671d15"
+}

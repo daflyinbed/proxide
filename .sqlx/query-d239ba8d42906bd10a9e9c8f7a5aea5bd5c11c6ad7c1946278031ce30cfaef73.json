@@ -1,0 +1,24 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT IF(IS_USED_LOCK(?) = CONNECTION_ID(), 1, 0) AS `held!`",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "held!",
+        "type_info": {
+          "type": "LongLong",
+          "flags": "NOT_NULL | BINARY",
+          "max_size": 2
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "d239ba8d42906bd10a9e9c8f7a5aea5bd5c11c6ad7c1946278031ce30cfaef73"
+}

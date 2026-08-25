@@ -1,17 +1,19 @@
 use crate::config::{DatabaseConfig, StorageConfig};
 use crate::npm::types::Maintainer;
 use crate::repository::{
-    ChangeStreamCursorRow, CommitVersionParams, DistRow, MAINTAINER_SOURCE_MANUAL, OrgMemberRow,
-    OrganizationRow, PackageDownloadRow, PackageRow, PackageTagRow, PackageVersionRow, Repository,
-    SyncManifestParams, SyncTaskRow, TeamMemberRow, TeamRow, TokenRow, UpstreamPackageDownloadRow,
-    UserRow,
+    AttachDistOutcome, ChangeStreamCursorRow, DistRow, LocalManifestCommitParams,
+    MAINTAINER_SOURCE_MANUAL, OrgMemberRow, OrganizationRow, PackageDownloadRow, PackageRow,
+    PackageTagRow, PackageVersionRow, PreparedDist, ProcessLock, PublishCommitParams, Repository,
+    StorageObjectMeta, SyncPackageCommitParams, SyncPackageCommitResult, SyncTaskRow,
+    TeamMemberRow, TeamRow, TokenRow, UpstreamPackageDownloadRow, UserRow,
 };
 use crate::storage::Storage;
+use crate::storage::backend::{EncodedFile, EncodedObject};
 use anyhow::Result;
 use async_trait::async_trait;
-use sqlx::{MySql, Pool, Row};
+use sha2::{Digest, Sha256};
+use sqlx::{MySql, Pool};
 use std::collections::HashMap;
-use tracing::error;
 
 #[derive(Debug, Clone)]
 pub struct MysqlRepository {
@@ -40,31 +42,100 @@ impl MysqlRepository {
         self.storage.health_check().await
     }
 
-    async fn delete_dist(&self, id: i64) -> Result<()> {
-        sqlx::query!("DELETE FROM dists WHERE id = ?", id)
-            .execute(&self.pool)
+    async fn reserve_dist(
+        &self,
+        path: &str,
+        storage_sha256: &[u8; 32],
+        stored_size: i64,
+    ) -> Result<PreparedDist> {
+        let mut connection = self.pool.acquire().await?;
+        sqlx::query!(
+            r#"INSERT INTO dists (storage_sha256, path, stored_size)
+               VALUES (?, ?, ?)
+               ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)"#,
+            storage_sha256.as_slice(),
+            path,
+            stored_size
+        )
+        .execute(&mut *connection)
+        .await?;
+        let row = sqlx::query!(
+            r#"SELECT id, storage_sha256, stored_size FROM dists WHERE path = ?"#,
+            path
+        )
+        .fetch_one(&mut *connection)
+        .await?;
+        if row.storage_sha256.as_slice() != storage_sha256 || row.stored_size != stored_size {
+            anyhow::bail!("CAS metadata mismatch for {path}");
+        }
+        Ok(PreparedDist::new(
+            row.id as i64,
+            path.to_string(),
+            *storage_sha256,
+            stored_size,
+        ))
+    }
+
+    async fn prepare_encoded(&self, object: EncodedObject) -> Result<PreparedDist> {
+        let prepared = self
+            .reserve_dist(&object.path, &object.storage_sha256, object.stored_size)
             .await?;
-        Ok(())
+        self.storage.put_encoded(&object).await?;
+        Ok(prepared)
+    }
+
+    async fn prepare_encoded_file(&self, object: EncodedFile) -> Result<PreparedDist> {
+        let prepared = self
+            .reserve_dist(&object.path, &object.storage_sha256, object.stored_size)
+            .await?;
+        self.storage.put_encoded_file(&object).await?;
+        Ok(prepared)
     }
 }
 
 #[async_trait]
 impl Repository for MysqlRepository {
-    async fn storage_exists(&self, key: &str) -> Result<bool> {
-        self.storage.exists(key).await
-    }
-
     async fn storage_get_result(&self, key: &str) -> Result<object_store::GetResult> {
         self.storage.get_result(key).await
     }
 
-    async fn storage_put_multipart(&self, key: &str) -> Result<object_store::WriteMultipart> {
-        self.storage.put_multipart(key).await
+    async fn delete_storage_objects(&self, keys: &[String]) -> Vec<(String, Result<()>)> {
+        self.storage.delete_many(keys).await
+    }
+
+    async fn list_storage_objects(&self, prefix: &str) -> Result<Vec<StorageObjectMeta>> {
+        Ok(self
+            .storage
+            .list_meta(prefix)
+            .await?
+            .into_iter()
+            .map(|meta| StorageObjectMeta {
+                path: meta.location.to_string(),
+                last_modified: meta.last_modified,
+            })
+            .collect())
     }
 
     async fn migrate(&self) -> Result<()> {
         sqlx::migrate!("./migrations").run(&self.pool).await?;
         Ok(())
+    }
+
+    async fn try_acquire_process_lock(&self, name: &str) -> Result<Option<ProcessLock>> {
+        let mut connection = self.pool.acquire().await?;
+        let database = sqlx::query_scalar!(r#"SELECT DATABASE() AS `database!`"#)
+            .fetch_one(&mut *connection)
+            .await?;
+        let namespace = hex::encode(Sha256::digest(database.as_bytes()));
+        let name = format!("proxide:{}:{name}", &namespace[..16]);
+        let acquired = sqlx::query_scalar!(r#"SELECT GET_LOCK(?, 0) AS `acquired`"#, name)
+            .fetch_one(&mut *connection)
+            .await?;
+        if acquired == Some(1) {
+            Ok(Some(ProcessLock::new(name, connection)))
+        } else {
+            Ok(None)
+        }
     }
 
     // ── content ──
@@ -78,60 +149,19 @@ impl Repository for MysqlRepository {
         Ok((data, dist))
     }
 
-    async fn put_content(
-        &self,
-        name: &str,
-        storage_key: &str,
-        data: Vec<u8>,
-        shasum: Option<&str>,
-        integrity: Option<&str>,
-    ) -> Result<i64> {
-        let len = data.len() as i64;
-        self.storage.put(storage_key, data).await?;
-        let dist_id = self
-            .create_dist(name, storage_key, len, shasum, integrity)
-            .await?;
-        Ok(dist_id)
+    async fn prepare_raw_dist(&self, data: Vec<u8>) -> Result<PreparedDist> {
+        let object = self.storage.encode_raw(data)?;
+        self.prepare_encoded(object).await
     }
 
-    async fn create_dist(
-        &self,
-        name: &str,
-        storage_key: &str,
-        size: i64,
-        shasum: Option<&str>,
-        integrity: Option<&str>,
-    ) -> Result<i64> {
-        let result = sqlx::query!(
-            r#"INSERT INTO dists (name, path, size, shasum, integrity) VALUES (?, ?, ?, ?, ?)"#,
-            name,
-            storage_key,
-            size,
-            shasum,
-            integrity
-        )
-        .execute(&self.pool)
-        .await?;
-        Ok(result.last_insert_id() as i64)
+    async fn prepare_raw_dist_file(&self, path: &std::path::Path) -> Result<PreparedDist> {
+        let object = self.storage.encode_raw_file(path).await?;
+        self.prepare_encoded_file(object).await
     }
 
-    async fn delete_content(&self, dist_id: i64) -> Result<()> {
-        let dist_path = self.get_dist(dist_id).await?.map(|d| d.path);
-        self.delete_dist(dist_id).await?;
-        if let Some(path) = dist_path
-            && let Err(e) = self.storage.delete(&path).await
-        {
-            error!("failed to delete storage object for dist {dist_id} path {path}: {e:#}");
-        }
-        Ok(())
-    }
-
-    async fn put_storage(&self, storage_key: &str, data: Vec<u8>) -> Result<()> {
-        self.storage.put(storage_key, data).await
-    }
-
-    async fn put_storage_compressed(&self, storage_key: &str, data: Vec<u8>) -> Result<String> {
-        self.storage.put_compressed(storage_key, data).await
+    async fn prepare_json_dist(&self, data: Vec<u8>) -> Result<PreparedDist> {
+        let object = self.storage.encode_json(data)?;
+        self.prepare_encoded(object).await
     }
 
     // ── packages ──
@@ -160,45 +190,6 @@ impl Repository for MysqlRepository {
         Ok(rows)
     }
 
-    async fn upsert_package(
-        &self,
-        name: &str,
-        scope: Option<&str>,
-        description: Option<&str>,
-        source: Option<&str>,
-    ) -> Result<(i64, Option<String>)> {
-        sqlx::query!(
-            r#"INSERT INTO packages (name, scope, description, source) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE description = IF(VALUES(description) IS NULL, description, VALUES(description)), source = IF(source IS NULL, VALUES(source), source)"#,
-            name,
-            scope,
-            description,
-            source
-        )
-        .execute(&self.pool)
-        .await?;
-        let row = sqlx::query!(r#"SELECT id, source FROM packages WHERE name = ?"#, name)
-            .fetch_one(&self.pool)
-            .await?;
-        Ok((row.id as i64, row.source))
-    }
-
-    async fn update_package_dists(
-        &self,
-        package_id: i64,
-        abbreviated_dist_id: Option<i64>,
-        full_dist_id: Option<i64>,
-    ) -> Result<()> {
-        sqlx::query!(
-            r#"UPDATE packages SET abbreviated_dist_id = ?, full_dist_id = ? WHERE id = ?"#,
-            abbreviated_dist_id,
-            full_dist_id,
-            package_id
-        )
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
-
     async fn set_package_access(&self, package_id: i64, access: &str) -> Result<()> {
         sqlx::query!(
             r#"UPDATE packages SET access = ? WHERE id = ?"#,
@@ -208,63 +199,6 @@ impl Repository for MysqlRepository {
         .execute(&self.pool)
         .await?;
         Ok(())
-    }
-
-    async fn delete_package_by_id(&self, package_id: i64) -> Result<()> {
-        sqlx::query!(r#"DELETE FROM packages WHERE id = ?"#, package_id)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
-
-    async fn upsert_package_for_publish(
-        &self,
-        name: &str,
-        scope: Option<&str>,
-        description: Option<&str>,
-        user_id: i64,
-        access: Option<&str>,
-    ) -> Result<(i64, Option<String>)> {
-        let mut tx = self.pool.begin().await?;
-
-        sqlx::query!(
-            r#"INSERT INTO packages (name, scope, description, source) VALUES (?, ?, ?, NULL) ON DUPLICATE KEY UPDATE description = IF(source IS NULL AND VALUES(description) IS NOT NULL, VALUES(description), description), source = IF(source IS NULL, VALUES(source), source)"#,
-            name,
-            scope,
-            description,
-        )
-        .execute(&mut *tx)
-        .await?;
-
-        let row = sqlx::query!(r#"SELECT id, source FROM packages WHERE name = ?"#, name)
-            .fetch_one(&mut *tx)
-            .await?;
-        let package_id = row.id as i64;
-        let existing_source = row.source;
-
-        if existing_source.is_none() {
-            sqlx::query!(
-                r#"INSERT IGNORE INTO maintainers (package_id, user_id, source) VALUES (?, ?, ?)"#,
-                package_id,
-                user_id,
-                MAINTAINER_SOURCE_MANUAL,
-            )
-            .execute(&mut *tx)
-            .await?;
-
-            if let Some(access) = access {
-                sqlx::query!(
-                    r#"UPDATE packages SET access = ? WHERE id = ?"#,
-                    access,
-                    package_id,
-                )
-                .execute(&mut *tx)
-                .await?;
-            }
-        }
-
-        tx.commit().await?;
-        Ok((package_id, existing_source))
     }
 
     async fn count_packages(&self) -> Result<i64> {
@@ -283,7 +217,10 @@ impl Repository for MysqlRepository {
     ) -> Result<Option<PackageVersionRow>> {
         let row = sqlx::query_as!(
             PackageVersionRow,
-            r#"SELECT id, package_id, version, abbrev_dist_id, manifest_dist_id, tar_dist_id, readme_dist_id, publish_time, is_pre_release as "is_pre_release: bool", padding_version FROM package_versions WHERE package_id = ? AND version = ?"#,
+            r#"SELECT id, package_id, version, tar_dist_id, readme_dist_id, tar_size,
+                      tar_shasum as "tar_shasum: String", tar_integrity as "tar_integrity: String",
+                      publish_time, is_pre_release as "is_pre_release: bool", padding_version
+               FROM package_versions WHERE package_id = ? AND version = ?"#,
             package_id,
             version
         )
@@ -295,7 +232,10 @@ impl Repository for MysqlRepository {
     async fn list_versions(&self, package_id: i64) -> Result<Vec<PackageVersionRow>> {
         let rows = sqlx::query_as!(
             PackageVersionRow,
-            r#"SELECT id, package_id, version, abbrev_dist_id, manifest_dist_id, tar_dist_id, readme_dist_id, publish_time, is_pre_release as "is_pre_release: bool", padding_version FROM package_versions WHERE package_id = ? ORDER BY publish_time DESC"#,
+            r#"SELECT id, package_id, version, tar_dist_id, readme_dist_id, tar_size,
+                      tar_shasum as "tar_shasum: String", tar_integrity as "tar_integrity: String",
+                      publish_time, is_pre_release as "is_pre_release: bool", padding_version
+               FROM package_versions WHERE package_id = ? ORDER BY publish_time DESC"#,
             package_id
         )
         .fetch_all(&self.pool)
@@ -303,91 +243,43 @@ impl Repository for MysqlRepository {
         Ok(rows)
     }
 
-    async fn insert_version(
-        &self,
-        package_id: i64,
-        version: &str,
-        publish_time: chrono::NaiveDateTime,
-        is_pre_release: bool,
-        padding_version: Option<&str>,
-    ) -> Result<i64> {
-        let result = sqlx::query!(
-            r#"INSERT INTO package_versions (package_id, version, publish_time, is_pre_release, padding_version) VALUES (?, ?, ?, ?, ?)"#,
-            package_id,
-            version,
-            publish_time,
-            is_pre_release,
-            padding_version
-        )
-        .execute(&self.pool)
-        .await?;
-        Ok(result.last_insert_id() as i64)
-    }
-
-    async fn update_version_dists(
+    async fn attach_tar_dist(
         &self,
         version_id: i64,
-        abbrev_dist_id: Option<i64>,
-        manifest_dist_id: Option<i64>,
-        tar_dist_id: Option<i64>,
-        readme_dist_id: Option<i64>,
-    ) -> Result<()> {
-        sqlx::query!(
-            r#"UPDATE package_versions SET abbrev_dist_id = ?, manifest_dist_id = ?, tar_dist_id = ?, readme_dist_id = ? WHERE id = ?"#,
-            abbrev_dist_id,
-            manifest_dist_id,
-            tar_dist_id,
-            readme_dist_id,
+        dist: &PreparedDist,
+        tar_size: i64,
+    ) -> Result<AttachDistOutcome> {
+        let mut tx = self.pool.begin().await?;
+        let row = sqlx::query!(
+            r#"SELECT tar_dist_id FROM package_versions WHERE id = ? FOR UPDATE"#,
             version_id
         )
-        .execute(&self.pool)
+        .fetch_optional(&mut *tx)
         .await?;
-        Ok(())
-    }
-
-    async fn get_versions_not_in(
-        &self,
-        package_id: i64,
-        keep_versions: &[String],
-    ) -> Result<Vec<PackageVersionRow>> {
-        if keep_versions.is_empty() {
-            let rows = sqlx::query_as!(
-                PackageVersionRow,
-                r#"SELECT id, package_id, version, abbrev_dist_id, manifest_dist_id, tar_dist_id, readme_dist_id, publish_time, is_pre_release as "is_pre_release: bool", padding_version FROM package_versions WHERE package_id = ?"#,
-                package_id
-            )
-            .fetch_all(&self.pool)
-            .await?;
-            return Ok(rows);
+        let Some(row) = row else {
+            tx.rollback().await?;
+            return Ok(AttachDistOutcome::VersionDeleted);
+        };
+        if let Some(current) = row.tar_dist_id {
+            tx.rollback().await?;
+            if current == dist.id() {
+                return Ok(AttachDistOutcome::AlreadyAttached);
+            }
+            anyhow::bail!(
+                "version {version_id} already references tar dist {current}, refusing replacement with {}",
+                dist.id()
+            );
         }
-        let placeholders: Vec<String> = keep_versions.iter().map(|_| "?".to_string()).collect();
-        let sql = format!(
-            "SELECT id, package_id, version, abbrev_dist_id, manifest_dist_id, tar_dist_id, readme_dist_id, publish_time, is_pre_release, padding_version FROM package_versions WHERE package_id = ? AND version NOT IN ({})",
-            placeholders.join(",")
-        );
-        let mut query = sqlx::query_as::<_, PackageVersionRow>(&sql).bind(package_id);
-        for v in keep_versions {
-            query = query.bind(v);
-        }
-        let rows = query.fetch_all(&self.pool).await?;
-        Ok(rows)
-    }
-
-    async fn delete_versions_by_ids(&self, version_ids: &[i64]) -> Result<()> {
-        if version_ids.is_empty() {
-            return Ok(());
-        }
-        let placeholders: Vec<String> = version_ids.iter().map(|_| "?".to_string()).collect();
-        let sql = format!(
-            "DELETE FROM package_versions WHERE id IN ({})",
-            placeholders.join(",")
-        );
-        let mut query = sqlx::query(&sql);
-        for id in version_ids {
-            query = query.bind(id);
-        }
-        query.execute(&self.pool).await?;
-        Ok(())
+        sqlx::query!(
+            r#"UPDATE package_versions SET tar_dist_id = ?, tar_size = ? WHERE id = ?"#,
+            dist.id(),
+            tar_size,
+            version_id
+        )
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(AttachDistOutcome::Attached)
     }
 
     // ── package_tags ──
@@ -403,19 +295,12 @@ impl Repository for MysqlRepository {
         Ok(rows)
     }
 
-    async fn sync_tags(&self, package_id: i64, tags: &HashMap<String, String>) -> Result<()> {
-        let mut tx = self.pool.begin().await?;
-        sync_tags_tx(&mut tx, package_id, tags).await?;
-        tx.commit().await?;
-        Ok(())
-    }
-
     // ── dists ──
 
     async fn get_dist(&self, id: i64) -> Result<Option<DistRow>> {
         let row = sqlx::query_as!(
             DistRow,
-            r#"SELECT id, name, path, size, shasum, integrity FROM dists WHERE id = ?"#,
+            r#"SELECT id, storage_sha256, path as "path: String", stored_size FROM dists WHERE id = ?"#,
             id
         )
         .fetch_optional(&self.pool)
@@ -423,25 +308,29 @@ impl Repository for MysqlRepository {
         Ok(row)
     }
 
-    async fn get_dist_by_path(&self, path: &str) -> Result<Option<DistRow>> {
-        let row = sqlx::query_as!(
-            DistRow,
-            r#"SELECT id, name, path, size, shasum, integrity FROM dists WHERE path = ? LIMIT 1"#,
-            path
-        )
-        .fetch_optional(&self.pool)
-        .await?;
-        Ok(row)
+    async fn dist_exists_by_path(&self, path: &str) -> Result<bool> {
+        let row = sqlx::query!(r#"SELECT id FROM dists WHERE path = ?"#, path)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.is_some())
     }
 
-    async fn list_orphan_dists(&self) -> Result<Vec<DistRow>> {
+    async fn list_orphan_dists(&self, min_age_secs: u64, limit: u32) -> Result<Vec<DistRow>> {
+        let min_age_secs = min_age_secs as i64;
+        let limit = limit as i64;
         let rows = sqlx::query_as!(
             DistRow,
-            r#"SELECT d.id, d.name, d.path, d.size, d.shasum, d.integrity
+            r#"SELECT d.id, d.storage_sha256, d.path as "path: String", d.stored_size
                FROM dists d
-               LEFT JOIN packages p ON p.abbreviated_dist_id = d.id OR p.full_dist_id = d.id
-               LEFT JOIN package_versions pv ON pv.abbrev_dist_id = d.id OR pv.manifest_dist_id = d.id OR pv.tar_dist_id = d.id OR pv.readme_dist_id = d.id
-               WHERE p.id IS NULL AND pv.id IS NULL"#
+               WHERE d.created_at < DATE_SUB(NOW(), INTERVAL ? SECOND)
+                 AND NOT EXISTS (SELECT 1 FROM packages p WHERE p.abbreviated_dist_id = d.id)
+                 AND NOT EXISTS (SELECT 1 FROM packages p WHERE p.full_dist_id = d.id)
+                 AND NOT EXISTS (SELECT 1 FROM package_versions pv WHERE pv.tar_dist_id = d.id)
+                 AND NOT EXISTS (SELECT 1 FROM package_versions pv WHERE pv.readme_dist_id = d.id)
+               ORDER BY d.created_at, d.id
+               LIMIT ?"#,
+            min_age_secs,
+            limit
         )
         .fetch_all(&self.pool)
         .await?;
@@ -452,13 +341,15 @@ impl Repository for MysqlRepository {
         if ids.is_empty() {
             return Ok(0);
         }
-        let placeholders: Vec<String> = ids.iter().map(|_| "?".to_string()).collect();
-        let sql = format!("DELETE FROM dists WHERE id IN ({})", placeholders.join(","));
-        let mut query = sqlx::query(&sql);
-        for id in ids {
-            query = query.bind(id);
-        }
-        let result = query.execute(&self.pool).await?;
+        let ids = serde_json::to_string(ids)?;
+        let result = sqlx::query!(
+            r#"DELETE d FROM dists d
+               JOIN JSON_TABLE(?, '$[*]' COLUMNS(id BIGINT PATH '$')) selected
+                 ON selected.id = d.id"#,
+            ids
+        )
+        .execute(&self.pool)
+        .await?;
         Ok(result.rows_affected())
     }
 
@@ -486,92 +377,295 @@ impl Repository for MysqlRepository {
 
     // ── sync ──
 
-    async fn commit_version(&self, params: CommitVersionParams) -> Result<()> {
+    async fn commit_publish(&self, params: PublishCommitParams) -> Result<(i64, String)> {
         let mut tx = self.pool.begin().await?;
-
-        let tar_dist_id = if let Some(d) = &params.tar_dist {
-            Some(
-                insert_dist_tx(
-                    &mut tx,
-                    &d.name,
-                    &d.path,
-                    d.size,
-                    d.shasum.as_deref(),
-                    d.integrity.as_deref(),
-                )
-                .await?,
+        let initial_access = params.access.as_deref().unwrap_or("public");
+        let insert = sqlx::query!(
+            r#"INSERT INTO packages (name, scope, description, source, access)
+               VALUES (?, ?, ?, NULL, ?)
+               ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)"#,
+            params.name,
+            params.scope,
+            params.description,
+            initial_access
+        )
+        .execute(&mut *tx)
+        .await?;
+        let created = insert.rows_affected() == 1;
+        let package = sqlx::query!(
+            r#"SELECT id, source, access, full_dist_id FROM packages WHERE name = ? FOR UPDATE"#,
+            params.name
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+        if let Some(source) = package.source {
+            anyhow::bail!(
+                "package {} was synced from upstream ({source}), local publish is not allowed",
+                params.name
+            );
+        }
+        if package.full_dist_id != params.expected_full_dist_id {
+            anyhow::bail!("package {} changed while publish was prepared", params.name);
+        }
+        let package_id = package.id as i64;
+        if !created {
+            sqlx::query!(
+                r#"UPDATE packages
+                   SET description = COALESCE(?, description), access = COALESCE(?, access)
+                   WHERE id = ?"#,
+                params.description,
+                params.access,
+                package_id
             )
-        } else {
-            None
-        };
-
-        let readme_dist_id = if let Some(d) = &params.readme_dist {
-            Some(
-                insert_dist_tx(
-                    &mut tx,
-                    &d.name,
-                    &d.path,
-                    d.size,
-                    d.shasum.as_deref(),
-                    d.integrity.as_deref(),
-                )
-                .await?,
-            )
-        } else {
-            None
-        };
-
+            .execute(&mut *tx)
+            .await?;
+        }
         sqlx::query!(
-            r#"INSERT INTO package_versions (package_id, version, publish_time, is_pre_release, padding_version, tar_dist_id, readme_dist_id) VALUES (?, ?, ?, ?, ?, ?, ?)"#,
-            params.package_id,
+            r#"INSERT IGNORE INTO maintainers (package_id, user_id, source) VALUES (?, ?, ?)"#,
+            package_id,
+            params.publisher_id,
+            MAINTAINER_SOURCE_MANUAL
+        )
+        .execute(&mut *tx)
+        .await?;
+        if created && let Some((team_id, user_ids)) = &params.developers_team {
+            sync_maintainers_tx(
+                &mut tx,
+                package_id,
+                user_ids,
+                crate::repository::MAINTAINER_SOURCE_TEAM,
+            )
+            .await?;
+            sqlx::query!(
+                r#"INSERT INTO package_team_permissions (package_id, team_id, permission)
+                   VALUES (?, ?, 'write')
+                   ON DUPLICATE KEY UPDATE permission = VALUES(permission)"#,
+                package_id,
+                team_id
+            )
+            .execute(&mut *tx)
+            .await?;
+        }
+        sqlx::query!(
+            r#"INSERT INTO package_versions
+               (package_id, version, publish_time, is_pre_release, padding_version,
+                tar_dist_id, readme_dist_id, tar_size, tar_shasum, tar_integrity)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+            package_id,
             params.version,
             params.publish_time,
             params.is_pre_release,
             params.padding_version,
-            tar_dist_id,
-            readme_dist_id
+            params.tar_dist.id(),
+            params.readme_dist.id(),
+            params.tar_size,
+            params.tar_shasum,
+            params.tar_integrity
         )
         .execute(&mut *tx)
         .await?;
-
-        tx.commit().await?;
-        Ok(())
-    }
-
-    async fn sync_manifest_commit(&self, params: SyncManifestParams) -> Result<()> {
-        let mut tx = self.pool.begin().await?;
-
-        sync_tags_tx(&mut tx, params.package_id, &params.tags).await?;
-
-        let abbrev_manifest_dist_id = insert_dist_tx(
-            &mut tx,
-            &params.abbrev_manifest.name,
-            &params.abbrev_manifest.path,
-            params.abbrev_manifest.size,
-            params.abbrev_manifest.shasum.as_deref(),
-            params.abbrev_manifest.integrity.as_deref(),
-        )
-        .await?;
-
-        let full_manifest_dist_id = insert_dist_tx(
-            &mut tx,
-            &params.full_manifest.name,
-            &params.full_manifest.path,
-            params.full_manifest.size,
-            params.full_manifest.shasum.as_deref(),
-            params.full_manifest.integrity.as_deref(),
-        )
-        .await?;
-
+        sync_tags_tx(&mut tx, package_id, &params.tags).await?;
         sqlx::query!(
             r#"UPDATE packages SET abbreviated_dist_id = ?, full_dist_id = ? WHERE id = ?"#,
-            abbrev_manifest_dist_id,
-            full_manifest_dist_id,
+            params.abbrev_manifest.id(),
+            params.full_manifest.id(),
+            package_id
+        )
+        .execute(&mut *tx)
+        .await?;
+        let access = params.access.unwrap_or_else(|| package.access.to_string());
+        tx.commit().await?;
+        Ok((package_id, access))
+    }
+
+    async fn commit_local_manifest(&self, params: LocalManifestCommitParams) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        let package = sqlx::query!(
+            r#"SELECT source, full_dist_id FROM packages WHERE id = ? FOR UPDATE"#,
+            params.package_id
+        )
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("package {} not found", params.package_id))?;
+        if package.source.is_some() {
+            anyhow::bail!("upstream package mutation is not allowed");
+        }
+        if package.full_dist_id != params.expected_full_dist_id {
+            anyhow::bail!("package changed while manifest mutation was prepared");
+        }
+        if let Some(version_id) = params.delete_version_id {
+            let result = sqlx::query!(
+                r#"DELETE FROM package_versions WHERE id = ? AND package_id = ?"#,
+                version_id,
+                params.package_id
+            )
+            .execute(&mut *tx)
+            .await?;
+            if result.rows_affected() != 1 {
+                anyhow::bail!("version {version_id} no longer exists");
+            }
+        }
+        if let Some((user_ids, source)) = &params.maintainers {
+            sync_maintainers_tx(&mut tx, params.package_id, user_ids, source).await?;
+        }
+        sync_tags_tx(&mut tx, params.package_id, &params.tags).await?;
+        sqlx::query!(
+            r#"UPDATE packages SET abbreviated_dist_id = ?, full_dist_id = ? WHERE id = ?"#,
+            params.abbrev_manifest.id(),
+            params.full_manifest.id(),
             params.package_id
         )
         .execute(&mut *tx)
         .await?;
+        tx.commit().await?;
+        Ok(())
+    }
 
+    async fn commit_sync_package(
+        &self,
+        params: SyncPackageCommitParams,
+    ) -> Result<SyncPackageCommitResult> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query!(
+            r#"INSERT INTO packages (name, scope, description, source)
+               VALUES (?, ?, ?, ?)
+               ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)"#,
+            params.name,
+            params.scope,
+            params.description,
+            params.source
+        )
+        .execute(&mut *tx)
+        .await?;
+        let package = sqlx::query!(
+            r#"SELECT id, source FROM packages WHERE name = ? FOR UPDATE"#,
+            params.name
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+        if package.source.as_deref() != Some(params.source.as_str()) {
+            anyhow::bail!("package {} is owned by a different source", params.name);
+        }
+        let package_id = package.id as i64;
+        sqlx::query!(
+            r#"UPDATE packages SET description = ? WHERE id = ?"#,
+            params.description,
+            package_id
+        )
+        .execute(&mut *tx)
+        .await?;
+        let existing = sqlx::query!(
+            r#"SELECT id, version, tar_shasum as "tar_shasum: String",
+                      tar_integrity as "tar_integrity: String"
+               FROM package_versions WHERE package_id = ? FOR UPDATE"#,
+            package_id
+        )
+        .fetch_all(&mut *tx)
+        .await?;
+        let mut existing_by_version: HashMap<String, (i64, Option<String>, Option<String>)> =
+            existing
+                .into_iter()
+                .map(|row| {
+                    (
+                        row.version,
+                        (row.id as i64, row.tar_shasum, row.tar_integrity),
+                    )
+                })
+                .collect();
+        for version in &params.versions {
+            if let Some((id, old_shasum, old_integrity)) =
+                existing_by_version.remove(&version.version)
+            {
+                if old_shasum != version.tar_shasum || old_integrity != version.tar_integrity {
+                    anyhow::bail!(
+                        "upstream checksum changed for {}@{}",
+                        params.name,
+                        version.version
+                    );
+                }
+                sqlx::query!(
+                    r#"UPDATE package_versions
+                       SET publish_time = ?, is_pre_release = ?, padding_version = ?
+                       WHERE id = ?"#,
+                    version.publish_time,
+                    version.is_pre_release,
+                    version.padding_version,
+                    id
+                )
+                .execute(&mut *tx)
+                .await?;
+            } else {
+                sqlx::query!(
+                    r#"INSERT INTO package_versions
+                       (package_id, version, publish_time, is_pre_release, padding_version,
+                        tar_shasum, tar_integrity)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)"#,
+                    package_id,
+                    version.version,
+                    version.publish_time,
+                    version.is_pre_release,
+                    version.padding_version,
+                    version.tar_shasum,
+                    version.tar_integrity
+                )
+                .execute(&mut *tx)
+                .await?;
+            }
+        }
+        let deleted_version_ids: Vec<i64> = existing_by_version
+            .into_values()
+            .map(|(id, _, _)| id)
+            .collect();
+        for version_id in &deleted_version_ids {
+            sqlx::query!(r#"DELETE FROM package_versions WHERE id = ?"#, version_id)
+                .execute(&mut *tx)
+                .await?;
+        }
+        sync_maintainers_tx(
+            &mut tx,
+            package_id,
+            &params.maintainer_user_ids,
+            crate::repository::MAINTAINER_SOURCE_UPSTREAM,
+        )
+        .await?;
+        sync_tags_tx(&mut tx, package_id, &params.tags).await?;
+        sqlx::query!(
+            r#"UPDATE packages SET abbreviated_dist_id = ?, full_dist_id = ? WHERE id = ?"#,
+            params.abbrev_manifest.id(),
+            params.full_manifest.id(),
+            package_id
+        )
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(SyncPackageCommitResult {
+            package_id,
+            deleted_version_ids,
+        })
+    }
+
+    async fn delete_local_package(
+        &self,
+        package_id: i64,
+        expected_full_dist_id: Option<i64>,
+    ) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        let package = sqlx::query!(
+            r#"SELECT source, full_dist_id FROM packages WHERE id = ? FOR UPDATE"#,
+            package_id
+        )
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("package {package_id} not found"))?;
+        if package.source.is_some() {
+            anyhow::bail!("upstream package mutation is not allowed");
+        }
+        if package.full_dist_id != expected_full_dist_id {
+            anyhow::bail!("package changed while delete was prepared");
+        }
+        sqlx::query!(r#"DELETE FROM packages WHERE id = ?"#, package_id)
+            .execute(&mut *tx)
+            .await?;
         tx.commit().await?;
         Ok(())
     }
@@ -579,17 +673,17 @@ impl Repository for MysqlRepository {
     // ── sync_tasks ──
 
     async fn enqueue_sync_task(&self, name: &str, source: &str) -> Result<Option<i64>> {
-        let result = sqlx::query(
-            "INSERT INTO sync_tasks (name, source, status) \
-             SELECT ?, ?, 'pending' \
-             FROM DUAL \
-             WHERE NOT EXISTS (\
-                 SELECT 1 FROM sync_tasks WHERE name = ? AND status = 'pending'\
-             )",
+        let result = sqlx::query!(
+            r#"INSERT INTO sync_tasks (name, source, status)
+               SELECT ?, ?, 'pending'
+               FROM DUAL
+               WHERE NOT EXISTS (
+                   SELECT 1 FROM sync_tasks WHERE name = ? AND status = 'pending'
+               )"#,
+            name,
+            source,
+            name
         )
-        .bind(name)
-        .bind(source)
-        .bind(name)
         .execute(&self.pool)
         .await?;
 
@@ -609,30 +703,21 @@ impl Repository for MysqlRepository {
         const BATCH: usize = 500;
 
         for chunk in names.chunks(BATCH) {
-            let placeholders: Vec<String> = (0..chunk.len())
-                .map(|i| {
-                    if i == 0 {
-                        "SELECT ? AS name, ? AS source".to_string()
-                    } else {
-                        "UNION ALL SELECT ?, ?".to_string()
-                    }
-                })
-                .collect();
-            let sql = format!(
-                "INSERT INTO sync_tasks (name, source, status) \
-                 SELECT t.name, t.source, 'pending' \
-                 FROM ({}) AS t \
-                 WHERE NOT EXISTS (\
-                     SELECT 1 FROM sync_tasks st WHERE st.name = t.name AND st.status = 'pending'\
-                 )",
-                placeholders.join(" ")
-            );
-
-            let mut query = sqlx::query(&sql);
-            for name in chunk {
-                query = query.bind(name).bind(source);
-            }
-            let result = query.execute(&self.pool).await?;
+            let names = serde_json::to_string(chunk)?;
+            let result = sqlx::query!(
+                r#"INSERT INTO sync_tasks (name, source, status)
+                   SELECT incoming.name COLLATE utf8mb4_0900_ai_ci, ?, 'pending'
+                   FROM JSON_TABLE(?, '$[*]' COLUMNS(name VARCHAR(512) PATH '$')) incoming
+                   WHERE NOT EXISTS (
+                       SELECT 1 FROM sync_tasks existing
+                       WHERE existing.name = incoming.name COLLATE utf8mb4_0900_ai_ci
+                         AND existing.status = 'pending'
+                   )"#,
+                source,
+                names
+            )
+            .execute(&self.pool)
+            .await?;
             total += result.rows_affected();
         }
 
@@ -642,13 +727,15 @@ impl Repository for MysqlRepository {
     async fn claim_sync_task(&self) -> Result<Option<SyncTaskRow>> {
         let mut tx = self.pool.begin().await?;
 
-        let row = sqlx::query_as::<_, SyncTaskRow>(
-            "SELECT id, name, source, status, attempts, max_attempts, error, created_at, started_at, finished_at \
-             FROM sync_tasks \
-             WHERE status = 'pending' \
-             ORDER BY created_at \
-             LIMIT 1 \
-             FOR UPDATE SKIP LOCKED",
+        let row = sqlx::query_as!(
+            SyncTaskRow,
+            r#"SELECT id, name, source, status, attempts, max_attempts, error,
+                      created_at, started_at, finished_at
+               FROM sync_tasks
+               WHERE status = 'pending'
+               ORDER BY created_at
+               LIMIT 1
+               FOR UPDATE SKIP LOCKED"#
         )
         .fetch_optional(&mut *tx)
         .await?;
@@ -658,10 +745,14 @@ impl Repository for MysqlRepository {
             return Ok(None);
         };
 
-        sqlx::query("UPDATE sync_tasks SET status = 'running', attempts = attempts + 1, started_at = NOW() WHERE id = ?")
-            .bind(task.id)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query!(
+            r#"UPDATE sync_tasks
+               SET status = 'running', attempts = attempts + 1, started_at = NOW()
+               WHERE id = ?"#,
+            task.id
+        )
+        .execute(&mut *tx)
+        .await?;
 
         tx.commit().await?;
 
@@ -676,31 +767,46 @@ impl Repository for MysqlRepository {
     async fn complete_sync_task(&self, id: i64, error: Option<&str>) -> Result<()> {
         match error {
             None => {
-                sqlx::query("UPDATE sync_tasks SET status = 'done', finished_at = NOW(), error = NULL WHERE id = ?")
-                    .bind(id)
-                    .execute(&self.pool)
-                    .await?;
+                sqlx::query!(
+                    r#"UPDATE sync_tasks
+                       SET status = 'done', finished_at = NOW(), error = NULL
+                       WHERE id = ?"#,
+                    id
+                )
+                .execute(&self.pool)
+                .await?;
             }
             Some(err) => {
-                let task = sqlx::query_as::<_, SyncTaskRow>(
-                    "SELECT id, name, source, status, attempts, max_attempts, error, created_at, started_at, finished_at FROM sync_tasks WHERE id = ?",
+                let task = sqlx::query_as!(
+                    SyncTaskRow,
+                    r#"SELECT id, name, source, status, attempts, max_attempts, error,
+                              created_at, started_at, finished_at
+                       FROM sync_tasks WHERE id = ?"#,
+                    id
                 )
-                .bind(id)
                 .fetch_one(&self.pool)
                 .await?;
 
                 if task.attempts < task.max_attempts {
-                    sqlx::query("UPDATE sync_tasks SET status = 'pending', started_at = NULL, error = ? WHERE id = ?")
-                        .bind(err)
-                        .bind(id)
-                        .execute(&self.pool)
-                        .await?;
+                    sqlx::query!(
+                        r#"UPDATE sync_tasks
+                           SET status = 'pending', started_at = NULL, error = ?
+                           WHERE id = ?"#,
+                        err,
+                        id
+                    )
+                    .execute(&self.pool)
+                    .await?;
                 } else {
-                    sqlx::query("UPDATE sync_tasks SET status = 'failed', finished_at = NOW(), error = ? WHERE id = ?")
-                        .bind(err)
-                        .bind(id)
-                        .execute(&self.pool)
-                        .await?;
+                    sqlx::query!(
+                        r#"UPDATE sync_tasks
+                           SET status = 'failed', finished_at = NOW(), error = ?
+                           WHERE id = ?"#,
+                        err,
+                        id
+                    )
+                    .execute(&self.pool)
+                    .await?;
                 }
             }
         }
@@ -708,11 +814,13 @@ impl Repository for MysqlRepository {
     }
 
     async fn requeue_stale_tasks(&self, timeout_secs: u64) -> Result<u64> {
-        let result = sqlx::query(
-            "UPDATE sync_tasks SET status = 'pending', started_at = NULL \
-             WHERE status = 'running' AND started_at < DATE_SUB(NOW(), INTERVAL ? SECOND)",
+        let timeout_secs = timeout_secs as i64;
+        let result = sqlx::query!(
+            r#"UPDATE sync_tasks SET status = 'pending', started_at = NULL
+               WHERE status = 'running'
+                 AND started_at < DATE_SUB(NOW(), INTERVAL ? SECOND)"#,
+            timeout_secs
         )
-        .bind(timeout_secs as i64)
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected())
@@ -720,26 +828,25 @@ impl Repository for MysqlRepository {
 
     async fn count_tasks_by_status(&self) -> Result<HashMap<String, i64>> {
         let rows =
-            sqlx::query("SELECT status, COUNT(*) AS `count` FROM sync_tasks GROUP BY status")
+            sqlx::query!(r#"SELECT status, COUNT(*) AS `count` FROM sync_tasks GROUP BY status"#)
                 .fetch_all(&self.pool)
                 .await?;
 
         let mut map = HashMap::new();
         for row in rows {
-            let status: String = row.try_get("status")?;
-            let count: i64 = row.try_get("count")?;
-            map.insert(status, count);
+            map.insert(row.status, row.count);
         }
         Ok(map)
     }
 
     async fn cleanup_old_tasks(&self, retention_days: u32) -> Result<u64> {
-        let result = sqlx::query(
-            "DELETE FROM sync_tasks \
-             WHERE status IN ('done', 'failed') \
-             AND finished_at < DATE_SUB(NOW(), INTERVAL ? DAY)",
+        let retention_days = retention_days as i64;
+        let result = sqlx::query!(
+            r#"DELETE FROM sync_tasks
+               WHERE status IN ('done', 'failed')
+                 AND finished_at < DATE_SUB(NOW(), INTERVAL ? DAY)"#,
+            retention_days
         )
-        .bind(retention_days as i64)
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected())
@@ -899,86 +1006,6 @@ impl Repository for MysqlRepository {
         .fetch_one(&self.pool)
         .await?;
         Ok(row.count > 0)
-    }
-
-    async fn sync_maintainers(
-        &self,
-        package_id: i64,
-        user_ids: &[i64],
-        source: &str,
-    ) -> Result<()> {
-        let mut tx = self.pool.begin().await?;
-        sync_maintainers_tx(&mut tx, package_id, user_ids, source).await?;
-        tx.commit().await?;
-        Ok(())
-    }
-
-    async fn replace_maintainers(
-        &self,
-        package_id: i64,
-        user_ids: &[i64],
-        source: &str,
-    ) -> Result<()> {
-        let mut tx = self.pool.begin().await?;
-        if user_ids.is_empty() {
-            sqlx::query!(
-                r#"DELETE FROM maintainers WHERE package_id = ? AND source = ?"#,
-                package_id,
-                source
-            )
-            .execute(&mut *tx)
-            .await?;
-        } else {
-            let placeholders: Vec<String> = user_ids.iter().map(|_| "?".to_string()).collect();
-            let sql = format!(
-                "DELETE FROM maintainers WHERE package_id = ? AND source = ? AND user_id NOT IN ({})",
-                placeholders.join(",")
-            );
-            let mut query = sqlx::query(&sql).bind(package_id).bind(source);
-            for id in user_ids {
-                query = query.bind(id);
-            }
-            query.execute(&mut *tx).await?;
-
-            for &user_id in user_ids {
-                sqlx::query!(
-                    r#"INSERT INTO maintainers (package_id, user_id, source)
-                       VALUES (?, ?, ?)
-                       ON DUPLICATE KEY UPDATE source = VALUES(source)"#,
-                    package_id,
-                    user_id,
-                    source
-                )
-                .execute(&mut *tx)
-                .await?;
-            }
-        }
-        tx.commit().await?;
-        Ok(())
-    }
-
-    async fn sync_maintainers_and_grant_team_permission(
-        &self,
-        package_id: i64,
-        user_ids: &[i64],
-        source: &str,
-        team_id: i64,
-        permission: &str,
-    ) -> Result<()> {
-        let mut tx = self.pool.begin().await?;
-        sync_maintainers_tx(&mut tx, package_id, user_ids, source).await?;
-        sqlx::query!(
-            r#"INSERT INTO package_team_permissions (package_id, team_id, permission)
-               VALUES (?, ?, ?)
-               ON DUPLICATE KEY UPDATE permission = VALUES(permission)"#,
-            package_id,
-            team_id,
-            permission
-        )
-        .execute(&mut *tx)
-        .await?;
-        tx.commit().await?;
-        Ok(())
     }
 
     async fn list_maintainers(&self, package_id: i64) -> Result<Vec<Maintainer>> {
@@ -1576,11 +1603,14 @@ impl Repository for MysqlRepository {
     // ── sync_tasks ──
 
     async fn fail_task_no_retry(&self, id: i64, error: &str) -> Result<()> {
-        sqlx::query(
-            "UPDATE sync_tasks SET status = 'failed', attempts = max_attempts, finished_at = NOW(), error = ? WHERE id = ?",
+        sqlx::query!(
+            r#"UPDATE sync_tasks
+               SET status = 'failed', attempts = max_attempts,
+                   finished_at = NOW(), error = ?
+               WHERE id = ?"#,
+            error,
+            id
         )
-        .bind(error)
-        .bind(id)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -1592,17 +1622,17 @@ impl Repository for MysqlRepository {
         if version_ids.is_empty() {
             return Ok(Vec::new());
         }
-        let placeholders: Vec<String> = version_ids.iter().map(|_| "?".to_string()).collect();
-        let sql = format!(
-            "SELECT id FROM package_versions WHERE id IN ({})",
-            placeholders.join(",")
-        );
-        let mut query = sqlx::query_scalar::<_, i64>(&sql);
-        for id in version_ids {
-            query = query.bind(id);
-        }
-        let rows = query.fetch_all(&self.pool).await?;
-        Ok(rows)
+        let version_ids = serde_json::to_string(version_ids)?;
+        let rows = sqlx::query!(
+            r#"SELECT pv.id
+               FROM package_versions pv
+               JOIN JSON_TABLE(?, '$[*]' COLUMNS(id BIGINT PATH '$')) selected
+                 ON selected.id = pv.id"#,
+            version_ids
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(|row| row.id as i64).collect())
     }
 
     async fn increment_package_download(
@@ -2381,63 +2411,28 @@ impl Repository for MysqlRepository {
     }
 }
 
-async fn insert_dist_tx(
-    tx: &mut sqlx::Transaction<'_, MySql>,
-    name: &str,
-    path: &str,
-    size: i64,
-    shasum: Option<&str>,
-    integrity: Option<&str>,
-) -> Result<i64> {
-    let result = sqlx::query!(
-        r#"INSERT INTO dists (name, path, size, shasum, integrity) VALUES (?, ?, ?, ?, ?)"#,
-        name,
-        path,
-        size,
-        shasum,
-        integrity
-    )
-    .execute(&mut **tx)
-    .await?;
-    Ok(result.last_insert_id() as i64)
-}
-
 async fn sync_maintainers_tx(
     tx: &mut sqlx::Transaction<'_, MySql>,
     package_id: i64,
     user_ids: &[i64],
     source: &str,
 ) -> Result<()> {
-    if user_ids.is_empty() {
+    sqlx::query!(
+        r#"DELETE FROM maintainers WHERE package_id = ? AND source = ?"#,
+        package_id,
+        source
+    )
+    .execute(&mut **tx)
+    .await?;
+    for &user_id in user_ids {
         sqlx::query!(
-            r#"DELETE FROM maintainers WHERE package_id = ? AND source = ?"#,
+            r#"INSERT IGNORE INTO maintainers (package_id, user_id, source) VALUES (?, ?, ?)"#,
             package_id,
+            user_id,
             source
         )
         .execute(&mut **tx)
         .await?;
-    } else {
-        let placeholders: Vec<String> = user_ids.iter().map(|_| "?".to_string()).collect();
-        let sql = format!(
-            "DELETE FROM maintainers WHERE package_id = ? AND source = ? AND user_id NOT IN ({})",
-            placeholders.join(",")
-        );
-        let mut query = sqlx::query(&sql).bind(package_id).bind(source);
-        for id in user_ids {
-            query = query.bind(id);
-        }
-        query.execute(&mut **tx).await?;
-
-        for &user_id in user_ids {
-            sqlx::query!(
-                r#"INSERT IGNORE INTO maintainers (package_id, user_id, source) VALUES (?, ?, ?)"#,
-                package_id,
-                user_id,
-                source
-            )
-            .execute(&mut **tx)
-            .await?;
-        }
     }
     Ok(())
 }

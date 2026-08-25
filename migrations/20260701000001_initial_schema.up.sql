@@ -1,11 +1,12 @@
 CREATE TABLE dists (
-    id         BIGINT AUTO_INCREMENT PRIMARY KEY,
-    name       VARCHAR(512)  NOT NULL,
-    path       VARCHAR(1024) NOT NULL,
-    size       BIGINT        NOT NULL DEFAULT 0,
-    shasum     VARCHAR(128)  DEFAULT NULL,
-    integrity  VARCHAR(256)  DEFAULT NULL,
-    created_at DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP
+    id             BIGINT AUTO_INCREMENT PRIMARY KEY,
+    storage_sha256 BINARY(32) NOT NULL,
+    path           VARCHAR(255) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    stored_size    BIGINT NOT NULL,
+    created_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_dists_path (path),
+    KEY idx_dists_sha256 (storage_sha256),
+    KEY idx_dists_created_id (created_at, id)
 );
 
 CREATE TABLE packages (
@@ -20,17 +21,20 @@ CREATE TABLE packages (
     created_at         DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at         DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE KEY uk_name (name),
-    KEY idx_scope (scope)
+    KEY idx_scope (scope),
+    CONSTRAINT fk_package_abbreviated_dist FOREIGN KEY (abbreviated_dist_id) REFERENCES dists(id) ON DELETE RESTRICT,
+    CONSTRAINT fk_package_full_dist FOREIGN KEY (full_dist_id) REFERENCES dists(id) ON DELETE RESTRICT
 );
 
 CREATE TABLE package_versions (
     id              BIGINT AUTO_INCREMENT PRIMARY KEY,
     package_id      BIGINT        NOT NULL,
     version         VARCHAR(256)  NOT NULL,
-    abbrev_dist_id  BIGINT        DEFAULT NULL,
-    manifest_dist_id BIGINT       DEFAULT NULL,
     tar_dist_id     BIGINT        DEFAULT NULL,
     readme_dist_id  BIGINT        DEFAULT NULL,
+    tar_size        BIGINT        DEFAULT NULL,
+    tar_shasum      VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+    tar_integrity   VARCHAR(1024) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
     publish_time    DATETIME      NOT NULL,
     is_pre_release  BOOLEAN       NOT NULL DEFAULT FALSE,
     padding_version VARCHAR(256)  DEFAULT NULL,
@@ -39,7 +43,9 @@ CREATE TABLE package_versions (
     UNIQUE KEY uk_package_version (package_id, version),
     KEY idx_publish_time (publish_time),
     KEY idx_pkg_id_pv_pre_rel_ver (package_id, padding_version, is_pre_release, version),
-    CONSTRAINT fk_pv_package FOREIGN KEY (package_id) REFERENCES packages(id) ON DELETE CASCADE
+    CONSTRAINT fk_pv_package FOREIGN KEY (package_id) REFERENCES packages(id) ON DELETE CASCADE,
+    CONSTRAINT fk_pv_tar_dist FOREIGN KEY (tar_dist_id) REFERENCES dists(id) ON DELETE RESTRICT,
+    CONSTRAINT fk_pv_readme_dist FOREIGN KEY (readme_dist_id) REFERENCES dists(id) ON DELETE RESTRICT
 );
 
 CREATE TABLE package_tags (

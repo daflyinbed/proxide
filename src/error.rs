@@ -23,6 +23,9 @@ pub enum WebError {
     #[error("[CONFLICT] {0}")]
     Conflict(String),
 
+    #[error("[SERVICE_UNAVAILABLE] {0}")]
+    ServiceUnavailable(anyhow::Error),
+
     #[error("[NOT_IMPLEMENTED] {0}")]
     NotImplemented(String),
 
@@ -52,6 +55,7 @@ impl WebError {
             Self::Unauthorized(..) => StatusCode::UNAUTHORIZED,
             Self::Forbidden(..) => StatusCode::FORBIDDEN,
             Self::Conflict(..) => StatusCode::CONFLICT,
+            Self::ServiceUnavailable(..) => StatusCode::SERVICE_UNAVAILABLE,
             Self::NotImplemented(..) => StatusCode::NOT_IMPLEMENTED,
             Self::MethodNotAllowed(..) => StatusCode::METHOD_NOT_ALLOWED,
         }

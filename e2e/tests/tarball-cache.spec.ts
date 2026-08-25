@@ -1,12 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createServer, type Server } from "node:http";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, openSync } from "node:fs";
-import { mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import {
   CreateBucketCommand,
-  DeleteObjectCommand,
   HeadObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
@@ -22,7 +22,6 @@ const BUCKET = "proxide-e2e-tarball-cache";
 const PACKAGE_NAME = "e2e-upstream-cache-pkg";
 const VERSION = "1.0.0";
 const FILENAME = `${PACKAGE_NAME}-${VERSION}.tgz`;
-const STORAGE_KEY = `packages/${PACKAGE_NAME}/${VERSION}/${FILENAME}`;
 const CHUNK_A = Buffer.alloc(256 * 1024, 0x61);
 const CHUNK_B = Buffer.alloc(256 * 1024, 0x62);
 const CHUNK_C = Buffer.alloc(256 * 1024, 0x63);
@@ -36,10 +35,6 @@ let upstreamPort = 0;
 
 function proxideUrl(): string {
   return `http://localhost:${proxidePort}`;
-}
-
-function cacheFilePath(): string {
-  return join(CACHE_DIR, STORAGE_KEY);
 }
 
 async function getFreePort(): Promise<number> {
@@ -119,18 +114,6 @@ async function waitForCondition(check: () => Promise<boolean>, timeoutMs = 30_00
   throw new Error("timed out waiting for condition");
 }
 
-async function readRemaining(reader: ReadableStreamDefaultReader<Uint8Array<ArrayBufferLike>>) {
-  const chunks: Buffer[] = [];
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) {
-      break;
-    }
-    chunks.push(Buffer.from(value));
-  }
-  return Buffer.concat(chunks);
-}
-
 async function ensureBucket() {
   try {
     await s3.send(new CreateBucketCommand({ Bucket: BUCKET }));
@@ -143,24 +126,29 @@ async function ensureBucket() {
 
 async function resetFixture() {
   upstreamRequestCount = 0;
-  await rm(cacheFilePath(), { force: true });
-  await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: STORAGE_KEY }));
+  const shasum = createHash("sha1").update(TARBALL_BYTES).digest("hex");
+  const integrity = `sha512-${createHash("sha512").update(TARBALL_BYTES).digest("base64")}`;
 
   runMysql(`
     DELETE FROM package_versions WHERE package_id IN (
       SELECT id FROM packages WHERE name = '${PACKAGE_NAME}'
     );
     DELETE FROM packages WHERE name = '${PACKAGE_NAME}';
-    DELETE FROM dists WHERE path = '${STORAGE_KEY}';
+    DELETE FROM dists;
     INSERT INTO packages (name, scope, description, source)
     VALUES ('${PACKAGE_NAME}', NULL, 'e2e upstream tarball cache test', 'npmjs');
-    INSERT INTO package_versions (package_id, version, publish_time, is_pre_release, padding_version)
+    INSERT INTO package_versions (
+      package_id, version, publish_time, is_pre_release, padding_version,
+      tar_shasum, tar_integrity
+    )
     VALUES (
       (SELECT id FROM packages WHERE name = '${PACKAGE_NAME}'),
       '${VERSION}',
       NOW(),
       0,
-      '${VERSION}'
+      '${VERSION}',
+      '${shasum}',
+      '${integrity}'
     );
   `);
 }
@@ -243,49 +231,20 @@ describe("tarball cache miss flow", () => {
 
       const tarballUrl = `${proxideUrl()}/npm/${PACKAGE_NAME}/-/${FILENAME}`;
 
-      const firstResponse = await fetch(tarballUrl);
+      const [firstResponse, secondResponse] = await Promise.all([
+        fetch(tarballUrl),
+        fetch(tarballUrl),
+      ]);
       expect(firstResponse.status).toBe(200);
-      expect(firstResponse.body).toBeTruthy();
-
-      const firstReader = firstResponse.body!.getReader();
-      const firstChunk = await firstReader.read();
-      expect(firstChunk.done).toBe(false);
-      expect(firstChunk.value?.byteLength ?? 0).toBeGreaterThan(0);
-
-      await waitForCondition(async () => {
-        try {
-          const cacheStat = await stat(cacheFilePath());
-          return cacheStat.size >= CHUNK_A.length + CHUNK_B.length && upstreamRequestCount === 1;
-        } catch {
-          return false;
-        }
-      });
-
-      const secondResponse = await fetch(tarballUrl);
-
       expect(secondResponse.status).toBe(200);
-
-      const [firstTail, secondBody] = await Promise.all([
-        readRemaining(firstReader),
+      const [firstBody, secondBody] = await Promise.all([
+        firstResponse.arrayBuffer(),
         secondResponse.arrayBuffer(),
       ]);
 
-      const firstBody = Buffer.concat([Buffer.from(firstChunk.value!), firstTail]);
-      expect(firstBody.equals(TARBALL_BYTES)).toBe(true);
+      expect(Buffer.from(firstBody).equals(TARBALL_BYTES)).toBe(true);
       expect(Buffer.from(secondBody).equals(TARBALL_BYTES)).toBe(true);
       expect(upstreamRequestCount).toBe(1);
-
-      await waitForCondition(async () => {
-        try {
-          const s3Head = await s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key: STORAGE_KEY }));
-          return s3Head.ContentLength === TARBALL_BYTES.length;
-        } catch {
-          return false;
-        }
-      });
-
-      const s3Head = await s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key: STORAGE_KEY }));
-      expect(s3Head.ContentLength).toBe(TARBALL_BYTES.length);
 
       await waitForCondition(async () => {
         const tarDistId = Number(
@@ -319,7 +278,9 @@ describe("tarball cache miss flow", () => {
         WHERE p.name = '${PACKAGE_NAME}' AND pv.version = '${VERSION}'
         LIMIT 1;
       `);
-      expect(distPath).toBe(STORAGE_KEY);
+      expect(distPath).toMatch(/^objects\/raw\/sha256\/[0-9a-f]{2}\/[0-9a-f]{2}\/[0-9a-f]{64}$/);
+      const s3Head = await s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key: distPath }));
+      expect(s3Head.ContentLength).toBe(TARBALL_BYTES.length);
     },
     120_000,
   );

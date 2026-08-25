@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "UPDATE package_versions SET tar_dist_id = ?, tar_size = ? WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "2b663c3790281316aa2c31747965ecae2940f04f77acaa791de4d7d0ff3895c7"
+}

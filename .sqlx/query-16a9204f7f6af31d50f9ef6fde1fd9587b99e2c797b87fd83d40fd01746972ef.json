@@ -1,0 +1,24 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT tar_dist_id FROM package_versions WHERE id = ? FOR UPDATE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "tar_dist_id",
+        "type_info": {
+          "type": "LongLong",
+          "flags": "MULTIPLE_KEY",
+          "max_size": 20
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "16a9204f7f6af31d50f9ef6fde1fd9587b99e2c797b87fd83d40fd01746972ef"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO sync_tasks (name, source, status)\n               SELECT ?, ?, 'pending'\n               FROM DUAL\n               WHERE NOT EXISTS (\n                   SELECT 1 FROM sync_tasks WHERE name = ? AND status = 'pending'\n               )",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "316ba8a9c112c8401d591a5968113af957b7498aa6c8a312be6ad52198729594"
+}

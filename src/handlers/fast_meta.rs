@@ -41,9 +41,9 @@ pub(crate) async fn fetch_abbreviated_packument(
         .repo
         .get_content(dist_id)
         .await
-        .map_err(WebError::CustomApiError)?;
+        .map_err(WebError::ServiceUnavailable)?;
 
-    serde_json::from_slice(&data).map_err(|e| WebError::CustomApiError(e.into()))
+    serde_json::from_slice(&data).map_err(|e| WebError::ServiceUnavailable(e.into()))
 }
 
 pub(crate) async fn fetch_full_packument(
@@ -58,9 +58,9 @@ pub(crate) async fn fetch_full_packument(
         .repo
         .get_content(dist_id)
         .await
-        .map_err(WebError::CustomApiError)?;
+        .map_err(WebError::ServiceUnavailable)?;
 
-    serde_json::from_slice(&data).map_err(|e| WebError::CustomApiError(e.into()))
+    serde_json::from_slice(&data).map_err(|e| WebError::ServiceUnavailable(e.into()))
 }
 
 #[utoipa::path(

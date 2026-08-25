@@ -1,0 +1,54 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT id, version, tar_shasum as \"tar_shasum: String\",\n                      tar_integrity as \"tar_integrity: String\"\n               FROM package_versions WHERE package_id = ? FOR UPDATE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": {
+          "type": "LongLong",
+          "flags": "NOT_NULL | PRIMARY_KEY | AUTO_INCREMENT",
+          "max_size": 20
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "version",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL | NO_DEFAULT_VALUE",
+          "max_size": 1024
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "tar_shasum: String",
+        "type_info": {
+          "type": "VarString",
+          "flags": "BINARY",
+          "max_size": 512
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "tar_integrity: String",
+        "type_info": {
+          "type": "VarString",
+          "flags": "BINARY",
+          "max_size": 4096
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "d380e768efb71823aeb04c4eb9c0fd70ddaaaed5683c5fc857dafccbfcd3c954"
+}

@@ -1,17 +1,12 @@
 use crate::config::Config;
 use crate::npm::types::*;
 use crate::npm::{build_abbreviated_manifest, is_prerelease, pad_version, split_scope_name};
-use crate::repository::{
-    CommitVersionParams, MAINTAINER_SOURCE_UPSTREAM, PackageVersionRow, Repository,
-    upload_and_commit_manifests,
-};
+use crate::repository::{Repository, SyncPackageCommitParams, SyncVersionInput};
 use crate::search::SearchIndex;
 use crate::state::{LockOwner, PackageLock, UnlockGuard};
 use anyhow::{Context, Result};
 use chrono::NaiveDateTime;
-use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::error;
 
 pub enum SyncPackageError {
     Conflict(String),
@@ -90,52 +85,8 @@ pub async fn sync_package(
     }
 
     let (scope, _name) = split_scope_name(fullname);
-
-    let (package_id, existing_source) = repo
-        .upsert_package(
-            fullname,
-            scope,
-            packument.description.as_deref(),
-            Some(&config.worker.upstream_name),
-        )
-        .await?;
-
-    if existing_source.as_deref() != Some(&config.worker.upstream_name) && existing_source.is_some()
-    {
-        return Err(SyncPackageError::Conflict(format!(
-            "package {fullname} is a locally published package, sync is not allowed"
-        )));
-    }
-
-    if let Some(upstream_maintainers) = &packument.maintainers {
-        let mut user_ids: Vec<i64> = Vec::with_capacity(upstream_maintainers.len());
-        for m in upstream_maintainers {
-            let uid = repo
-                .upsert_user(&m.name, m.email.as_deref(), &config.worker.upstream_name)
-                .await?;
-            user_ids.push(uid);
-        }
-        repo.sync_maintainers(package_id, &user_ids, MAINTAINER_SOURCE_UPSTREAM)
-            .await?;
-    }
-
-    let existing_versions = repo.list_versions(package_id).await?;
-    let existing_map: HashMap<String, &PackageVersionRow> = existing_versions
-        .iter()
-        .map(|v| (v.version.clone(), v))
-        .collect();
-
-    // ── Phase 1: Insert version metadata ──
-
-    log::info!(action = "sync_progress"; "name={fullname} phase=insert_versions inserting version metadata");
-
-    let mut new_count = 0u32;
-
-    for ver_str in packument.versions.keys() {
-        if existing_map.contains_key(ver_str) {
-            continue;
-        }
-
+    let mut versions = Vec::with_capacity(packument.versions.len());
+    for (ver_str, upstream_version) in &packument.versions {
         let publish_time = packument
             .time
             .get(ver_str)
@@ -146,103 +97,76 @@ pub async fn sync_package(
         let is_pre_release = is_prerelease(ver_str);
         let padding_version = Some(pad_version(ver_str));
 
-        let version_params = CommitVersionParams {
-            package_id,
+        versions.push(SyncVersionInput {
             version: ver_str.clone(),
             publish_time,
             is_pre_release,
             padding_version,
-            tar_dist: None,
-            readme_dist: None,
-        };
-
-        if let Err(e) = repo.commit_version(version_params).await {
-            error!("DB commit failed for {fullname}@{ver_str}: {e:#}");
-            continue;
-        }
-
-        new_count += 1;
+            tar_shasum: upstream_version.dist.shasum.clone(),
+            tar_integrity: upstream_version.dist.integrity.clone(),
+        });
     }
-
-    // ── Phase 2: Upload manifests + sync tags + swap pointers (transactional) ──
-
-    log::info!(action = "sync_progress"; "name={fullname} phase=sync_manifests uploading manifests and swapping pointers");
-
-    let old_pkg = repo.get_package_by_name(fullname).await?;
-    let old_abbrev_dist_id = old_pkg.as_ref().and_then(|p| p.abbreviated_dist_id);
-    let old_full_dist_id = old_pkg.as_ref().and_then(|p| p.full_dist_id);
+    let mut maintainer_user_ids = Vec::new();
+    if let Some(upstream_maintainers) = &packument.maintainers {
+        maintainer_user_ids.reserve(upstream_maintainers.len());
+        for maintainer in upstream_maintainers {
+            maintainer_user_ids.push(
+                repo.upsert_user(
+                    &maintainer.name,
+                    maintainer.email.as_deref(),
+                    &config.worker.upstream_name,
+                )
+                .await?,
+            );
+        }
+    }
 
     let abbreviated_manifest = build_abbreviated_manifest(&packument);
-
-    let abbrev_bytes = serde_json::to_vec(&abbreviated_manifest).unwrap_or_default();
+    let abbrev_bytes = serde_json::to_vec(&abbreviated_manifest)
+        .context("failed to serialize abbreviated manifest")?;
     packument.readme = Some(String::new());
-    let full_bytes = serde_json::to_vec(&packument).unwrap_or_default();
-
-    if let Err(db_err) = upload_and_commit_manifests(
-        &**repo,
-        package_id,
-        fullname,
-        &packument.dist_tags,
-        &abbrev_bytes,
-        &full_bytes,
-    )
-    .await
-    {
-        return Err(SyncPackageError::Other(
-            db_err.context("DB transaction failed for manifest commit"),
-        ));
-    }
+    let full_bytes = serde_json::to_vec(&packument).context("failed to serialize full manifest")?;
+    let abbrev_manifest = repo.prepare_json_dist(abbrev_bytes).await?;
+    let full_manifest = repo.prepare_json_dist(full_bytes).await?;
+    let result = repo
+        .commit_sync_package(SyncPackageCommitParams {
+            name: fullname.to_string(),
+            scope: scope.map(str::to_string),
+            description: packument.description.clone(),
+            source: config.worker.upstream_name.clone(),
+            maintainer_user_ids,
+            versions,
+            tags: packument.dist_tags.clone(),
+            abbrev_manifest,
+            full_manifest,
+        })
+        .await
+        .map_err(|error| {
+            if error.to_string().contains("owned by a different source") {
+                SyncPackageError::Conflict(format!(
+                    "package {fullname} is locally owned, sync is not allowed"
+                ))
+            } else {
+                SyncPackageError::Other(error)
+            }
+        })?;
 
     if let Some(idx) = search {
-        crate::search::upsert_search_document(&**repo, idx, package_id, "public", &packument).await;
-    }
-
-    // ── Phase 3: Clean up old data (best-effort) ──
-
-    log::info!(action = "sync_progress"; "name={fullname} phase=cleanup cleaning up old versions");
-
-    let upstream_version_keys: Vec<String> = packument.versions.keys().cloned().collect();
-    let versions_to_delete = repo
-        .get_versions_not_in(package_id, &upstream_version_keys)
-        .await?;
-
-    if !versions_to_delete.is_empty() {
-        let orphan_dist_ids: Vec<i64> = versions_to_delete
-            .iter()
-            .flat_map(|v| {
-                [
-                    &v.abbrev_dist_id,
-                    &v.manifest_dist_id,
-                    &v.tar_dist_id,
-                    &v.readme_dist_id,
-                ]
-                .into_iter()
-                .filter_map(|id| *id)
-            })
-            .collect();
-
-        let version_ids: Vec<i64> = versions_to_delete.iter().map(|v| v.id).collect();
-
-        repo.delete_versions_by_ids(&version_ids).await?;
-
-        for &dist_id in &orphan_dist_ids {
-            if let Err(e) = repo.delete_content(dist_id).await {
-                error!("failed to delete orphan dist {dist_id}: {e:#}");
-            }
-        }
-    }
-
-    let old_manifest_dist_ids: Vec<i64> = [old_abbrev_dist_id, old_full_dist_id]
-        .into_iter()
-        .flatten()
-        .collect();
-    if !old_manifest_dist_ids.is_empty() {
-        repo.delete_dists_by_ids(&old_manifest_dist_ids).await?;
+        crate::search::upsert_search_document(
+            &**repo,
+            idx,
+            result.package_id,
+            "public",
+            &packument,
+        )
+        .await;
     }
 
     log::info!(
         action = "sync_done";
-        "synced {fullname}: {new_count} new versions"
+        "synced {fullname}: {} versions, {} removed",
+        packument.versions.len(),
+        result.deleted_version_ids.len()
     );
 
     Ok(())

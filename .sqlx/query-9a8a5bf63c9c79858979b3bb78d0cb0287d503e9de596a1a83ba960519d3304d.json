@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO sync_tasks (name, source, status)\n                   SELECT incoming.name COLLATE utf8mb4_0900_ai_ci, ?, 'pending'\n                   FROM JSON_TABLE(?, '$[*]' COLUMNS(name VARCHAR(512) PATH '$')) incoming\n                   WHERE NOT EXISTS (\n                       SELECT 1 FROM sync_tasks existing\n                       WHERE existing.name = incoming.name COLLATE utf8mb4_0900_ai_ci\n                         AND existing.status = 'pending'\n                   )",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "9a8a5bf63c9c79858979b3bb78d0cb0287d503e9de596a1a83ba960519d3304d"
+}

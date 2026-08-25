@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "DELETE FROM package_versions WHERE id = ? AND package_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "7ca922b575a0201b133a96917987430be7b6436c5efb7b194265852e50076728"
+}

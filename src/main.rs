@@ -155,13 +155,10 @@ async fn run_worker(config: config::Config) -> Result<()> {
         "{}/-/ping",
         state.config.server.root_url.trim_end_matches('/')
     );
-    let health_client = reqwest::Client::builder()
-        .no_proxy()
-        .connect_timeout(std::time::Duration::from_secs(5))
-        .timeout(std::time::Duration::from_secs(10))
-        .build()?;
-    let ping = health_client
+    let ping = state
+        .http
         .get(&ping_url)
+        .timeout(std::time::Duration::from_secs(10))
         .send()
         .await
         .map_err(|error| anyhow::anyhow!("server is not healthy at {ping_url}: {error}"))?;

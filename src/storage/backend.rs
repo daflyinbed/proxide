@@ -1,7 +1,8 @@
 use crate::config::StorageConfig;
 use anyhow::{Context, Result};
 use bytes::Bytes;
-use futures::StreamExt;
+use futures::stream::BoxStream;
+use futures::{StreamExt, TryStreamExt};
 use object_store::ObjectStore;
 use object_store::PutPayload;
 use object_store::aws::AmazonS3Builder;
@@ -305,16 +306,16 @@ impl Storage {
             .await
     }
 
-    pub async fn list_meta(&self, prefix: &str) -> Result<Vec<ObjectMeta>> {
+    pub fn list_meta(&self, prefix: &str) -> BoxStream<'static, Result<ObjectMeta>> {
         let path = Path::from(prefix);
-        let mut objects = Vec::new();
-        let mut stream = self.inner.list(Some(&path));
-        while let Some(meta) = stream.next().await {
-            objects.push(
-                meta.with_context(|| format!("failed to list objects with prefix: {prefix}"))?,
-            );
-        }
-        Ok(objects)
+        let prefix = prefix.to_string();
+        self.inner
+            .list(Some(&path))
+            .map_err(move |error| {
+                anyhow::Error::from(error)
+                    .context(format!("failed to list objects with prefix: {prefix}"))
+            })
+            .boxed()
     }
 }
 

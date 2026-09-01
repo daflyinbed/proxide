@@ -11,9 +11,10 @@ use crate::storage::Storage;
 use crate::storage::backend::{EncodedFile, EncodedObject};
 use anyhow::Result;
 use async_trait::async_trait;
+use futures::{StreamExt, stream::BoxStream};
 use sha2::{Digest, Sha256};
 use sqlx::{Connection, MySql, MySqlConnection, Pool};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone)]
 pub struct MysqlRepository {
@@ -103,17 +104,17 @@ impl Repository for MysqlRepository {
         self.storage.delete_many(keys).await
     }
 
-    async fn list_storage_objects(&self, prefix: &str) -> Result<Vec<StorageObjectMeta>> {
-        Ok(self
-            .storage
+    fn list_storage_objects(&self, prefix: &str) -> BoxStream<'static, Result<StorageObjectMeta>> {
+        self.storage
             .list_meta(prefix)
-            .await?
-            .into_iter()
-            .map(|meta| StorageObjectMeta {
-                path: meta.location.to_string(),
-                last_modified: meta.last_modified,
+            .map(|meta| {
+                let meta = meta?;
+                Ok(StorageObjectMeta {
+                    path: meta.location.to_string(),
+                    last_modified: meta.last_modified,
+                })
             })
-            .collect())
+            .boxed()
     }
 
     async fn migrate(&self) -> Result<()> {
@@ -162,7 +163,10 @@ impl Repository for MysqlRepository {
     }
 
     async fn prepare_json_dist(&self, data: Vec<u8>) -> Result<PreparedDist> {
-        let object = self.storage.encode_json(data)?;
+        let storage = self.storage.clone();
+        let object = tokio::task::spawn_blocking(move || storage.encode_json(data))
+            .await
+            .map_err(|error| anyhow::anyhow!("JSON encoding task failed: {error}"))??;
         self.prepare_encoded(object).await
     }
 
@@ -310,11 +314,21 @@ impl Repository for MysqlRepository {
         Ok(row)
     }
 
-    async fn dist_exists_by_path(&self, path: &str) -> Result<bool> {
-        let row = sqlx::query!(r#"SELECT id FROM dists WHERE path = ?"#, path)
-            .fetch_optional(&self.pool)
-            .await?;
-        Ok(row.is_some())
+    async fn existing_dist_paths(&self, paths: &[String]) -> Result<HashSet<String>> {
+        if paths.is_empty() {
+            return Ok(HashSet::new());
+        }
+        let paths = serde_json::to_string(paths)?;
+        let rows = sqlx::query!(
+            r#"SELECT d.path AS `path!: String`
+               FROM dists d
+               JOIN JSON_TABLE(?, '$[*]' COLUMNS(path VARCHAR(1024) PATH '$')) requested
+                 ON requested.path = d.path"#,
+            paths
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(|row| row.path).collect())
     }
 
     async fn list_orphan_dists(&self, min_age_secs: u64, limit: u32) -> Result<Vec<DistRow>> {

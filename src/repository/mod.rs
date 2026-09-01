@@ -5,8 +5,9 @@ pub mod mysql;
 use crate::npm::types::Maintainer;
 use anyhow::Result;
 use async_trait::async_trait;
+use futures::stream::BoxStream;
 use sqlx::{Connection, MySqlConnection};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub const MAINTAINER_SOURCE_TEAM: &str = "team";
 pub const MAINTAINER_SOURCE_MANUAL: &str = "manual";
@@ -428,7 +429,7 @@ pub trait Repository: Send + Sync + 'static {
 
     async fn storage_get_result(&self, key: &str) -> Result<object_store::GetResult>;
     async fn delete_storage_objects(&self, keys: &[String]) -> Vec<(String, Result<()>)>;
-    async fn list_storage_objects(&self, prefix: &str) -> Result<Vec<StorageObjectMeta>>;
+    fn list_storage_objects(&self, prefix: &str) -> BoxStream<'static, Result<StorageObjectMeta>>;
 
     // ── content ──
 
@@ -466,7 +467,7 @@ pub trait Repository: Send + Sync + 'static {
     // ── dists ──
 
     async fn get_dist(&self, id: i64) -> Result<Option<DistRow>>;
-    async fn dist_exists_by_path(&self, path: &str) -> Result<bool>;
+    async fn existing_dist_paths(&self, paths: &[String]) -> Result<HashSet<String>>;
     async fn list_orphan_dists(&self, min_age_secs: u64, limit: u32) -> Result<Vec<DistRow>>;
     async fn delete_dists_by_ids(&self, ids: &[i64]) -> Result<u64>;
 

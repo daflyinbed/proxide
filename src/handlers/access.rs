@@ -231,13 +231,22 @@ pub async fn set_access(
     let pkg_id = pkg.id;
     let full_dist_id = pkg.full_dist_id;
 
+    if normalized == "restricted"
+        && let Some(idx) = &state.search
+    {
+        idx.remove_package_and_wait(pkg_id)
+            .await
+            .map_err(WebError::CustomApiError)?;
+    }
+
     state
         .repo
         .set_package_access(pkg_id, normalized)
         .await
         .map_err(WebError::CustomApiError)?;
 
-    if let Some(idx) = &state.search
+    if normalized == "public"
+        && let Some(idx) = &state.search
         && let Some(full_dist_id) = full_dist_id
     {
         let reindex_result: Result<(), anyhow::Error> = async {

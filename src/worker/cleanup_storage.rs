@@ -2,6 +2,7 @@ use crate::config::StorageGcConfig;
 use crate::repository::Repository;
 use crate::storage::backend::is_valid_cas_path;
 use anyhow::Result;
+use futures::StreamExt;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -81,9 +82,18 @@ pub async fn cleanup_untracked_storage(
 ) -> Result<u64> {
     let cutoff =
         chrono::Utc::now() - chrono::Duration::seconds(config.full_scan_min_age_secs as i64);
-    let objects = repo.list_storage_objects("objects").await?;
-    let mut candidates = Vec::new();
-    for object in objects {
+    let batch_size = config.batch_size.clamp(1, 1000) as usize;
+    let started = Instant::now();
+    let budget =
+        (config.max_duration_secs > 0).then(|| Duration::from_secs(config.max_duration_secs));
+    let mut objects = repo.list_storage_objects("objects");
+    let mut candidates = Vec::with_capacity(batch_size);
+    let mut deleted = 0u64;
+    while let Some(object) = objects.next().await {
+        if budget.is_some_and(|budget| started.elapsed() >= budget) {
+            break;
+        }
+        let object = object?;
         if object.last_modified >= cutoff {
             continue;
         }
@@ -91,19 +101,31 @@ pub async fn cleanup_untracked_storage(
             log::error!(action = "storage_full_scan_invalid_path"; "path={}", object.path);
             continue;
         }
-        if !repo.dist_exists_by_path(&object.path).await? {
-            candidates.push(object.path);
+        candidates.push(object.path);
+        if candidates.len() == batch_size {
+            deleted += delete_untracked_batch(repo, &candidates).await?;
+            candidates.clear();
         }
     }
+    if !candidates.is_empty() {
+        deleted += delete_untracked_batch(repo, &candidates).await?;
+    }
+    Ok(deleted)
+}
 
+async fn delete_untracked_batch(repo: &Arc<dyn Repository>, paths: &[String]) -> Result<u64> {
+    let existing = repo.existing_dist_paths(paths).await?;
+    let untracked: Vec<String> = paths
+        .iter()
+        .filter(|path| !existing.contains(path.as_str()))
+        .cloned()
+        .collect();
     let mut deleted = 0u64;
-    for batch in candidates.chunks(config.batch_size.clamp(1, 1000) as usize) {
-        for (path, result) in repo.delete_storage_objects(batch).await {
-            match result {
-                Ok(()) => deleted += 1,
-                Err(error) => {
-                    log::error!(action = "storage_full_scan_delete_failed"; "path={path} error={error:#}");
-                }
+    for (path, result) in repo.delete_storage_objects(&untracked).await {
+        match result {
+            Ok(()) => deleted += 1,
+            Err(error) => {
+                log::error!(action = "storage_full_scan_delete_failed"; "path={path} error={error:#}");
             }
         }
     }

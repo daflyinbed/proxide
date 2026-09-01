@@ -10,6 +10,7 @@ object_store = { version = "0.12.4", features = ["aws", "fs"] }
 reqwest = { version = "0.12.24", features = ["json", "stream"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
+serde_json_canonicalizer = "0.3.2"
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "mysql", "chrono"] }
 chrono = { version = "0.4", features = ["serde"] }
 thiserror = "2.0.17"

@@ -278,6 +278,7 @@ pub(crate) async fn prepare_manifest_candidate(
         bugs,
         contributors,
         users: None,
+        extra: HashMap::new(),
     };
     let abbreviated = build_abbreviated_manifest(&full_manifest);
     let abbrev_dist = state

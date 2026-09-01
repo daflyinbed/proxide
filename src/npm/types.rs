@@ -231,6 +231,8 @@ pub struct Packument {
         skip_serializing_if = "Option::is_none"
     )]
     pub readme_filename: Option<String>,
+    #[serde(default, flatten)]
+    pub extra: HashMap<String, serde_json::Value>,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -331,67 +333,9 @@ pub struct PackageVersion {
     )]
     pub _node_version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub main: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub module: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub types: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub typings: Option<String>,
-    #[serde(rename = "type", default, skip_serializing_if = "Option::is_none")]
-    pub module_type: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub browser: Option<BrowserField>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub exports: Option<Exports>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub imports: Option<BTreeMap<String, ExportsTarget>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scripts: Option<HashMap<String, String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub config: Option<HashMap<String, serde_json::Value>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub files: Option<StringOrList>,
-    #[serde(
-        default,
-        rename = "publishConfig",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub publish_config: Option<PublishConfig>,
-    #[serde(default, rename = "private", skip_serializing_if = "Option::is_none")]
-    pub is_private: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub prefer_global: Option<bool>,
-    #[serde(rename = "gitHead", default, skip_serializing_if = "Option::is_none")]
-    pub git_head: Option<String>,
-    #[serde(
-        rename = "typesVersions",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub types_versions: Option<BTreeMap<String, BTreeMap<String, Vec<String>>>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub side_effects: Option<SideEffects>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub unpkg: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub jsdelivr: Option<String>,
-    #[serde(
-        rename = "jsnext:main",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub jsnext_main: Option<String>,
-    #[serde(
-        rename = "packageManager",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub package_manager: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub overrides: Option<BTreeMap<String, serde_json::Value>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub resolutions: Option<BTreeMap<String, String>>,
+    #[serde(default, flatten)]
+    pub extra: HashMap<String, serde_json::Value>,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -419,6 +363,8 @@ pub struct Dist {
         skip_serializing_if = "Option::is_none"
     )]
     pub npm_signature: Option<String>,
+    #[serde(default, flatten)]
+    pub extra: HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
@@ -1112,11 +1058,12 @@ mod tests {
             "repository":{"type":"git","url":"git+https://github.com/expressjs/express.git"},
             "bugs":{"url":"https://github.com/expressjs/express/issues"},
             "homepage":"http://expressjs.com/","keywords":["express","web"],
-            "main":"index.js","scripts":{"test":"mocha"},
+            "main":"index.js","jsnext:main":"next.js","scripts":{"test":"mocha"},
             "dependencies":{"accepts":"~1.3.8"},
             "engines":{"node":">= 0.10.0"},
-            "dist":{"shasum":"abc","tarball":"https://r/express/-/express-4.18.2.tgz","integrity":"sha512-"},
+            "dist":{"shasum":"abc","tarball":"https://r/express/-/express-4.18.2.tgz","integrity":"sha512-","signatures":[{"keyid":"key","sig":"value"}]},
             "_npmUser":{"name":"dougwilson"},
+            "_npmOperationalInternal":{"host":"s3://bucket"},
             "funding":{"type":"opencollective","url":"https://opencollective.com/express"},
             "bin":{"express":"./bin/express.js"},
             "os":["linux"],"cpu":["x64"]
@@ -1131,5 +1078,22 @@ mod tests {
         let out = serde_json::to_string(&pv).unwrap();
         let pv2: PackageVersion = serde_json::from_str(&out).unwrap();
         assert_eq!(pv2.name, "express");
+        assert_eq!(pv2.extra["_npmOperationalInternal"]["host"], "s3://bucket");
+        assert_eq!(pv2.extra["jsnext:main"], "next.js");
+        assert_eq!(pv2.dist.extra["signatures"][0]["keyid"], "key");
+    }
+
+    #[test]
+    fn full_packument_preserves_unknown_fields() {
+        let json = r#"{
+            "name":"pkg",
+            "dist-tags":{"latest":"1.0.0"},
+            "versions":{},
+            "time":{},
+            "customMetadata":{"enabled":true}
+        }"#;
+        let packument: Packument = serde_json::from_str(json).unwrap();
+        let out = serde_json::to_value(&packument).unwrap();
+        assert_eq!(out["customMetadata"]["enabled"], true);
     }
 }

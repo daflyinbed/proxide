@@ -122,10 +122,11 @@ pub async fn sync_package(
     }
 
     let abbreviated_manifest = build_abbreviated_manifest(&packument);
-    let abbrev_bytes = serde_json::to_vec(&abbreviated_manifest)
+    let abbrev_bytes = serde_json_canonicalizer::to_vec(&abbreviated_manifest)
         .context("failed to serialize abbreviated manifest")?;
     packument.readme = Some(String::new());
-    let full_bytes = serde_json::to_vec(&packument).context("failed to serialize full manifest")?;
+    let full_bytes = serde_json_canonicalizer::to_vec(&packument)
+        .context("failed to serialize full manifest")?;
     let abbrev_manifest = repo.prepare_json_dist(abbrev_bytes).await?;
     let full_manifest = repo.prepare_json_dist(full_bytes).await?;
     let result = repo
@@ -178,5 +179,48 @@ fn extract_tarball_filename(url: &str) -> Option<String> {
         Some(last_segment.to_string())
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde::Serialize;
+    use std::collections::HashMap;
+
+    #[derive(Serialize)]
+    struct Manifest {
+        dependencies: HashMap<String, String>,
+        versions: HashMap<String, HashMap<String, String>>,
+    }
+
+    #[test]
+    fn canonical_json_is_independent_of_hashmap_insertion_order() {
+        let mut dependencies_a = HashMap::new();
+        dependencies_a.insert("zod".to_string(), "4.0.0".to_string());
+        dependencies_a.insert("axios".to_string(), "1.0.0".to_string());
+        let mut versions_a = HashMap::new();
+        versions_a.insert("2.0.0".to_string(), dependencies_a.clone());
+        versions_a.insert("1.0.0".to_string(), dependencies_a.clone());
+
+        let mut dependencies_b = HashMap::new();
+        dependencies_b.insert("axios".to_string(), "1.0.0".to_string());
+        dependencies_b.insert("zod".to_string(), "4.0.0".to_string());
+        let mut versions_b = HashMap::new();
+        versions_b.insert("1.0.0".to_string(), dependencies_b.clone());
+        versions_b.insert("2.0.0".to_string(), dependencies_b.clone());
+
+        let a = Manifest {
+            dependencies: dependencies_a,
+            versions: versions_a,
+        };
+        let b = Manifest {
+            dependencies: dependencies_b,
+            versions: versions_b,
+        };
+
+        assert_eq!(
+            serde_json_canonicalizer::to_vec(&a).unwrap(),
+            serde_json_canonicalizer::to_vec(&b).unwrap()
+        );
     }
 }

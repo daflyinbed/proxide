@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::npm::split_scope_name;
 use crate::npm::types::{Author, License, Maintainer, Packument, Person, StringOrList};
+use crate::npm::{parse_npm_time, split_scope_name};
 use crate::repository::{PackageDownloadRow, UpstreamPackageDownloadRow};
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -124,12 +124,8 @@ pub fn build_search_document(
         .map(person_to_npm_user);
     let publish_time = latest_manifest
         .and_then(|m| packument.time.get(&m.version))
-        .and_then(|t| {
-            let trimmed = t.strip_suffix('Z').unwrap_or(t);
-            chrono::NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%dT%H:%M:%S%.f")
-                .ok()
-                .map(|dt| dt.and_utc().timestamp_millis())
-        });
+        .and_then(|t| parse_npm_time(t))
+        .map(|dt| dt.and_utc().timestamp_millis());
 
     let mut versions: Vec<String> = packument.versions.keys().cloned().collect();
     versions.sort();

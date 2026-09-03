@@ -1,6 +1,7 @@
 pub mod types;
 
 use crate::npm::types::{AbbreviatedPackument, AbbreviatedVersion, PackageVersion, Packument};
+use chrono::{DateTime, NaiveDateTime};
 use percent_encoding::percent_decode_str;
 use std::collections::HashMap;
 
@@ -53,6 +54,13 @@ pub fn pad_version(version: &str) -> String {
     }
 }
 
+pub fn parse_npm_time(value: &str) -> Option<NaiveDateTime> {
+    DateTime::parse_from_rfc3339(value)
+        .ok()
+        .map(|dt| dt.naive_utc())
+        .or_else(|| NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M:%S%.f").ok())
+}
+
 pub fn detect_install_script(ver: &PackageVersion) -> Option<bool> {
     let scripts = ver.scripts.as_ref()?;
     let has_install = scripts.contains_key("install")
@@ -81,11 +89,9 @@ pub fn build_abbreviated_version_entry(
     let workspaces = ver.workspaces.clone();
     let accept_dependencies = ver.accept_dependencies.clone();
 
-    let publish_time = publish_time_str.and_then(|t| {
-        chrono::NaiveDateTime::parse_from_str(t, "%Y-%m-%dT%H:%M:%S%.f")
-            .ok()
-            .map(|dt| dt.and_utc().timestamp_millis() / 1000)
-    });
+    let publish_time = publish_time_str
+        .and_then(|t| parse_npm_time(t))
+        .map(|dt| dt.and_utc().timestamp());
 
     AbbreviatedVersion {
         name: ver.name.clone(),
@@ -110,5 +116,21 @@ pub fn build_abbreviated_version_entry(
         workspaces,
         accept_dependencies,
         publish_time,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_npm_time;
+
+    #[test]
+    fn parses_npm_times() {
+        let expected = parse_npm_time("2024-01-01T00:00:00.000Z").unwrap();
+        assert_eq!(
+            parse_npm_time("2024-01-01T08:00:00.000+08:00"),
+            Some(expected)
+        );
+        assert_eq!(parse_npm_time("2024-01-01T00:00:00.000"), Some(expected));
+        assert_eq!(parse_npm_time("not-a-time"), None);
     }
 }

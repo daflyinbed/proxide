@@ -1,0 +1,24 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT d.path AS `path!: String`\n               FROM dists d\n               JOIN JSON_TABLE(?, '$[*]' COLUMNS(path VARCHAR(1024) PATH '$')) requested\n                 ON requested.path = d.path",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "path!: String",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL | UNIQUE_KEY | BINARY | NO_DEFAULT_VALUE",
+          "max_size": 1020
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "6dab497755e4bbc0e879b2035dece411f6b10f73b8baf2782de3bba55308ed9c"
+}

@@ -601,7 +601,8 @@ impl Repository for MysqlRepository {
                 }
                 sqlx::query!(
                     r#"UPDATE package_versions
-                       SET publish_time = ?, is_pre_release = ?, padding_version = ?
+                       SET publish_time = COALESCE(?, publish_time),
+                           is_pre_release = ?, padding_version = ?
                        WHERE id = ?"#,
                     version.publish_time,
                     version.is_pre_release,
@@ -611,6 +612,14 @@ impl Repository for MysqlRepository {
                 .execute(&mut *tx)
                 .await?;
             } else {
+                let publish_time = version.publish_time.unwrap_or_else(|| {
+                    log::warn!(
+                        "upstream package {}@{} has no valid publish time; using current time",
+                        params.name,
+                        version.version
+                    );
+                    chrono::Utc::now().naive_utc()
+                });
                 sqlx::query!(
                     r#"INSERT INTO package_versions
                        (package_id, version, publish_time, is_pre_release, padding_version,
@@ -618,7 +627,7 @@ impl Repository for MysqlRepository {
                        VALUES (?, ?, ?, ?, ?, ?, ?)"#,
                     package_id,
                     version.version,
-                    version.publish_time,
+                    publish_time,
                     version.is_pre_release,
                     version.padding_version,
                     version.tar_shasum,

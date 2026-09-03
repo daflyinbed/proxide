@@ -1,11 +1,12 @@
 use crate::config::Config;
 use crate::npm::types::*;
-use crate::npm::{build_abbreviated_manifest, is_prerelease, pad_version, split_scope_name};
+use crate::npm::{
+    build_abbreviated_manifest, is_prerelease, pad_version, parse_npm_time, split_scope_name,
+};
 use crate::repository::{Repository, SyncPackageCommitParams, SyncVersionInput};
 use crate::search::SearchIndex;
 use crate::state::{LockOwner, PackageLock, UnlockGuard};
 use anyhow::{Context, Result};
-use chrono::NaiveDateTime;
 use std::sync::Arc;
 
 pub enum SyncPackageError {
@@ -90,9 +91,13 @@ pub async fn sync_package(
         let publish_time = packument
             .time
             .get(ver_str)
-            .or(packument.time.get("modified"))
-            .and_then(|t| NaiveDateTime::parse_from_str(t, "%Y-%m-%dT%H:%M:%S%.f").ok())
-            .unwrap_or_else(|| chrono::Utc::now().naive_utc());
+            .and_then(|t| parse_npm_time(t))
+            .or_else(|| {
+                packument
+                    .time
+                    .get("modified")
+                    .and_then(|t| parse_npm_time(t))
+            });
 
         let is_pre_release = is_prerelease(ver_str);
         let padding_version = Some(pad_version(ver_str));

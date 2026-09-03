@@ -186,7 +186,7 @@ pub struct LocalManifestCommitParams {
 #[derive(Debug, Clone)]
 pub struct SyncVersionInput {
     pub version: String,
-    pub publish_time: chrono::NaiveDateTime,
+    pub publish_time: Option<chrono::NaiveDateTime>,
     pub is_pre_release: bool,
     pub padding_version: Option<String>,
     pub tar_shasum: Option<String>,

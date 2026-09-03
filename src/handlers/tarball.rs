@@ -79,7 +79,18 @@ async fn stream_storage_tarball(state: &AppState, dist_id: i64) -> WebResult<Res
         .storage_get_result(&dist.path)
         .await
         .map_err(WebError::ServiceUnavailable)?;
-    let content_length = result.meta.size;
+    let content_length = u64::try_from(dist.stored_size).map_err(|_| {
+        WebError::ServiceUnavailable(anyhow::anyhow!(
+            "dist {dist_id} has invalid stored size {}",
+            dist.stored_size
+        ))
+    })?;
+    if result.meta.size != content_length {
+        return Err(WebError::ServiceUnavailable(anyhow::anyhow!(
+            "dist {dist_id} stored size mismatch: expected {content_length}, got {}",
+            result.meta.size
+        )));
+    }
     let body = Body::from_stream(result.into_stream());
     Ok(tarball_response(body, Some(content_length)))
 }

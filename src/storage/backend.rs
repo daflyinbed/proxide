@@ -1,14 +1,14 @@
 use crate::config::StorageConfig;
 use anyhow::{Context, Result};
 use bytes::Bytes;
-use futures::stream::BoxStream;
+use futures::stream::{self, BoxStream};
 use futures::{StreamExt, TryStreamExt};
 use object_store::ObjectStore;
 use object_store::PutPayload;
 use object_store::aws::AmazonS3Builder;
 use object_store::local::LocalFileSystem;
 use object_store::path::Path;
-use object_store::{GetResult, ObjectMeta, WriteMultipart};
+use object_store::{GetResult, GetResultPayload, ObjectMeta, WriteMultipart};
 use sha2::{Digest, Sha256};
 use std::io::Read;
 use std::path::{Path as FsPath, PathBuf};
@@ -51,6 +51,15 @@ enum StoredCodec<'a> {
     Raw,
     ZstdPlain,
     ZstdDict(&'a str),
+}
+
+struct CasVerifyState {
+    stream: BoxStream<'static, object_store::Result<Bytes>>,
+    hasher: Sha256,
+    pending: Option<Bytes>,
+    expected_hash: [u8; 32],
+    key: String,
+    finished: bool,
 }
 
 impl std::fmt::Debug for ZstdDict {
@@ -119,22 +128,13 @@ impl Storage {
     }
 
     pub async fn get(&self, key: &str) -> Result<Vec<u8>> {
-        let (codec, expected_hash) = parse_cas_path(key)?;
-        let path = Path::from(key);
-        let result = self
-            .inner
-            .get(&path)
-            .await
-            .with_context(|| format!("failed to get object: {key}"))?;
+        let (codec, _) = parse_cas_path(key)?;
+        let result = self.get_result(key).await?;
         let bytes = result
             .bytes()
             .await
             .with_context(|| format!("failed to read object body: {key}"))?;
         let bytes = bytes.to_vec();
-        let actual_hash = Sha256::digest(&bytes);
-        if actual_hash.as_slice() != expected_hash.as_slice() {
-            anyhow::bail!("object {key} sha256 does not match its CAS path");
-        }
         match codec {
             StoredCodec::Raw => Ok(bytes),
             StoredCodec::ZstdPlain => zstd::decode_all(bytes.as_slice())
@@ -260,12 +260,67 @@ impl Storage {
     }
 
     pub async fn get_result(&self, key: &str) -> Result<GetResult> {
-        parse_cas_path(key)?;
+        let (_, expected_hash) = parse_cas_path(key)?;
         let path = Path::from(key);
-        self.inner
+        let result = self
+            .inner
             .get(&path)
             .await
-            .with_context(|| format!("failed to get object: {key}"))
+            .with_context(|| format!("failed to get object: {key}"))?;
+        let meta = result.meta.clone();
+        let range = result.range.clone();
+        let attributes = result.attributes.clone();
+        let state = CasVerifyState {
+            stream: result.into_stream(),
+            hasher: Sha256::new(),
+            pending: None,
+            expected_hash,
+            key: key.to_string(),
+            finished: false,
+        };
+        let stream = stream::try_unfold(state, |mut state| async move {
+            if state.finished {
+                return Ok(None);
+            }
+            loop {
+                match state.stream.next().await.transpose()? {
+                    Some(chunk) => {
+                        if chunk.is_empty() {
+                            continue;
+                        }
+                        state.hasher.update(&chunk);
+                        if let Some(pending) = state.pending.replace(chunk) {
+                            return Ok(Some((pending, state)));
+                        }
+                    }
+                    None => {
+                        let actual_hash = std::mem::take(&mut state.hasher).finalize();
+                        if actual_hash.as_slice() != state.expected_hash.as_slice() {
+                            return Err(object_store::Error::Generic {
+                                store: "CAS",
+                                source: std::io::Error::new(
+                                    std::io::ErrorKind::InvalidData,
+                                    format!(
+                                        "object {} sha256 does not match its CAS path",
+                                        state.key
+                                    ),
+                                )
+                                .into(),
+                            });
+                        }
+                        state.finished = true;
+                        return Ok(state.pending.take().map(|pending| (pending, state)));
+                    }
+                }
+            }
+        })
+        .boxed();
+        Ok(GetResult {
+            payload: GetResultPayload::Stream(stream),
+            meta,
+            range,
+            attributes,
+        })
     }
 
     pub async fn put(&self, key: &str, data: impl Into<PutPayload>) -> Result<()> {
@@ -435,6 +490,19 @@ mod tests {
 
         let raw = storage.encode_raw(data.clone()).unwrap();
         storage.put(&raw.path, b"corrupt".to_vec()).await.unwrap();
+        let chunks = storage
+            .get_result(&raw.path)
+            .await
+            .unwrap()
+            .into_stream()
+            .collect::<Vec<_>>()
+            .await;
+        assert_eq!(chunks.len(), 1);
+        assert!(
+            format!("{:#}", chunks[0].as_ref().unwrap_err()).contains("sha256"),
+            "got: {:#}",
+            chunks[0].as_ref().unwrap_err()
+        );
         let error = storage.get(&raw.path).await.unwrap_err();
         assert!(format!("{error:#}").contains("sha256"));
 

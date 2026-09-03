@@ -8,6 +8,7 @@ import { join, resolve } from "node:path";
 import {
   CreateBucketCommand,
   HeadObjectCommand,
+  PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
 
@@ -281,6 +282,53 @@ describe("tarball cache miss flow", () => {
       expect(distPath).toMatch(/^objects\/raw\/sha256\/[0-9a-f]{2}\/[0-9a-f]{2}\/[0-9a-f]{64}$/);
       const s3Head = await s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key: distPath }));
       expect(s3Head.ContentLength).toBe(TARBALL_BYTES.length);
+    },
+    120_000,
+  );
+
+  it(
+    "rejects a corrupted stored tarball",
+    async () => {
+      await resetFixture();
+
+      const tarballUrl = `${proxideUrl()}/npm/${PACKAGE_NAME}/-/${FILENAME}`;
+      const populateResponse = await fetch(tarballUrl);
+      expect(populateResponse.status).toBe(200);
+      expect(Buffer.from(await populateResponse.arrayBuffer()).equals(TARBALL_BYTES)).toBe(true);
+
+      await waitForCondition(async () => {
+        const tarDistId = Number(
+          runMysql(`
+            SELECT COALESCE(pv.tar_dist_id, 0)
+            FROM package_versions pv
+            JOIN packages p ON p.id = pv.package_id
+            WHERE p.name = '${PACKAGE_NAME}' AND pv.version = '${VERSION}'
+            LIMIT 1;
+          `),
+        );
+        return tarDistId > 0;
+      });
+
+      const distPath = runMysql(`
+        SELECT d.path
+        FROM dists d
+        JOIN package_versions pv ON pv.tar_dist_id = d.id
+        JOIN packages p ON p.id = pv.package_id
+        WHERE p.name = '${PACKAGE_NAME}' AND pv.version = '${VERSION}'
+        LIMIT 1;
+      `);
+      await s3.send(
+        new PutObjectCommand({
+          Bucket: BUCKET,
+          Key: distPath,
+          Body: Buffer.alloc(TARBALL_BYTES.length, 0x78),
+        }),
+      );
+
+      const corruptedResponse = await fetch(tarballUrl);
+      expect(corruptedResponse.status).toBe(200);
+      await expect(corruptedResponse.arrayBuffer()).rejects.toThrow();
+      expect(upstreamRequestCount).toBe(1);
     },
     120_000,
   );

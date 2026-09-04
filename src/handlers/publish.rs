@@ -2,7 +2,10 @@ use crate::error::{WebError, WebResult};
 use crate::handlers::orgs::require_org_member;
 use crate::middleware::auth::{AuthContext, is_admin};
 use crate::npm::types::*;
-use crate::npm::{build_abbreviated_manifest, is_prerelease, pad_version, split_scope_name};
+use crate::npm::{
+    build_abbreviated_manifest, is_prerelease, pad_version, split_scope_name,
+    verify_integrity_digests,
+};
 use crate::repository::{
     LocalManifestCommitParams, MAINTAINER_SOURCE_MANUAL, PackageRow, PreparedDist,
     PublishCommitParams,
@@ -64,32 +67,9 @@ pub(crate) fn compute_integrity_sha512(data: &[u8]) -> String {
 }
 
 pub(crate) fn verify_integrity(data: &[u8], integrity: &str) -> bool {
-    let Some((algo, hash_b64)) = integrity.split_once('-') else {
-        return false;
-    };
-    let computed = match algo {
-        "sha512" => Sha512::digest(data).to_vec(),
-        "sha1" => Sha1::digest(data).to_vec(),
-        _ => return false,
-    };
-    let expected = base64::engine::general_purpose::STANDARD.decode(hash_b64);
-    expected.is_ok_and(|bytes| computed.as_slice() == bytes.as_slice())
-}
-
-pub(crate) fn verify_integrity_digests(
-    sha1_digest: &[u8],
-    sha512_digest: &[u8],
-    integrity: &str,
-) -> bool {
-    let Some((algorithm, encoded)) = integrity.split_once('-') else {
-        return false;
-    };
-    let expected = base64::engine::general_purpose::STANDARD.decode(encoded);
-    expected.is_ok_and(|expected| match algorithm {
-        "sha1" => expected == sha1_digest,
-        "sha512" => expected == sha512_digest,
-        _ => false,
-    })
+    let sha1_digest = Sha1::digest(data);
+    let sha512_digest = Sha512::digest(data);
+    verify_integrity_digests(&sha1_digest, &sha512_digest, integrity)
 }
 
 fn validate_package_name(name: &str) -> WebResult<()> {
@@ -1116,4 +1096,52 @@ async fn delete_package_completely(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn integrity_sha1(data: &[u8]) -> String {
+        format!(
+            "sha1-{}",
+            base64::engine::general_purpose::STANDARD.encode(Sha1::digest(data))
+        )
+    }
+
+    #[test]
+    fn verify_integrity_accepts_multiple_digests() {
+        let data = b"proxide";
+        let integrity = format!(
+            "{} {}",
+            integrity_sha1(data),
+            compute_integrity_sha512(data)
+        );
+
+        assert!(verify_integrity(data, &integrity));
+    }
+
+    #[test]
+    fn verify_integrity_does_not_fall_back_from_mismatched_sha512() {
+        let data = b"proxide";
+        let integrity = format!(
+            "{} {}",
+            compute_integrity_sha512(b"different"),
+            integrity_sha1(data)
+        );
+
+        assert!(!verify_integrity(data, &integrity));
+    }
+
+    #[test]
+    fn verify_integrity_accepts_any_matching_digest_of_strongest_algorithm() {
+        let data = b"proxide";
+        let integrity = format!(
+            "{} {}?source=test",
+            compute_integrity_sha512(b"different"),
+            compute_integrity_sha512(data)
+        );
+
+        assert!(verify_integrity(data, &integrity));
+    }
 }

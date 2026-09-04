@@ -263,9 +263,7 @@ pub async fn set_access(
             Ok(())
         }
         .await;
-        if let Err(e) = reindex_result {
-            log::warn!(action = "search_index_upsert"; "name={fullname} error={e:#}");
-        }
+        reindex_result.map_err(WebError::CustomApiError)?;
     }
 
     log::info!(

@@ -10,7 +10,8 @@ use anyhow::{Context, Result};
 use base64::Engine;
 use flate2::read::GzDecoder;
 use futures::StreamExt;
-use sha2::{Digest, Sha256};
+use sha1::Sha1;
+use sha2::{Digest, Sha256, Sha512};
 use std::collections::BTreeMap;
 use std::io::Cursor;
 use std::io::Read;
@@ -185,8 +186,10 @@ async fn acquire_tarball(
         bytes.extend_from_slice(&chunk);
     }
 
+    let sha1_digest = Sha1::digest(&bytes);
+    let sha512_digest = Sha512::digest(&bytes);
     if let Some(expected) = version.tar_integrity.as_deref()
-        && !crate::handlers::publish::verify_integrity(&bytes, expected)
+        && !crate::npm::verify_integrity_digests(&sha1_digest, &sha512_digest, expected)
     {
         return Err(WebError::CustomApiError(anyhow::anyhow!(
             "upstream integrity mismatch for {fullname}@{}",
@@ -194,7 +197,7 @@ async fn acquire_tarball(
         )));
     }
     if let Some(expected) = version.tar_shasum.as_deref()
-        && crate::handlers::publish::compute_shasum(&bytes) != expected
+        && hex::encode(sha1_digest.as_slice()) != expected
     {
         return Err(WebError::CustomApiError(anyhow::anyhow!(
             "upstream shasum mismatch for {fullname}@{}",
@@ -208,7 +211,13 @@ async fn acquire_tarball(
         .map_err(WebError::CustomApiError)?;
     let outcome = state
         .repo
-        .attach_tar_dist(version.id, &prepared, bytes.len() as i64)
+        .attach_tar_dist(
+            version.id,
+            &prepared,
+            bytes.len() as i64,
+            &sha1_digest,
+            &sha512_digest,
+        )
         .await
         .map_err(WebError::CustomApiError)?;
     if outcome == crate::repository::AttachDistOutcome::VersionDeleted {

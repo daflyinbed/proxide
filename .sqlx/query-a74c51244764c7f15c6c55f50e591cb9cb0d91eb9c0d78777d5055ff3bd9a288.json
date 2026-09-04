@@ -1,6 +1,6 @@
 {
   "db_name": "MySQL",
-  "query": "SELECT id, version, tar_shasum as \"tar_shasum: String\",\n                      tar_integrity as \"tar_integrity: String\"\n               FROM package_versions WHERE package_id = ? FOR UPDATE",
+  "query": "SELECT pv.id, pv.version, pv.tar_dist_id,\n                      pv.tar_shasum as \"tar_shasum: String\",\n                      pv.tar_integrity as \"tar_integrity: String\",\n                      d.path as \"tar_path: String\"\n               FROM package_versions pv\n               LEFT JOIN dists d ON d.id = pv.tar_dist_id\n               WHERE pv.package_id = ? FOR UPDATE",
   "describe": {
     "columns": [
       {
@@ -23,6 +23,15 @@
       },
       {
         "ordinal": 2,
+        "name": "tar_dist_id",
+        "type_info": {
+          "type": "LongLong",
+          "flags": "MULTIPLE_KEY",
+          "max_size": 20
+        }
+      },
+      {
+        "ordinal": 3,
         "name": "tar_shasum: String",
         "type_info": {
           "type": "VarString",
@@ -31,12 +40,21 @@
         }
       },
       {
-        "ordinal": 3,
+        "ordinal": 4,
         "name": "tar_integrity: String",
         "type_info": {
           "type": "VarString",
           "flags": "BINARY",
           "max_size": 4096
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "tar_path: String",
+        "type_info": {
+          "type": "VarString",
+          "flags": "UNIQUE_KEY | BINARY | NO_DEFAULT_VALUE",
+          "max_size": 1020
         }
       }
     ],
@@ -47,8 +65,10 @@
       false,
       false,
       true,
+      true,
+      true,
       true
     ]
   },
-  "hash": "d380e768efb71823aeb04c4eb9c0fd70ddaaaed5683c5fc857dafccbfcd3c954"
+  "hash": "a74c51244764c7f15c6c55f50e591cb9cb0d91eb9c0d78777d5055ff3bd9a288"
 }

@@ -1,5 +1,6 @@
 use crate::config::{DatabaseConfig, StorageConfig};
 use crate::npm::types::Maintainer;
+use crate::npm::verify_integrity_digests;
 use crate::repository::{
     AttachDistOutcome, ChangeStreamCursorRow, DistRow, LocalManifestCommitParams,
     MAINTAINER_SOURCE_MANUAL, OrgMemberRow, OrganizationRow, PackageDownloadRow, PackageRow,
@@ -9,10 +10,11 @@ use crate::repository::{
 };
 use crate::storage::Storage;
 use crate::storage::backend::{EncodedFile, EncodedObject};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use futures::{StreamExt, stream::BoxStream};
-use sha2::{Digest, Sha256};
+use sha1::Sha1;
+use sha2::{Digest, Sha256, Sha512};
 use sqlx::{Connection, MySql, MySqlConnection, Pool};
 use std::collections::{HashMap, HashSet};
 
@@ -20,6 +22,40 @@ use std::collections::{HashMap, HashSet};
 pub struct MysqlRepository {
     pool: Pool<MySql>,
     storage: Storage,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChecksumTransition {
+    Unchanged,
+    Backfill,
+    Conflict,
+}
+
+fn checksum_transition(old: Option<&str>, incoming: Option<&str>) -> ChecksumTransition {
+    match (old, incoming) {
+        (None, Some(_)) => ChecksumTransition::Backfill,
+        (None, None) | (Some(_), Some(_)) if old == incoming => ChecksumTransition::Unchanged,
+        _ => ChecksumTransition::Conflict,
+    }
+}
+
+fn validate_tarball_digests(
+    sha1_digest: &[u8],
+    sha512_digest: &[u8],
+    shasum: Option<&str>,
+    integrity: Option<&str>,
+) -> Result<()> {
+    if let Some(expected) = integrity
+        && !verify_integrity_digests(sha1_digest, sha512_digest, expected)
+    {
+        anyhow::bail!("upstream integrity mismatch");
+    }
+    if let Some(expected) = shasum
+        && hex::encode(sha1_digest) != expected
+    {
+        anyhow::bail!("upstream shasum mismatch");
+    }
+    Ok(())
 }
 
 impl MysqlRepository {
@@ -91,6 +127,23 @@ impl MysqlRepository {
             .await?;
         self.storage.put_encoded_file(&object).await?;
         Ok(prepared)
+    }
+
+    async fn validate_cached_tarball(
+        &self,
+        path: &str,
+        shasum: Option<&str>,
+        integrity: Option<&str>,
+    ) -> Result<()> {
+        let mut stream = self.storage.get_result(path).await?.into_stream();
+        let mut sha1 = Sha1::new();
+        let mut sha512 = Sha512::new();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk?;
+            sha1.update(&chunk);
+            sha512.update(&chunk);
+        }
+        validate_tarball_digests(&sha1.finalize(), &sha512.finalize(), shasum, integrity)
     }
 }
 
@@ -254,10 +307,14 @@ impl Repository for MysqlRepository {
         version_id: i64,
         dist: &PreparedDist,
         tar_size: i64,
+        sha1_digest: &[u8],
+        sha512_digest: &[u8],
     ) -> Result<AttachDistOutcome> {
         let mut tx = self.pool.begin().await?;
         let row = sqlx::query!(
-            r#"SELECT tar_dist_id FROM package_versions WHERE id = ? FOR UPDATE"#,
+            r#"SELECT tar_dist_id, tar_shasum as "tar_shasum: String",
+                      tar_integrity as "tar_integrity: String"
+               FROM package_versions WHERE id = ? FOR UPDATE"#,
             version_id
         )
         .fetch_optional(&mut *tx)
@@ -276,6 +333,13 @@ impl Repository for MysqlRepository {
                 dist.id()
             );
         }
+        validate_tarball_digests(
+            sha1_digest,
+            sha512_digest,
+            row.tar_shasum.as_deref(),
+            row.tar_integrity.as_deref(),
+        )
+        .with_context(|| format!("tarball checksum validation failed for version {version_id}"))?;
         sqlx::query!(
             r#"UPDATE package_versions SET tar_dist_id = ?, tar_size = ? WHERE id = ?"#,
             dist.id(),
@@ -571,42 +635,89 @@ impl Repository for MysqlRepository {
         .execute(&mut *tx)
         .await?;
         let existing = sqlx::query!(
-            r#"SELECT id, version, tar_shasum as "tar_shasum: String",
-                      tar_integrity as "tar_integrity: String"
-               FROM package_versions WHERE package_id = ? FOR UPDATE"#,
+            r#"SELECT pv.id, pv.version, pv.tar_dist_id,
+                      pv.tar_shasum as "tar_shasum: String",
+                      pv.tar_integrity as "tar_integrity: String",
+                      d.path as "tar_path: String"
+               FROM package_versions pv
+               LEFT JOIN dists d ON d.id = pv.tar_dist_id
+               WHERE pv.package_id = ? FOR UPDATE"#,
             package_id
         )
         .fetch_all(&mut *tx)
         .await?;
-        let mut existing_by_version: HashMap<String, (i64, Option<String>, Option<String>)> =
-            existing
-                .into_iter()
-                .map(|row| {
+        let mut existing_by_version: HashMap<
+            String,
+            (
+                i64,
+                Option<i64>,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+            ),
+        > = existing
+            .into_iter()
+            .map(|row| {
+                (
+                    row.version,
                     (
-                        row.version,
-                        (row.id as i64, row.tar_shasum, row.tar_integrity),
-                    )
-                })
-                .collect();
+                        row.id,
+                        row.tar_dist_id,
+                        row.tar_path,
+                        row.tar_shasum,
+                        row.tar_integrity,
+                    ),
+                )
+            })
+            .collect();
         for version in &params.versions {
-            if let Some((id, old_shasum, old_integrity)) =
+            if let Some((id, tar_dist_id, tar_path, old_shasum, old_integrity)) =
                 existing_by_version.remove(&version.version)
             {
-                if old_shasum != version.tar_shasum || old_integrity != version.tar_integrity {
+                let shasum_transition =
+                    checksum_transition(old_shasum.as_deref(), version.tar_shasum.as_deref());
+                let integrity_transition =
+                    checksum_transition(old_integrity.as_deref(), version.tar_integrity.as_deref());
+                if shasum_transition == ChecksumTransition::Conflict
+                    || integrity_transition == ChecksumTransition::Conflict
+                {
                     anyhow::bail!(
                         "upstream checksum changed for {}@{}",
                         params.name,
                         version.version
                     );
                 }
+                if (shasum_transition == ChecksumTransition::Backfill
+                    || integrity_transition == ChecksumTransition::Backfill)
+                    && let Some(tar_dist_id) = tar_dist_id
+                {
+                    let tar_path = tar_path.ok_or_else(|| {
+                        anyhow::anyhow!("tar dist {tar_dist_id} has no storage object")
+                    })?;
+                    self.validate_cached_tarball(
+                        &tar_path,
+                        version.tar_shasum.as_deref(),
+                        version.tar_integrity.as_deref(),
+                    )
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "cached tarball validation failed for {}@{}",
+                            params.name, version.version
+                        )
+                    })?;
+                }
                 sqlx::query!(
                     r#"UPDATE package_versions
                        SET publish_time = COALESCE(?, publish_time),
-                           is_pre_release = ?, padding_version = ?
+                           is_pre_release = ?, padding_version = ?,
+                           tar_shasum = ?, tar_integrity = ?
                        WHERE id = ?"#,
                     version.publish_time,
                     version.is_pre_release,
                     version.padding_version,
+                    version.tar_shasum,
+                    version.tar_integrity,
                     id
                 )
                 .execute(&mut *tx)
@@ -639,7 +750,7 @@ impl Repository for MysqlRepository {
         }
         let deleted_version_ids: Vec<i64> = existing_by_version
             .into_values()
-            .map(|(id, _, _)| id)
+            .map(|(id, _, _, _, _)| id)
             .collect();
         for version_id in &deleted_version_ids {
             sqlx::query!(r#"DELETE FROM package_versions WHERE id = ?"#, version_id)
@@ -2515,4 +2626,65 @@ async fn sync_tags_tx(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use base64::Engine;
+
+    #[test]
+    fn checksum_transition_allows_only_backfills_and_unchanged_values() {
+        assert_eq!(
+            checksum_transition(None, Some("new")),
+            ChecksumTransition::Backfill
+        );
+        assert_eq!(
+            checksum_transition(Some("same"), Some("same")),
+            ChecksumTransition::Unchanged
+        );
+        assert_eq!(
+            checksum_transition(None, None),
+            ChecksumTransition::Unchanged
+        );
+        assert_eq!(
+            checksum_transition(Some("old"), Some("new")),
+            ChecksumTransition::Conflict
+        );
+        assert_eq!(
+            checksum_transition(Some("old"), None),
+            ChecksumTransition::Conflict
+        );
+    }
+
+    #[test]
+    fn validate_tarball_digests_checks_backfilled_metadata() {
+        let data = b"proxide";
+        let sha1_digest = Sha1::digest(data);
+        let sha512_digest = Sha512::digest(data);
+        let shasum = hex::encode(sha1_digest);
+        let integrity = format!(
+            "sha512-{}",
+            base64::engine::general_purpose::STANDARD.encode(sha512_digest)
+        );
+
+        assert!(
+            validate_tarball_digests(
+                &Sha1::digest(data),
+                &Sha512::digest(data),
+                Some(&shasum),
+                Some(&integrity),
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_tarball_digests(
+                &Sha1::digest(b"different"),
+                &Sha512::digest(b"different"),
+                Some(&shasum),
+                Some(&integrity),
+            )
+            .is_err()
+        );
+    }
 }

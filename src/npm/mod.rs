@@ -1,9 +1,52 @@
 pub mod types;
 
 use crate::npm::types::{AbbreviatedPackument, AbbreviatedVersion, PackageVersion, Packument};
+use base64::Engine;
 use chrono::{DateTime, NaiveDateTime};
 use percent_encoding::percent_decode_str;
 use std::collections::HashMap;
+
+pub(crate) fn verify_integrity_digests(
+    sha1_digest: &[u8],
+    sha512_digest: &[u8],
+    integrity: &str,
+) -> bool {
+    let mut sha1_found = false;
+    let mut sha1_matches = false;
+    let mut sha512_found = false;
+    let mut sha512_matches = false;
+
+    for metadata in integrity.split_ascii_whitespace() {
+        let Some((algorithm, encoded)) = metadata.split_once('-') else {
+            continue;
+        };
+        let encoded = encoded
+            .split_once('?')
+            .map_or(encoded, |(digest, _)| digest);
+
+        match algorithm {
+            "sha1" => {
+                sha1_found = true;
+                sha1_matches |= base64::engine::general_purpose::STANDARD
+                    .decode(encoded)
+                    .is_ok_and(|expected| expected == sha1_digest);
+            }
+            "sha512" => {
+                sha512_found = true;
+                sha512_matches |= base64::engine::general_purpose::STANDARD
+                    .decode(encoded)
+                    .is_ok_and(|expected| expected == sha512_digest);
+            }
+            _ => {}
+        }
+    }
+
+    if sha512_found {
+        sha512_matches
+    } else {
+        sha1_found && sha1_matches
+    }
+}
 
 pub fn build_abbreviated_manifest(packument: &Packument) -> AbbreviatedPackument {
     let mut versions = HashMap::new();

@@ -1,5 +1,4 @@
 use crate::error::{WebError, WebResult};
-use crate::handlers::publish::verify_integrity_digests;
 use crate::middleware::auth::ensure_package_readable;
 use crate::repository::AttachDistOutcome;
 use crate::state::{AppState, TarballInflight, TarballInflightError};
@@ -259,7 +258,7 @@ async fn run_tarball_producer(
     inflight: Arc<TarballInflight>,
     inflight_key: String,
     fullname: String,
-    package_id: i64,
+    version_id: i64,
     version_name: String,
     filename: String,
 ) {
@@ -347,35 +346,8 @@ async fn run_tarball_producer(
             ))
         })?;
 
-        let latest_version = state
-            .repo
-            .get_version(package_id, &version_name)
-            .await
-            .map_err(|e| {
-                TarballInflightError::Internal(format!(
-                    "failed to reload version {fullname}@{version_name}: {e:#}"
-                ))
-            })?;
-
-        let version = latest_version.ok_or_else(|| {
-            TarballInflightError::NotFound(format!("{fullname}@{version_name} not found"))
-        })?;
         let sha1_digest = sha1.finalize();
         let sha512_digest = sha512.finalize();
-        if let Some(expected) = version.tar_integrity.as_deref()
-            && !verify_integrity_digests(&sha1_digest, &sha512_digest, expected)
-        {
-            return Err(TarballInflightError::Internal(format!(
-                "upstream integrity mismatch for {fullname}@{version_name}"
-            )));
-        }
-        if let Some(expected) = version.tar_shasum.as_deref()
-            && hex::encode(sha1_digest) != expected
-        {
-            return Err(TarballInflightError::Internal(format!(
-                "upstream shasum mismatch for {fullname}@{version_name}"
-            )));
-        }
         let prepared = state
             .repo
             .prepare_raw_dist_file(&file_path)
@@ -387,7 +359,13 @@ async fn run_tarball_producer(
             })?;
         let outcome = state
             .repo
-            .attach_tar_dist(version.id, &prepared, bytes_written as i64)
+            .attach_tar_dist(
+                version_id,
+                &prepared,
+                bytes_written as i64,
+                &sha1_digest,
+                &sha512_digest,
+            )
             .await
             .map_err(|e| {
                 TarballInflightError::Internal(format!(
@@ -500,7 +478,7 @@ pub async fn download_tarball_inner(
                 inflight,
                 inflight_key,
                 fullname,
-                pkg.id,
+                version.id,
                 version_name,
                 filename,
             )

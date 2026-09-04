@@ -458,6 +458,8 @@ pub trait Repository: Send + Sync + 'static {
         version_id: i64,
         dist: &PreparedDist,
         tar_size: i64,
+        sha1_digest: &[u8],
+        sha512_digest: &[u8],
     ) -> Result<AttachDistOutcome>;
 
     // ── package_tags ──

@@ -1,6 +1,6 @@
 use crate::config::{DatabaseConfig, StorageConfig};
 use crate::npm::types::Maintainer;
-use crate::npm::verify_integrity_digests;
+use crate::npm::validate_tarball_digests;
 use crate::repository::{
     AttachDistOutcome, ChangeStreamCursorRow, DistRow, LocalManifestCommitParams,
     MAINTAINER_SOURCE_MANUAL, OrgMemberRow, OrganizationRow, PackageDownloadRow, PackageRow,
@@ -37,25 +37,6 @@ fn checksum_transition(old: Option<&str>, incoming: Option<&str>) -> ChecksumTra
         (None, None) | (Some(_), Some(_)) if old == incoming => ChecksumTransition::Unchanged,
         _ => ChecksumTransition::Conflict,
     }
-}
-
-fn validate_tarball_digests(
-    sha1_digest: &[u8],
-    sha512_digest: &[u8],
-    shasum: Option<&str>,
-    integrity: Option<&str>,
-) -> Result<()> {
-    if let Some(expected) = integrity
-        && !verify_integrity_digests(sha1_digest, sha512_digest, expected)
-    {
-        anyhow::bail!("upstream integrity mismatch");
-    }
-    if let Some(expected) = shasum
-        && hex::encode(sha1_digest) != expected
-    {
-        anyhow::bail!("upstream shasum mismatch");
-    }
-    Ok(())
 }
 
 impl MysqlRepository {
@@ -210,8 +191,15 @@ impl Repository for MysqlRepository {
         self.prepare_encoded(object).await
     }
 
-    async fn prepare_raw_dist_file(&self, path: &std::path::Path) -> Result<PreparedDist> {
-        let object = self.storage.encode_raw_file(path).await?;
+    async fn prepare_raw_dist_file(
+        &self,
+        path: &std::path::Path,
+        storage_sha256: [u8; 32],
+        stored_size: i64,
+    ) -> Result<PreparedDist> {
+        let object = self
+            .storage
+            .encode_raw_file(path, storage_sha256, stored_size);
         self.prepare_encoded_file(object).await
     }
 
@@ -1768,7 +1756,7 @@ impl Repository for MysqlRepository {
         )
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows.into_iter().map(|row| row.id as i64).collect())
+        Ok(rows.into_iter().map(|row| row.id).collect())
     }
 
     async fn increment_package_download(

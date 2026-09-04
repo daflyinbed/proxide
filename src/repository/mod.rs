@@ -435,7 +435,12 @@ pub trait Repository: Send + Sync + 'static {
 
     async fn get_content(&self, dist_id: i64) -> Result<(Vec<u8>, DistRow)>;
     async fn prepare_raw_dist(&self, data: Vec<u8>) -> Result<PreparedDist>;
-    async fn prepare_raw_dist_file(&self, path: &std::path::Path) -> Result<PreparedDist>;
+    async fn prepare_raw_dist_file(
+        &self,
+        path: &std::path::Path,
+        storage_sha256: [u8; 32],
+        stored_size: i64,
+    ) -> Result<PreparedDist>;
     async fn prepare_json_dist(&self, data: Vec<u8>) -> Result<PreparedDist>;
 
     // ── packages ──

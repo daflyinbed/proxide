@@ -48,6 +48,25 @@ pub(crate) fn verify_integrity_digests(
     }
 }
 
+pub(crate) fn validate_tarball_digests(
+    sha1_digest: &[u8],
+    sha512_digest: &[u8],
+    shasum: Option<&str>,
+    integrity: Option<&str>,
+) -> anyhow::Result<()> {
+    if let Some(expected) = integrity
+        && !verify_integrity_digests(sha1_digest, sha512_digest, expected)
+    {
+        anyhow::bail!("upstream integrity mismatch");
+    }
+    if let Some(expected) = shasum
+        && hex::encode(sha1_digest) != expected
+    {
+        anyhow::bail!("upstream shasum mismatch");
+    }
+    Ok(())
+}
+
 pub fn build_abbreviated_manifest(packument: &Packument) -> AbbreviatedPackument {
     let mut versions = HashMap::new();
     for (ver, data) in &packument.versions {

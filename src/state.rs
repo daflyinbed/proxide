@@ -146,7 +146,7 @@ pub enum TarballInflightError {
 #[derive(Clone, Debug, Default)]
 pub struct TarballInflightSnapshot {
     pub ready: bool,
-    pub bytes_written: u64,
+    pub available_bytes: u64,
     pub content_length: Option<u64>,
     pub completed: bool,
     pub error: Option<TarballInflightError>,
@@ -177,14 +177,15 @@ impl TarballInflight {
         });
     }
 
-    pub fn advance(&self, bytes_written: u64) {
+    pub fn advance(&self, available_bytes: u64) {
         self.tx.send_modify(|s| {
-            s.bytes_written = bytes_written;
+            s.available_bytes = available_bytes;
         });
     }
 
-    pub fn finish(&self) {
+    pub fn finish(&self, available_bytes: u64) {
         self.tx.send_modify(|s| {
+            s.available_bytes = available_bytes;
             s.completed = true;
             s.ready = true;
         });

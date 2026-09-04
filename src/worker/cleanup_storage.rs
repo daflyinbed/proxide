@@ -34,27 +34,25 @@ pub async fn cleanup_orphan_storage(
         let paths: Vec<String> = orphans.iter().map(|dist| dist.path.clone()).collect();
         let results = repo.delete_storage_objects(&paths).await;
         let mut deleted_ids = Vec::with_capacity(orphans.len());
-        let mut failed = false;
+        let mut result_count = 0usize;
         for (path, result) in results {
+            result_count += 1;
+            let id = ids_by_path.get(path.as_str()).ok_or_else(|| {
+                anyhow::anyhow!("storage GC received an unexpected delete result for {path}")
+            })?;
             match result {
                 Ok(()) => {
-                    if let Some(id) = ids_by_path.get(path.as_str()) {
-                        deleted_ids.push(*id);
-                    }
+                    deleted_ids.push(*id);
                 }
                 Err(error) => {
-                    failed = true;
                     log::error!(action = "storage_gc_delete_failed"; "path={path} error={error:#}");
                 }
             }
         }
-        if failed {
-            break;
-        }
-        if deleted_ids.len() != orphans.len() {
+        if result_count != orphans.len() {
             anyhow::bail!(
                 "storage GC received {} delete results for {} objects",
-                deleted_ids.len(),
+                result_count,
                 orphans.len()
             );
         }

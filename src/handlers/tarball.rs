@@ -1,6 +1,7 @@
 use crate::error::{WebError, WebResult};
 use crate::middleware::auth::ensure_package_readable;
-use crate::repository::AttachDistOutcome;
+use crate::npm::validate_tarball_digests;
+use crate::repository::{AttachDistOutcome, PackageVersionRow};
 use crate::state::{AppState, TarballInflight, TarballInflightError};
 use axum::body::Body;
 use axum::http::HeaderMap;
@@ -9,7 +10,7 @@ use bytes::Bytes;
 use futures::{StreamExt, stream};
 use reqwest::StatusCode;
 use sha1::Sha1;
-use sha2::{Digest, Sha512};
+use sha2::{Digest, Sha256, Sha512};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -21,6 +22,7 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 const TARBALL_CONTENT_TYPE: &str = "application/octet-stream";
 const CACHE_READ_CHUNK_SIZE: usize = 64 * 1024;
+const CACHE_VALIDATION_TAIL_SIZE: u64 = 64 * 1024;
 
 fn tarball_response(body: Body, content_length: Option<u64>) -> Response {
     let mut builder = Response::builder()
@@ -46,8 +48,8 @@ pub(crate) fn extract_version(fullname: &str, filename: &str) -> Option<String> 
         .map(|s| s.to_string())
 }
 
-fn tarball_cache_path(cache_dir: &str, storage_key: &str) -> PathBuf {
-    Path::new(cache_dir).join(storage_key)
+fn tarball_cache_path(cache_dir: &str) -> PathBuf {
+    Path::new(cache_dir).join(format!("{}.tmp", uuid::Uuid::new_v4().simple()))
 }
 
 fn inflight_error_to_web(error: TarballInflightError) -> WebError {
@@ -124,7 +126,7 @@ impl Drop for CacheStreamCleanup {
         self.inflight.remove_reader();
         let inflight = self.inflight.clone();
         tokio::spawn(async move {
-            cleanup_completed_cache_file(inflight).await;
+            cleanup_cache_file(inflight).await;
         });
     }
 }
@@ -157,8 +159,8 @@ async fn stream_local_cache(
             loop {
                 let snapshot = inflight.snapshot();
 
-                if offset < snapshot.bytes_written {
-                    let remaining = snapshot.bytes_written - offset;
+                if offset < snapshot.available_bytes {
+                    let remaining = snapshot.available_bytes - offset;
                     let read_len = remaining.min(CACHE_READ_CHUNK_SIZE as u64) as usize;
                     let mut buffer = vec![0; read_len];
                     let bytes_read = file.read(&mut buffer).await?;
@@ -177,7 +179,7 @@ async fn stream_local_cache(
                     return Err(inflight_error_to_io(error));
                 }
 
-                if snapshot.completed && offset >= snapshot.bytes_written {
+                if snapshot.completed && offset >= snapshot.available_bytes {
                     return Ok(None);
                 }
 
@@ -211,18 +213,7 @@ async fn stream_inflight_tarball(
     Ok(tarball_response(Body::from_stream(stream), content_length))
 }
 
-async fn cleanup_failed_cache_file(file_path: &Path) {
-    if let Err(e) = fs::remove_file(file_path).await
-        && e.kind() != io::ErrorKind::NotFound
-    {
-        log::error!(
-            "failed to remove tarball cache file {}: {e}",
-            file_path.display()
-        );
-    }
-}
-
-async fn cleanup_completed_cache_file(inflight: Arc<TarballInflight>) {
+async fn cleanup_cache_file(inflight: Arc<TarballInflight>) {
     if !inflight.try_start_cleanup() {
         return;
     }
@@ -258,8 +249,7 @@ async fn run_tarball_producer(
     inflight: Arc<TarballInflight>,
     inflight_key: String,
     fullname: String,
-    version_id: i64,
-    version_name: String,
+    version: PackageVersionRow,
     filename: String,
 ) {
     let result = async {
@@ -299,15 +289,30 @@ async fn run_tarball_producer(
             )));
         }
 
-        let mut cache_file = File::create(&file_path).await.map_err(|e| {
-            TarballInflightError::Internal(format!(
-                "failed to create cache file {}: {e}",
-                file_path.display()
-            ))
-        })?;
+        let content_length = upstream_resp.content_length();
+        let max_tarball_size = state.config.cdn.max_tarball_size;
+        if content_length.is_some_and(|size| size > max_tarball_size) {
+            return Err(TarballInflightError::Internal(format!(
+                "tarball for {fullname}/-/{filename} exceeds cdn.maxTarballSize ({max_tarball_size})"
+            )));
+        }
 
-        let mut bytes_written = 0u64;
+        let mut cache_file = File::options()
+            .write(true)
+            .create_new(true)
+            .open(&file_path)
+            .await
+            .map_err(|e| {
+                TarballInflightError::Internal(format!(
+                    "failed to create cache file {}: {e}",
+                    file_path.display()
+                ))
+            })?;
+        inflight.mark_ready(content_length);
+
+        let mut total_bytes = 0u64;
         let mut sha1 = Sha1::new();
+        let mut sha256 = Sha256::new();
         let mut sha512 = Sha512::new();
         let mut upstream_stream = upstream_resp.bytes_stream();
 
@@ -318,6 +323,17 @@ async fn run_tarball_producer(
                 ))
             })?;
 
+            let next_size = total_bytes.checked_add(chunk.len() as u64).ok_or_else(|| {
+                TarballInflightError::Internal(format!(
+                    "tarball for {fullname}/-/{filename} is too large"
+                ))
+            })?;
+            if next_size > max_tarball_size {
+                return Err(TarballInflightError::Internal(format!(
+                    "tarball for {fullname}/-/{filename} exceeds cdn.maxTarballSize ({max_tarball_size})"
+                )));
+            }
+
             cache_file.write_all(&chunk).await.map_err(|e| {
                 TarballInflightError::Internal(format!(
                     "failed writing cache file {}: {e}",
@@ -326,17 +342,10 @@ async fn run_tarball_producer(
             })?;
 
             sha1.update(&chunk);
+            sha256.update(&chunk);
             sha512.update(&chunk);
-            bytes_written += chunk.len() as u64;
-            let max_tarball_size = state.config.cdn.max_tarball_size;
-            if bytes_written > max_tarball_size {
-                cache_file.flush().await.ok();
-                let _ = fs::remove_file(&file_path).await;
-                return Err(TarballInflightError::Internal(format!(
-                    "tarball for {fullname}/-/{filename} exceeds cdn.maxTarballSize ({max_tarball_size})"
-                )));
-            }
-            inflight.advance(bytes_written);
+            total_bytes = next_size;
+            inflight.advance(total_bytes.saturating_sub(CACHE_VALIDATION_TAIL_SIZE));
         }
 
         cache_file.flush().await.map_err(|e| {
@@ -346,40 +355,66 @@ async fn run_tarball_producer(
             ))
         })?;
 
+        if content_length.is_some_and(|expected| expected != total_bytes) {
+            return Err(TarballInflightError::Internal(format!(
+                "upstream content length mismatch for {fullname}/-/{filename}"
+            )));
+        }
+
         let sha1_digest = sha1.finalize();
+        let storage_sha256 = sha256.finalize().into();
         let sha512_digest = sha512.finalize();
+        validate_tarball_digests(
+            &sha1_digest,
+            &sha512_digest,
+            version.tar_shasum.as_deref(),
+            version.tar_integrity.as_deref(),
+        )
+        .map_err(|e| {
+            TarballInflightError::Internal(format!(
+                "tarball checksum validation failed for {fullname}@{}: {e:#}",
+                version.version
+            ))
+        })?;
+        let stored_size = i64::try_from(total_bytes).map_err(|_| {
+            TarballInflightError::Internal(format!(
+                "tarball for {fullname}/-/{filename} is too large"
+            ))
+        })?;
         let prepared = state
             .repo
-            .prepare_raw_dist_file(&file_path)
+            .prepare_raw_dist_file(&file_path, storage_sha256, stored_size)
             .await
             .map_err(|e| {
                 TarballInflightError::Internal(format!(
-                    "failed preparing tar dist for {fullname}@{version_name}: {e:#}"
+                    "failed preparing tar dist for {fullname}@{}: {e:#}",
+                    version.version
                 ))
             })?;
         let outcome = state
             .repo
             .attach_tar_dist(
-                version_id,
+                version.id,
                 &prepared,
-                bytes_written as i64,
+                stored_size,
                 &sha1_digest,
                 &sha512_digest,
             )
             .await
             .map_err(|e| {
                 TarballInflightError::Internal(format!(
-                    "failed attaching tar dist for {fullname}@{version_name}: {e:#}"
+                    "failed attaching tar dist for {fullname}@{}: {e:#}",
+                    version.version
                 ))
             })?;
         if outcome == AttachDistOutcome::VersionDeleted {
             return Err(TarballInflightError::NotFound(format!(
-                "{fullname}@{version_name} not found"
+                "{fullname}@{} not found",
+                version.version
             )));
         }
 
-        inflight.mark_ready(Some(bytes_written));
-        inflight.finish();
+        inflight.finish(total_bytes);
 
         Ok::<(), TarballInflightError>(())
     }
@@ -388,20 +423,12 @@ async fn run_tarball_producer(
     match result {
         Ok(()) => {
             state.tarball_downloads.remove(&inflight_key);
-            cleanup_completed_cache_file(inflight).await;
+            cleanup_cache_file(inflight).await;
         }
         Err(error_kind) => {
-            let download_completed = inflight.snapshot().completed;
-
-            if !download_completed {
-                inflight.fail(error_kind.clone());
-                cleanup_failed_cache_file(&inflight.file_path).await;
-            }
-
+            inflight.fail(error_kind.clone());
             state.tarball_downloads.remove(&inflight_key);
-            if download_completed {
-                cleanup_completed_cache_file(inflight).await;
-            }
+            cleanup_cache_file(inflight).await;
 
             if let TarballInflightError::Internal(message) = error_kind {
                 log::error!("tarball background download failed for {inflight_key}: {message}");
@@ -453,10 +480,7 @@ pub async fn download_tarball_inner(
     }
 
     let inflight_key = format!("{fullname}@{version_name}");
-    let cache_file_path = tarball_cache_path(
-        &state.config.server.tarball_cache_dir,
-        &format!("{fullname}/{version_name}/{filename}"),
-    );
+    let cache_file_path = tarball_cache_path(&state.config.server.tarball_cache_dir);
     let (inflight, is_leader) = state
         .tarball_downloads
         .get_or_insert(&inflight_key, cache_file_path);
@@ -470,19 +494,9 @@ pub async fn download_tarball_inner(
         let inflight = inflight.clone();
         let inflight_key = inflight_key.clone();
         let fullname = fullname.to_string();
-        let version_name = version_name.clone();
         let filename = filename.to_string();
         tokio::spawn(async move {
-            run_tarball_producer(
-                state,
-                inflight,
-                inflight_key,
-                fullname,
-                version.id,
-                version_name,
-                filename,
-            )
-            .await;
+            run_tarball_producer(state, inflight, inflight_key, fullname, version, filename).await;
         });
     }
 
@@ -492,6 +506,20 @@ pub async fn download_tarball_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tarball_cache_path_uses_unique_temp_files() {
+        let cache_dir = "/tmp/proxide-test-cache";
+        let first = tarball_cache_path(cache_dir);
+        let second = tarball_cache_path(cache_dir);
+
+        assert_eq!(first.parent(), Some(Path::new(cache_dir)));
+        assert_eq!(
+            first.extension().and_then(|value| value.to_str()),
+            Some("tmp")
+        );
+        assert_ne!(first, second);
+    }
 
     #[test]
     fn extract_version_simple_package() {

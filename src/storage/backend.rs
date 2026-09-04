@@ -184,34 +184,19 @@ impl Storage {
         self.put(&object.path, object.bytes.clone()).await
     }
 
-    pub async fn encode_raw_file(&self, file_path: &FsPath) -> Result<EncodedFile> {
-        let mut file = tokio::fs::File::open(file_path)
-            .await
-            .with_context(|| format!("failed to open object file: {}", file_path.display()))?;
-        let mut hasher = Sha256::new();
-        let mut stored_size = 0i64;
-        let mut buffer = vec![0u8; 1024 * 1024];
-        loop {
-            let read = file
-                .read(&mut buffer)
-                .await
-                .with_context(|| format!("failed to read object file: {}", file_path.display()))?;
-            if read == 0 {
-                break;
-            }
-            hasher.update(&buffer[..read]);
-            stored_size = stored_size
-                .checked_add(read as i64)
-                .context("object is too large")?;
-        }
-        let storage_sha256: [u8; 32] = hasher.finalize().into();
+    pub fn encode_raw_file(
+        &self,
+        file_path: &FsPath,
+        storage_sha256: [u8; 32],
+        stored_size: i64,
+    ) -> EncodedFile {
         let hash = hex::encode(storage_sha256);
-        Ok(EncodedFile {
+        EncodedFile {
             path: format!("objects/raw/sha256/{}/{}/{hash}", &hash[..2], &hash[2..4]),
             storage_sha256,
             stored_size,
             file_path: file_path.to_path_buf(),
-        })
+        }
     }
 
     pub async fn put_encoded_file(&self, object: &EncodedFile) -> Result<()> {

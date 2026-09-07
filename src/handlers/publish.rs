@@ -1,5 +1,6 @@
 use crate::error::{WebError, WebResult};
 use crate::handlers::orgs::require_org_member;
+use crate::handlers::{ensure_local_package, load_tag_map, lock_package};
 use crate::middleware::auth::{AuthContext, is_admin};
 use crate::npm::types::*;
 use crate::npm::{
@@ -10,7 +11,7 @@ use crate::repository::{
     LocalManifestCommitParams, MAINTAINER_SOURCE_MANUAL, PackageRow, PreparedDist,
     PublishCommitParams,
 };
-use crate::state::{AppState, LockOwner, UnlockGuard};
+use crate::state::{AppState, LockOwner};
 use axum::Json;
 use axum::http::HeaderMap;
 use base64::Engine;
@@ -36,17 +37,9 @@ pub fn get_npm_command(headers: &HeaderMap) -> Option<String> {
 }
 
 fn validate_npm_command(headers: &HeaderMap) -> WebResult<()> {
-    let command = headers
-        .get("npm-command")
-        .and_then(|v| v.to_str().ok())
-        .or_else(|| {
-            headers
-                .get("referer")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|s| s.split_whitespace().next())
-        });
+    let command = get_npm_command(headers);
 
-    if matches!(command, Some("star" | "unstar")) {
+    if matches!(command.as_deref(), Some("star" | "unstar")) {
         return Err(WebError::Forbidden(format!(
             "npm {} is not allowed",
             command.unwrap()
@@ -55,21 +48,33 @@ fn validate_npm_command(headers: &HeaderMap) -> WebResult<()> {
     Ok(())
 }
 
-pub(crate) fn compute_shasum(data: &[u8]) -> String {
-    format!("{:x}", Sha1::digest(data))
+struct TarballDigests {
+    sha1: [u8; 20],
+    sha512: [u8; 64],
 }
 
-pub(crate) fn compute_integrity_sha512(data: &[u8]) -> String {
-    format!(
-        "sha512-{}",
-        base64::engine::general_purpose::STANDARD.encode(Sha512::digest(data))
-    )
-}
+impl TarballDigests {
+    fn compute(data: &[u8]) -> Self {
+        Self {
+            sha1: Sha1::digest(data).into(),
+            sha512: Sha512::digest(data).into(),
+        }
+    }
 
-pub(crate) fn verify_integrity(data: &[u8], integrity: &str) -> bool {
-    let sha1_digest = Sha1::digest(data);
-    let sha512_digest = Sha512::digest(data);
-    verify_integrity_digests(&sha1_digest, &sha512_digest, integrity)
+    fn shasum(&self) -> String {
+        hex::encode(self.sha1)
+    }
+
+    fn integrity(&self) -> String {
+        format!(
+            "sha512-{}",
+            base64::engine::general_purpose::STANDARD.encode(self.sha512)
+        )
+    }
+
+    fn verify_integrity(&self, integrity: &str) -> bool {
+        verify_integrity_digests(&self.sha1, &self.sha512, integrity)
+    }
 }
 
 fn validate_package_name(name: &str) -> WebResult<()> {
@@ -136,17 +141,35 @@ pub(crate) struct PreparedManifests {
     pub full_dist: PreparedDist,
 }
 
-#[allow(clippy::too_many_arguments)]
+pub(crate) struct ManifestCandidateParams<'a> {
+    pub package: Option<&'a PackageRow>,
+    pub fullname: &'a str,
+    pub description: Option<&'a str>,
+    pub dist_tags: &'a HashMap<String, String>,
+    pub added_version: Option<(PackageVersion, chrono::NaiveDateTime)>,
+    pub removed_version: Option<&'a str>,
+    pub maintainers: Option<Vec<Maintainer>>,
+}
+
+pub(crate) struct ManifestCommitChanges {
+    pub tags: HashMap<String, String>,
+    pub maintainers: Option<(Vec<i64>, String)>,
+    pub delete_version_id: Option<i64>,
+}
+
 pub(crate) async fn prepare_manifest_candidate(
     state: &AppState,
-    package: Option<&PackageRow>,
-    fullname: &str,
-    description: Option<&str>,
-    dist_tags: &HashMap<String, String>,
-    added_version: Option<(PackageVersion, chrono::NaiveDateTime)>,
-    removed_version: Option<&str>,
-    maintainers: Option<Vec<Maintainer>>,
+    params: ManifestCandidateParams<'_>,
 ) -> WebResult<PreparedManifests> {
+    let ManifestCandidateParams {
+        package,
+        fullname,
+        description,
+        dist_tags,
+        added_version,
+        removed_version,
+        maintainers,
+    } = params;
     let all_versions = if let Some(package) = package {
         state
             .repo
@@ -284,6 +307,50 @@ pub(crate) async fn prepare_manifest_candidate(
     })
 }
 
+pub(crate) async fn commit_manifest_candidate(
+    state: &AppState,
+    package: &PackageRow,
+    changes: ManifestCommitChanges,
+    manifests: PreparedManifests,
+) -> WebResult<()> {
+    let ManifestCommitChanges {
+        tags,
+        maintainers,
+        delete_version_id,
+    } = changes;
+    let PreparedManifests {
+        full_manifest,
+        abbrev_dist,
+        full_dist,
+    } = manifests;
+    state
+        .repo
+        .commit_local_manifest(LocalManifestCommitParams {
+            package_id: package.id,
+            expected_full_dist_id: package.full_dist_id,
+            tags,
+            maintainers,
+            delete_version_id,
+            abbrev_manifest: abbrev_dist,
+            full_manifest: full_dist,
+        })
+        .await
+        .map_err(WebError::CustomApiError)?;
+
+    if let Some(index) = &state.search {
+        crate::search::upsert_search_document(
+            &*state.repo,
+            index,
+            package.id,
+            &package.access,
+            &full_manifest,
+        )
+        .await;
+    }
+
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn publish_package_inner(
     state: &AppState,
@@ -394,20 +461,20 @@ pub async fn publish_package_inner(
         )));
     }
 
+    let digests = TarballDigests::compute(&tarball_bytes);
+    let shasum = digests.shasum();
     if let Some(ref integrity) = package_version.dist.integrity
-        && !verify_integrity(&tarball_bytes, integrity)
+        && !digests.verify_integrity(integrity)
     {
         return Err(WebError::BadRequest("dist.integrity invalid".to_string()));
     }
-    if let Some(ref shasum) = package_version.dist.shasum {
-        let computed = compute_shasum(&tarball_bytes);
-        if computed != *shasum {
-            return Err(WebError::BadRequest("dist.shasum invalid".to_string()));
-        }
+    if let Some(ref expected_shasum) = package_version.dist.shasum
+        && shasum != *expected_shasum
+    {
+        return Err(WebError::BadRequest("dist.shasum invalid".to_string()));
     }
 
-    let shasum = compute_shasum(&tarball_bytes);
-    let integrity = compute_integrity_sha512(&tarball_bytes);
+    let integrity = digests.integrity();
 
     let max_tarball_size = state.config.cdn.max_tarball_size;
     if tarball_bytes.len() as u64 > max_tarball_size {
@@ -417,18 +484,7 @@ pub async fn publish_package_inner(
         )));
     }
 
-    if !state.package_lock.try_lock(&fullname, LockOwner::Publish) {
-        let owner = state
-            .package_lock
-            .get_owner(&fullname)
-            .map(|o| o.to_string())
-            .unwrap_or_else(|| "modified by another request".to_string());
-        return Err(WebError::Conflict(format!(
-            "package {fullname} is currently being {owner}"
-        )));
-    }
-
-    let _unlock = UnlockGuard::new(&state.package_lock, fullname.clone());
+    let _unlock = lock_package(state, &fullname, LockOwner::Publish)?;
 
     let pkg = state
         .repo
@@ -621,13 +677,15 @@ pub async fn publish_package_inner(
     }
     let manifests = prepare_manifest_candidate(
         state,
-        pkg.as_ref(),
-        &fullname,
-        description,
-        &dist_tags,
-        Some((stored_version, publish_time)),
-        None,
-        Some(maintainers),
+        ManifestCandidateParams {
+            package: pkg.as_ref(),
+            fullname: &fullname,
+            description,
+            dist_tags: &dist_tags,
+            added_version: Some((stored_version, publish_time)),
+            removed_version: None,
+            maintainers: Some(maintainers),
+        },
     )
     .await?;
     let expected_full_dist_id = pkg.as_ref().and_then(|package| package.full_dist_id);
@@ -727,17 +785,7 @@ pub async fn update_maintainers_inner(
         ));
     }
 
-    if !state.package_lock.try_lock(&fullname, LockOwner::Publish) {
-        let owner = state
-            .package_lock
-            .get_owner(&fullname)
-            .map(|o| o.to_string())
-            .unwrap_or_else(|| "modified by another request".to_string());
-        return Err(WebError::Conflict(format!(
-            "package {fullname} is currently being {owner}"
-        )));
-    }
-    let _unlock = UnlockGuard::new(&state.package_lock, fullname.clone());
+    let _unlock = lock_package(state, &fullname, LockOwner::Publish)?;
 
     let pkg = state
         .repo
@@ -760,48 +808,32 @@ pub async fn update_maintainers_inner(
         user_ids.push(user.id);
     }
 
-    let tags = state
-        .repo
-        .list_tags(pkg.id)
-        .await
-        .map_err(WebError::CustomApiError)?;
-    let tag_map: HashMap<String, String> = tags.into_iter().map(|t| (t.tag, t.version)).collect();
+    let tag_map = load_tag_map(state, pkg.id).await?;
 
     let manifests = prepare_manifest_candidate(
         state,
-        Some(&pkg),
-        &fullname,
-        pkg.description.as_deref(),
-        &tag_map,
-        None,
-        None,
-        Some(payload.maintainers.clone()),
+        ManifestCandidateParams {
+            package: Some(&pkg),
+            fullname: &fullname,
+            description: pkg.description.as_deref(),
+            dist_tags: &tag_map,
+            added_version: None,
+            removed_version: None,
+            maintainers: Some(payload.maintainers.clone()),
+        },
     )
     .await?;
-    state
-        .repo
-        .commit_local_manifest(LocalManifestCommitParams {
-            package_id: pkg.id,
-            expected_full_dist_id: pkg.full_dist_id,
+    commit_manifest_candidate(
+        state,
+        &pkg,
+        ManifestCommitChanges {
             tags: tag_map,
             maintainers: Some((user_ids, MAINTAINER_SOURCE_MANUAL.to_string())),
             delete_version_id: None,
-            abbrev_manifest: manifests.abbrev_dist,
-            full_manifest: manifests.full_dist,
-        })
-        .await
-        .map_err(WebError::CustomApiError)?;
-
-    if let Some(idx) = &state.search {
-        crate::search::upsert_search_document(
-            &*state.repo,
-            idx,
-            pkg.id,
-            &pkg.access,
-            &manifests.full_manifest,
-        )
-        .await;
-    }
+        },
+        manifests,
+    )
+    .await?;
 
     log::info!(
         action = "owner_update";
@@ -834,17 +866,7 @@ pub async fn unpublish_package_inner(
 
     let fullname = fullname.trim().to_string();
 
-    if !state.package_lock.try_lock(&fullname, LockOwner::Publish) {
-        let owner = state
-            .package_lock
-            .get_owner(&fullname)
-            .map(|o| o.to_string())
-            .unwrap_or_else(|| "modified by another request".to_string());
-        return Err(WebError::Conflict(format!(
-            "package {fullname} is currently being {owner}"
-        )));
-    }
-    let _unlock = UnlockGuard::new(&state.package_lock, fullname.clone());
+    let _unlock = lock_package(state, &fullname, LockOwner::Publish)?;
 
     let pkg = state
         .repo
@@ -856,25 +878,19 @@ pub async fn unpublish_package_inner(
     crate::middleware::auth::ensure_package_write_access(state, auth, &pkg).await?;
     ensure_local_package(pkg.source.as_deref(), &fullname)?;
 
-    if let Ok(versions) = state.repo.list_versions(pkg.id).await {
-        for v in &versions {
-            state.download_counters.remove(&v.id);
-        }
-    }
+    let version_ids = state
+        .repo
+        .list_versions(pkg.id)
+        .await
+        .map_err(WebError::CustomApiError)?
+        .into_iter()
+        .map(|version| version.id)
+        .collect::<Vec<_>>();
 
-    delete_package_completely(state, &pkg)
+    delete_package_completely(state, &pkg, &version_ids)
         .await
         .map_err(WebError::CustomApiError)?;
-
-    if let Some(idx) = &state.search
-        && let Err(e) = idx.remove_package(pkg.id).await
-    {
-        log::warn!(
-            action = "search_index_remove";
-            "package_id={} remove failed: {e:#}",
-            pkg.id
-        );
-    }
+    remove_package_from_search(state, pkg.id).await;
 
     log::info!(
         action = "unpublish";
@@ -907,17 +923,7 @@ pub async fn unpublish_version_inner(
 
     let fullname = fullname.trim().to_string();
 
-    if !state.package_lock.try_lock(&fullname, LockOwner::Publish) {
-        let owner = state
-            .package_lock
-            .get_owner(&fullname)
-            .map(|o| o.to_string())
-            .unwrap_or_else(|| "modified by another request".to_string());
-        return Err(WebError::Conflict(format!(
-            "package {fullname} is currently being {owner}"
-        )));
-    }
-    let _unlock = UnlockGuard::new(&state.package_lock, fullname.clone());
+    let _unlock = lock_package(state, &fullname, LockOwner::Publish)?;
 
     let pkg = state
         .repo
@@ -960,15 +966,6 @@ pub async fn unpublish_version_inner(
 // Helpers
 // ═══════════════════════════════════════════════════════════════════════════
 
-fn ensure_local_package(source: Option<&str>, fullname: &str) -> WebResult<()> {
-    if let Some(s) = source {
-        return Err(WebError::Forbidden(format!(
-            "package {fullname} was synced from upstream ({s}), mutation is not allowed"
-        )));
-    }
-    Ok(())
-}
-
 async fn remove_version_and_refresh(
     state: &AppState,
     fullname: &str,
@@ -980,92 +977,71 @@ async fn remove_version_and_refresh(
         .list_versions(pkg.id)
         .await
         .map_err(WebError::CustomApiError)?;
+    let version_ids = remaining
+        .iter()
+        .map(|candidate| candidate.id)
+        .collect::<Vec<_>>();
     remaining.retain(|candidate| candidate.id != version.id);
 
     if remaining.is_empty() {
-        delete_package_completely(state, pkg)
+        delete_package_completely(state, pkg, &version_ids)
             .await
             .map_err(WebError::CustomApiError)?;
+        remove_package_from_search(state, pkg.id).await;
+        return Ok(());
+    }
 
-        if let Some(idx) = &state.search
-            && let Err(e) = idx.remove_package(pkg.id).await
-        {
-            log::warn!(
-                action = "search_index_remove";
-                "package_id={} remove failed: {e:#}",
-                pkg.id
-            );
-        }
-    } else {
-        let remaining_set: std::collections::HashSet<&str> =
-            remaining.iter().map(|v| v.version.as_str()).collect();
+    let remaining_set: std::collections::HashSet<&str> =
+        remaining.iter().map(|v| v.version.as_str()).collect();
 
-        let tags = state
-            .repo
-            .list_tags(pkg.id)
-            .await
-            .map_err(WebError::CustomApiError)?;
-        let mut tag_map: HashMap<String, String> =
-            tags.into_iter().map(|t| (t.tag, t.version)).collect();
+    let mut tag_map = load_tag_map(state, pkg.id).await?;
 
-        let latest_dangling = tag_map
-            .get("latest")
-            .is_some_and(|v| !remaining_set.contains(v.as_str()));
+    let latest_dangling = tag_map
+        .get("latest")
+        .is_some_and(|v| !remaining_set.contains(v.as_str()));
 
-        let mut tags_changed = false;
-        tag_map.retain(|_, v| {
-            let keep = remaining_set.contains(v.as_str());
-            if !keep {
-                tags_changed = true;
-            }
-            keep
-        });
-
-        if latest_dangling && let Some(new_latest) = pick_latest_version(&remaining) {
-            tag_map.insert("latest".to_string(), new_latest);
+    let mut tags_changed = false;
+    tag_map.retain(|_, v| {
+        let keep = remaining_set.contains(v.as_str());
+        if !keep {
             tags_changed = true;
         }
+        keep
+    });
 
-        if tags_changed {
-            log::info!(action = "unpublish_tags_repaired"; "name={fullname}");
-        }
-
-        let manifests = prepare_manifest_candidate(
-            state,
-            Some(pkg),
-            fullname,
-            pkg.description.as_deref(),
-            &tag_map,
-            None,
-            Some(&version.version),
-            None,
-        )
-        .await?;
-        state
-            .repo
-            .commit_local_manifest(LocalManifestCommitParams {
-                package_id: pkg.id,
-                expected_full_dist_id: pkg.full_dist_id,
-                tags: tag_map,
-                maintainers: None,
-                delete_version_id: Some(version.id),
-                abbrev_manifest: manifests.abbrev_dist,
-                full_manifest: manifests.full_dist,
-            })
-            .await
-            .map_err(WebError::CustomApiError)?;
-
-        if let Some(idx) = &state.search {
-            crate::search::upsert_search_document(
-                &*state.repo,
-                idx,
-                pkg.id,
-                &pkg.access,
-                &manifests.full_manifest,
-            )
-            .await;
-        }
+    if latest_dangling && let Some(new_latest) = pick_latest_version(&remaining) {
+        tag_map.insert("latest".to_string(), new_latest);
+        tags_changed = true;
     }
+
+    if tags_changed {
+        log::info!(action = "unpublish_tags_repaired"; "name={fullname}");
+    }
+
+    let manifests = prepare_manifest_candidate(
+        state,
+        ManifestCandidateParams {
+            package: Some(pkg),
+            fullname,
+            description: pkg.description.as_deref(),
+            dist_tags: &tag_map,
+            added_version: None,
+            removed_version: Some(&version.version),
+            maintainers: None,
+        },
+    )
+    .await?;
+    commit_manifest_candidate(
+        state,
+        pkg,
+        ManifestCommitChanges {
+            tags: tag_map,
+            maintainers: None,
+            delete_version_id: Some(version.id),
+        },
+        manifests,
+    )
+    .await?;
 
     state.download_counters.remove(&version.id);
     state.unpacked.remove_version(version.id).await;
@@ -1084,18 +1060,29 @@ fn pick_latest_version(versions: &[crate::repository::PackageVersionRow]) -> Opt
 async fn delete_package_completely(
     state: &AppState,
     pkg: &crate::repository::PackageRow,
+    version_ids: &[i64],
 ) -> anyhow::Result<()> {
-    let repo = &*state.repo;
-    let versions = repo.list_versions(pkg.id).await?;
-
-    let version_ids: Vec<i64> = versions.iter().map(|v| v.id).collect();
-
-    repo.delete_local_package(pkg.id, pkg.full_dist_id).await?;
+    state
+        .repo
+        .delete_local_package(pkg.id, pkg.full_dist_id)
+        .await?;
     for version_id in version_ids {
-        state.unpacked.remove_version(version_id).await;
+        state.download_counters.remove(version_id);
+        state.unpacked.remove_version(*version_id).await;
     }
 
     Ok(())
+}
+
+async fn remove_package_from_search(state: &AppState, package_id: i64) {
+    if let Some(index) = &state.search
+        && let Err(error) = index.remove_package(package_id).await
+    {
+        log::warn!(
+            action = "search_index_remove";
+            "package_id={package_id} remove failed: {error:#}"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -1115,10 +1102,10 @@ mod tests {
         let integrity = format!(
             "{} {}",
             integrity_sha1(data),
-            compute_integrity_sha512(data)
+            TarballDigests::compute(data).integrity()
         );
 
-        assert!(verify_integrity(data, &integrity));
+        assert!(TarballDigests::compute(data).verify_integrity(&integrity));
     }
 
     #[test]
@@ -1126,11 +1113,11 @@ mod tests {
         let data = b"proxide";
         let integrity = format!(
             "{} {}",
-            compute_integrity_sha512(b"different"),
+            TarballDigests::compute(b"different").integrity(),
             integrity_sha1(data)
         );
 
-        assert!(!verify_integrity(data, &integrity));
+        assert!(!TarballDigests::compute(data).verify_integrity(&integrity));
     }
 
     #[test]
@@ -1138,10 +1125,10 @@ mod tests {
         let data = b"proxide";
         let integrity = format!(
             "{} {}?source=test",
-            compute_integrity_sha512(b"different"),
-            compute_integrity_sha512(data)
+            TarballDigests::compute(b"different").integrity(),
+            TarballDigests::compute(data).integrity()
         );
 
-        assert!(verify_integrity(data, &integrity));
+        assert!(TarballDigests::compute(data).verify_integrity(&integrity));
     }
 }

@@ -82,6 +82,139 @@ fn parse_package_route(path: &str) -> WebResult<PackageRoute> {
     }
 }
 
+pub async fn dispatch(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    req: Request,
+) -> WebResult<Response> {
+    let method = req.method().clone();
+    match method {
+        axum::http::Method::GET => dispatch_get(State(state), headers, req).await,
+        axum::http::Method::PUT => dispatch_put(State(state), headers, req).await,
+        axum::http::Method::DELETE => dispatch_delete(State(state), headers, req).await,
+        _ => Err(WebError::MethodNotAllowed(format!(
+            "method {method} not supported"
+        ))),
+    }
+}
+
+pub async fn dispatch_get(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    req: Request,
+) -> WebResult<Response> {
+    let path = decode_path(req.uri().path());
+    let route = parse_package_route(&path)?;
+
+    match route {
+        PackageRoute::Package { fullname } => {
+            registry::get_package_inner(&state, &headers, &fullname).await
+        }
+        PackageRoute::Version { fullname, version } => {
+            let json =
+                registry::get_package_version_inner(&state, &headers, &fullname, &version).await?;
+            Ok(json.into_response())
+        }
+        PackageRoute::Tarball { fullname, filename } => {
+            tarball::download_tarball_inner(&state, &headers, &fullname, &filename).await
+        }
+        PackageRoute::Rev { .. } | PackageRoute::TarballRev { .. } => {
+            Err(WebError::NotFound(format!("GET not supported for: {path}")))
+        }
+    }
+}
+
+pub async fn dispatch_put(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    req: Request,
+) -> WebResult<Response> {
+    let path = decode_path(req.uri().path());
+    let route = parse_package_route(&path)?;
+
+    let auth = validate_auth(&state, &headers).await?;
+
+    match route {
+        PackageRoute::Package { fullname } => {
+            let body_bytes = body::to_bytes(req.into_body(), 10 * 1024 * 1024)
+                .await
+                .map_err(|e| {
+                    WebError::CustomApiError(anyhow::anyhow!("failed to read body: {e}"))
+                })?;
+
+            let payload: PublishPayload = serde_json::from_slice(&body_bytes)
+                .map_err(|e| WebError::BadRequest(format!("invalid JSON: {e}")))?;
+
+            let result =
+                publish::publish_package_inner(&state, &headers, &auth, &fullname, payload).await?;
+            Ok(result.into_response())
+        }
+        // NOTE: The `rev` segment from `PUT /{fullname}/-rev/{rev}` is intentionally
+        // ignored. npm's `_rev` is treated as a cosmetic protocol-compatibility value
+        // (we emit `pkg.id`), not a true optimistic-concurrency token. As a result two
+        // concurrent `npm owner` operations based on the same packument will both
+        // succeed with last-write-wins, instead of one returning 409. This matches the
+        // behavior of cnpmcore (the reference implementation), whose
+        // `UpdatePackageController` also drops `rev` and whose `Package` model has no
+        // revision column. We accept the lost-update risk for owner changes rather than
+        // diverging from the ecosystem; revisit if stronger guarantees are ever required.
+        PackageRoute::Rev { fullname, .. } => {
+            if publish::get_npm_command(&headers).as_deref() == Some("unpublish") {
+                return Ok(Json(PublishResponse {
+                    ok: false,
+                    rev: String::new(),
+                })
+                .into_response());
+            }
+
+            let body_bytes = body::to_bytes(req.into_body(), 10 * 1024 * 1024)
+                .await
+                .map_err(|e| {
+                    WebError::CustomApiError(anyhow::anyhow!("failed to read body: {e}"))
+                })?;
+
+            let payload: MaintainerUpdatePayload = serde_json::from_slice(&body_bytes)
+                .map_err(|e| WebError::BadRequest(format!("invalid JSON: {e}")))?;
+
+            let result =
+                publish::update_maintainers_inner(&state, &headers, &auth, &fullname, payload)
+                    .await?;
+            Ok(result.into_response())
+        }
+        _ => Err(WebError::NotFound(format!("PUT not supported for: {path}"))),
+    }
+}
+
+pub async fn dispatch_delete(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    req: Request,
+) -> WebResult<Response> {
+    let path = decode_path(req.uri().path());
+    let route = parse_package_route(&path)?;
+
+    let auth = validate_auth(&state, &headers).await?;
+
+    match route {
+        PackageRoute::Rev { fullname, .. } => {
+            let result =
+                publish::unpublish_package_inner(&state, &headers, &auth, &fullname).await?;
+            Ok(result.into_response())
+        }
+        PackageRoute::TarballRev {
+            fullname, filename, ..
+        } => {
+            let result =
+                publish::unpublish_version_inner(&state, &headers, &auth, &fullname, &filename)
+                    .await?;
+            Ok(result.into_response())
+        }
+        _ => Err(WebError::NotFound(format!(
+            "DELETE not supported for: {path}"
+        ))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -248,138 +381,5 @@ mod tests {
         assert_eq!(fullname, "@babel/core");
         assert_eq!(filename, "core-7.24.0.tgz");
         assert_eq!(rev, "5-def");
-    }
-}
-
-pub async fn dispatch(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    req: Request,
-) -> WebResult<Response> {
-    let method = req.method().clone();
-    match method {
-        axum::http::Method::GET => dispatch_get(State(state), headers, req).await,
-        axum::http::Method::PUT => dispatch_put(State(state), headers, req).await,
-        axum::http::Method::DELETE => dispatch_delete(State(state), headers, req).await,
-        _ => Err(WebError::MethodNotAllowed(format!(
-            "method {method} not supported"
-        ))),
-    }
-}
-
-pub async fn dispatch_get(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    req: Request,
-) -> WebResult<Response> {
-    let path = decode_path(req.uri().path());
-    let route = parse_package_route(&path)?;
-
-    match route {
-        PackageRoute::Package { fullname } => {
-            registry::get_package_inner(&state, &headers, &fullname).await
-        }
-        PackageRoute::Version { fullname, version } => {
-            let json =
-                registry::get_package_version_inner(&state, &headers, &fullname, &version).await?;
-            Ok(json.into_response())
-        }
-        PackageRoute::Tarball { fullname, filename } => {
-            tarball::download_tarball_inner(&state, &headers, &fullname, &filename).await
-        }
-        PackageRoute::Rev { .. } | PackageRoute::TarballRev { .. } => {
-            Err(WebError::NotFound(format!("GET not supported for: {path}")))
-        }
-    }
-}
-
-pub async fn dispatch_put(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    req: Request,
-) -> WebResult<Response> {
-    let path = decode_path(req.uri().path());
-    let route = parse_package_route(&path)?;
-
-    let auth = validate_auth(&state, &headers).await?;
-
-    match route {
-        PackageRoute::Package { fullname } => {
-            let body_bytes = body::to_bytes(req.into_body(), 10 * 1024 * 1024)
-                .await
-                .map_err(|e| {
-                    WebError::CustomApiError(anyhow::anyhow!("failed to read body: {e}"))
-                })?;
-
-            let payload: PublishPayload = serde_json::from_slice(&body_bytes)
-                .map_err(|e| WebError::BadRequest(format!("invalid JSON: {e}")))?;
-
-            let result =
-                publish::publish_package_inner(&state, &headers, &auth, &fullname, payload).await?;
-            Ok(result.into_response())
-        }
-        // NOTE: The `rev` segment from `PUT /{fullname}/-rev/{rev}` is intentionally
-        // ignored. npm's `_rev` is treated as a cosmetic protocol-compatibility value
-        // (we emit `pkg.id`), not a true optimistic-concurrency token. As a result two
-        // concurrent `npm owner` operations based on the same packument will both
-        // succeed with last-write-wins, instead of one returning 409. This matches the
-        // behavior of cnpmcore (the reference implementation), whose
-        // `UpdatePackageController` also drops `rev` and whose `Package` model has no
-        // revision column. We accept the lost-update risk for owner changes rather than
-        // diverging from the ecosystem; revisit if stronger guarantees are ever required.
-        PackageRoute::Rev { fullname, .. } => {
-            if publish::get_npm_command(&headers).as_deref() == Some("unpublish") {
-                return Ok(Json(PublishResponse {
-                    ok: false,
-                    rev: String::new(),
-                })
-                .into_response());
-            }
-
-            let body_bytes = body::to_bytes(req.into_body(), 10 * 1024 * 1024)
-                .await
-                .map_err(|e| {
-                    WebError::CustomApiError(anyhow::anyhow!("failed to read body: {e}"))
-                })?;
-
-            let payload: MaintainerUpdatePayload = serde_json::from_slice(&body_bytes)
-                .map_err(|e| WebError::BadRequest(format!("invalid JSON: {e}")))?;
-
-            let result =
-                publish::update_maintainers_inner(&state, &headers, &auth, &fullname, payload)
-                    .await?;
-            Ok(result.into_response())
-        }
-        _ => Err(WebError::NotFound(format!("PUT not supported for: {path}"))),
-    }
-}
-
-pub async fn dispatch_delete(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    req: Request,
-) -> WebResult<Response> {
-    let path = decode_path(req.uri().path());
-    let route = parse_package_route(&path)?;
-
-    let auth = validate_auth(&state, &headers).await?;
-
-    match route {
-        PackageRoute::Rev { fullname, .. } => {
-            let result =
-                publish::unpublish_package_inner(&state, &headers, &auth, &fullname).await?;
-            Ok(result.into_response())
-        }
-        PackageRoute::TarballRev {
-            fullname, filename, ..
-        } => {
-            let result =
-                publish::unpublish_version_inner(&state, &headers, &auth, &fullname, &filename)
-                    .await?;
-            Ok(result.into_response())
-        }
-        _ => Err(WebError::NotFound(format!(
-            "DELETE not supported for: {path}"
-        ))),
     }
 }

@@ -59,20 +59,25 @@ function deleteJson(path: string, token: string, body: unknown): Promise<Respons
 describe("proxide org create (CLI bootstrap)", () => {
   it("creates an org with developers team and owner", async () => {
     const owner = uniqueName("e2e-org-cli-owner");
-    await login(owner, "pass1234");
+    const ownerToken = await login(owner, "pass1234");
     const scope = uniqueName("e2e-org-cli");
     await runOrgCreate(scope, owner);
 
-    const { res, body } = await apiJson<Record<string, string>>(rosterPath(scope));
+    const { res, body } = await apiJson<Record<string, string>>(rosterPath(scope), {
+      headers: bearer(ownerToken),
+    });
     expect(res.status).toBe(200);
     expect(body[owner]).toBe("owner");
 
-    const teamsRes = await apiJson<string[]>(`${teamsInOrgPath(scope)}?format=cli`);
+    const teamsRes = await apiJson<string[]>(`${teamsInOrgPath(scope)}?format=cli`, {
+      headers: bearer(ownerToken),
+    });
     expect(teamsRes.res.status).toBe(200);
     expect(teamsRes.body).toContain(`${scope}:developers`);
 
     const devUsersRes = await apiJson<string[]>(
       `${teamUserPath(scope, "developers")}?format=cli`,
+      { headers: bearer(ownerToken) },
     );
     expect(devUsersRes.res.status).toBe(200);
     expect(devUsersRes.body).toContain(owner);
@@ -103,12 +108,18 @@ describe("PUT /-/org/{org}/user (org set member)", () => {
     expect(body.user).toBe(member);
     expect(body.role).toBe("developer");
 
-    const { body: roster } = await apiJson<Record<string, string>>(rosterPath(scope));
+    const { res: rosterRes, body: roster } = await apiJson<Record<string, string>>(
+      rosterPath(scope),
+      { headers: bearer(ownerToken) },
+    );
+    expect(rosterRes.status).toBe(200);
     expect(roster[member]).toBe("developer");
 
-    const { body: devUsers } = await apiJson<string[]>(
+    const { res: devUsersRes, body: devUsers } = await apiJson<string[]>(
       `${teamUserPath(scope, "developers")}?format=cli`,
+      { headers: bearer(ownerToken) },
     );
+    expect(devUsersRes.status).toBe(200);
     expect(devUsers).toContain(member);
   });
 
@@ -202,20 +213,28 @@ describe("DELETE /-/org/{org}/user (org rm member)", () => {
     await login(member, "pass1234");
     await runOrgAddMember(scope, member, "developer");
 
-    const { body: devUsersBefore } = await apiJson<string[]>(
+    const { res: devUsersBeforeRes, body: devUsersBefore } = await apiJson<string[]>(
       `${teamUserPath(scope, "developers")}?format=cli`,
+      { headers: bearer(ownerToken) },
     );
+    expect(devUsersBeforeRes.status).toBe(200);
     expect(devUsersBefore).toContain(member);
 
     const res = await deleteJson(rosterPath(scope), ownerToken, { user: member });
     expect(res.status).toBe(204);
 
-    const { body: roster } = await apiJson<Record<string, string>>(rosterPath(scope));
+    const { res: rosterRes, body: roster } = await apiJson<Record<string, string>>(
+      rosterPath(scope),
+      { headers: bearer(ownerToken) },
+    );
+    expect(rosterRes.status).toBe(200);
     expect(roster[member]).toBeUndefined();
 
-    const { body: devUsersAfter } = await apiJson<string[]>(
+    const { res: devUsersAfterRes, body: devUsersAfter } = await apiJson<string[]>(
       `${teamUserPath(scope, "developers")}?format=cli`,
+      { headers: bearer(ownerToken) },
     );
+    expect(devUsersAfterRes.status).toBe(200);
     expect(devUsersAfter).not.toContain(member);
   });
 
@@ -337,9 +356,11 @@ describe("team members", () => {
     const addRes = await putJson(teamUserPath(scope, "core"), ownerToken, { user: member });
     expect(addRes.status).toBe(201);
 
-    const { body: users } = await apiJson<string[]>(
+    const { res: usersRes, body: users } = await apiJson<string[]>(
       `${teamUserPath(scope, "core")}?format=cli`,
+      { headers: bearer(ownerToken) },
     );
+    expect(usersRes.status).toBe(200);
     expect(users).toContain(member);
 
     const rmRes = await deleteJson(teamUserPath(scope, "core"), ownerToken, {
@@ -347,9 +368,11 @@ describe("team members", () => {
     });
     expect(rmRes.status).toBe(204);
 
-    const { body: usersAfter } = await apiJson<string[]>(
+    const { res: usersAfterRes, body: usersAfter } = await apiJson<string[]>(
       `${teamUserPath(scope, "core")}?format=cli`,
+      { headers: bearer(ownerToken) },
     );
+    expect(usersAfterRes.status).toBe(200);
     expect(usersAfter).not.toContain(member);
   });
 
@@ -384,7 +407,8 @@ describe("team members", () => {
     const res = await putJson(teamUserPath(scope, "developers"), ownerToken, {
       user: outsider,
     });
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain("membership is managed automatically");
   });
 });
 
@@ -398,7 +422,9 @@ describe("GET /-/org/{scope}/team?format=cli", () => {
     await putJson(teamsInOrgPath(scope), ownerToken, { name: "alpha" });
     await putJson(teamsInOrgPath(scope), ownerToken, { name: "beta" });
 
-    const { res, body } = await apiJson<string[]>(`${teamsInOrgPath(scope)}?format=cli`);
+    const { res, body } = await apiJson<string[]>(`${teamsInOrgPath(scope)}?format=cli`, {
+      headers: bearer(ownerToken),
+    });
     expect(res.status).toBe(200);
     expect(body).toContain(`${scope}:developers`);
     expect(body).toContain(`${scope}:alpha`);

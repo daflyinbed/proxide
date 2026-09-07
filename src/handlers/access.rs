@@ -1,11 +1,12 @@
 use crate::error::{WebError, WebResult};
 use crate::handlers::orgs::{require_org_manager, require_org_member};
+use crate::handlers::{ensure_local_package, lock_package};
 use crate::middleware::auth::{
     OptionalAuth, RequireAuth, ensure_package_readable, ensure_package_readable_with_auth,
     ensure_package_write_access, is_admin,
 };
 use crate::npm::types::Packument;
-use crate::state::{AppState, LockOwner, UnlockGuard};
+use crate::state::{AppState, LockOwner};
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
@@ -197,17 +198,7 @@ pub async fn set_access(
         other => return Err(WebError::BadRequest(format!("invalid access: {other}"))),
     };
 
-    if !state.package_lock.try_lock(&fullname, LockOwner::Access) {
-        let owner = state
-            .package_lock
-            .get_owner(&fullname)
-            .map(|o| o.to_string())
-            .unwrap_or_else(|| "modified by another request".to_string());
-        return Err(WebError::Conflict(format!(
-            "package {fullname} is currently being {owner}"
-        )));
-    }
-    let _unlock = UnlockGuard::new(&state.package_lock, fullname.clone());
+    let _unlock = lock_package(&state, &fullname, LockOwner::Access)?;
 
     let pkg = state
         .repo
@@ -216,11 +207,7 @@ pub async fn set_access(
         .map_err(WebError::CustomApiError)?
         .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
     ensure_package_readable(&state, &headers, &pkg).await?;
-    if pkg.source.is_some() {
-        return Err(WebError::Forbidden(format!(
-            "package {fullname} was synced from upstream, access mutation is not allowed"
-        )));
-    }
+    ensure_local_package(pkg.source.as_deref(), &fullname)?;
     if pkg.scope.is_none() && normalized != "public" {
         return Err(WebError::BadRequest(
             "unscoped packages are always public; restricted access requires a scope".to_string(),

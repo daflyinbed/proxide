@@ -190,9 +190,8 @@ impl Storage {
         storage_sha256: [u8; 32],
         stored_size: i64,
     ) -> EncodedFile {
-        let hash = hex::encode(storage_sha256);
         EncodedFile {
-            path: format!("objects/raw/sha256/{}/{}/{hash}", &hash[..2], &hash[2..4]),
+            path: cas_path("raw", &storage_sha256),
             storage_sha256,
             stored_size,
             file_path: file_path.to_path_buf(),
@@ -362,12 +361,7 @@ impl Storage {
 fn encoded_object(namespace: &str, bytes: Vec<u8>) -> Result<EncodedObject> {
     let digest = Sha256::digest(&bytes);
     let storage_sha256: [u8; 32] = digest.into();
-    let hash = hex::encode(storage_sha256);
-    let path = format!(
-        "objects/{namespace}/sha256/{}/{}/{hash}",
-        &hash[..2],
-        &hash[2..4]
-    );
+    let path = cas_path(namespace, &storage_sha256);
     let stored_size = i64::try_from(bytes.len()).context("object is too large")?;
     Ok(EncodedObject {
         path,
@@ -375,6 +369,15 @@ fn encoded_object(namespace: &str, bytes: Vec<u8>) -> Result<EncodedObject> {
         stored_size,
         bytes,
     })
+}
+
+fn cas_path(namespace: &str, storage_sha256: &[u8; 32]) -> String {
+    let hash = hex::encode(storage_sha256);
+    format!(
+        "objects/{namespace}/sha256/{}/{}/{hash}",
+        &hash[..2],
+        &hash[2..4]
+    )
 }
 
 pub fn is_valid_cas_path(path: &str) -> bool {

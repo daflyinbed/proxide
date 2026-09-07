@@ -5,7 +5,7 @@ use crate::npm::{
 };
 use crate::repository::{Repository, SyncPackageCommitParams, SyncVersionInput};
 use crate::search::SearchIndex;
-use crate::state::{LockOwner, PackageLock, UnlockGuard};
+use crate::state::{LockOwner, PackageLock};
 use anyhow::{Context, Result};
 use std::sync::Arc;
 
@@ -37,16 +37,11 @@ pub async fn sync_package(
     package_lock: &PackageLock,
     search: Option<&SearchIndex>,
 ) -> Result<(), SyncPackageError> {
-    if !package_lock.try_lock(fullname, LockOwner::Sync) {
-        return Err(SyncPackageError::Conflict(format!(
-            "package {fullname} is locked by {}",
-            package_lock
-                .get_owner(fullname)
-                .map(|o| o.to_string())
-                .unwrap_or_default()
-        )));
-    }
-    let _guard = UnlockGuard::new(package_lock, fullname.to_string());
+    let _guard = package_lock
+        .try_guard(fullname, LockOwner::Sync)
+        .map_err(|owner| {
+            SyncPackageError::Conflict(format!("package {fullname} is locked by {owner}"))
+        })?;
 
     let mut request = client
         .get(format!("{}/{fullname}", config.worker.upstream_registry))

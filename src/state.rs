@@ -40,22 +40,25 @@ impl PackageLock {
         }
     }
 
-    pub fn try_lock(&self, name: &str, owner: LockOwner) -> bool {
+    pub fn try_guard(
+        &self,
+        name: &str,
+        owner: LockOwner,
+    ) -> std::result::Result<UnlockGuard<'_>, LockOwner> {
         match self.inner.entry(name.to_string()) {
             Entry::Vacant(e) => {
                 e.insert(owner);
-                true
+                Ok(UnlockGuard {
+                    lock: self,
+                    name: name.to_string(),
+                })
             }
-            Entry::Occupied(_) => false,
+            Entry::Occupied(e) => Err(*e.get()),
         }
     }
 
     pub fn unlock(&self, name: &str) {
         self.inner.remove(name);
-    }
-
-    pub fn get_owner(&self, name: &str) -> Option<LockOwner> {
-        self.inner.get(name).map(|v| *v.value())
     }
 }
 
@@ -73,12 +76,6 @@ pub struct UnlockGuard<'a> {
 impl Drop for UnlockGuard<'_> {
     fn drop(&mut self) {
         self.lock.unlock(&self.name);
-    }
-}
-
-impl UnlockGuard<'_> {
-    pub fn new(lock: &PackageLock, name: String) -> UnlockGuard<'_> {
-        UnlockGuard { lock, name }
     }
 }
 
@@ -373,5 +370,24 @@ impl AppState {
             extraction_inflight: ExtractionInflightMap::new(),
             unpacked,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn package_lock_returns_owner_and_unlocks_on_drop() {
+        let lock = PackageLock::new();
+        let guard = lock.try_guard("pkg", LockOwner::Sync).unwrap();
+
+        assert_eq!(
+            lock.try_guard("pkg", LockOwner::Publish).err(),
+            Some(LockOwner::Sync)
+        );
+
+        drop(guard);
+        assert!(lock.try_guard("pkg", LockOwner::Publish).is_ok());
     }
 }

@@ -1,48 +1,19 @@
 use crate::error::{WebError, WebResult};
-use crate::handlers::publish::prepare_manifest_candidate;
+use crate::handlers::publish::{
+    ManifestCandidateParams, ManifestCommitChanges, commit_manifest_candidate,
+    prepare_manifest_candidate,
+};
+use crate::handlers::{ensure_local_package, load_tag_map, lock_package};
 use crate::middleware::auth::{
     RequireAuth, ensure_package_readable, ensure_package_readable_with_auth,
     ensure_package_write_access,
 };
 use crate::npm::types::PublishResponse;
-use crate::repository::LocalManifestCommitParams;
-use crate::state::{AppState, LockOwner, UnlockGuard};
+use crate::state::{AppState, LockOwner};
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use std::collections::HashMap;
-
-fn ensure_local_package(source: Option<&str>, fullname: &str) -> WebResult<()> {
-    if let Some(s) = source {
-        return Err(WebError::Forbidden(format!(
-            "package {fullname} was synced from upstream ({s}), dist-tag mutation is not allowed"
-        )));
-    }
-    Ok(())
-}
-
-fn lock_package<'a>(state: &'a AppState, fullname: &str) -> WebResult<UnlockGuard<'a>> {
-    if !state.package_lock.try_lock(fullname, LockOwner::Publish) {
-        let owner = state
-            .package_lock
-            .get_owner(fullname)
-            .map(|o| o.to_string())
-            .unwrap_or_else(|| "modified by another request".to_string());
-        return Err(WebError::Conflict(format!(
-            "package {fullname} is currently being {owner}"
-        )));
-    }
-    Ok(UnlockGuard::new(&state.package_lock, fullname.to_string()))
-}
-
-async fn load_tag_map(state: &AppState, package_id: i64) -> WebResult<HashMap<String, String>> {
-    let tags = state
-        .repo
-        .list_tags(package_id)
-        .await
-        .map_err(WebError::CustomApiError)?;
-    Ok(tags.into_iter().map(|t| (t.tag, t.version)).collect())
-}
 
 const MAX_TAG_LEN: usize = 214;
 
@@ -127,7 +98,7 @@ pub async fn set_dist_tag(
         return Err(WebError::BadRequest(format!("invalid version: {version}")));
     }
 
-    let _unlock = lock_package(&state, &fullname)?;
+    let _unlock = lock_package(&state, &fullname, LockOwner::Publish)?;
 
     let pkg = state
         .repo
@@ -162,39 +133,28 @@ pub async fn set_dist_tag(
 
     let manifests = prepare_manifest_candidate(
         &state,
-        Some(&pkg),
-        &fullname,
-        pkg.description.as_deref(),
-        &tags,
-        None,
-        None,
-        None,
+        ManifestCandidateParams {
+            package: Some(&pkg),
+            fullname: &fullname,
+            description: pkg.description.as_deref(),
+            dist_tags: &tags,
+            added_version: None,
+            removed_version: None,
+            maintainers: None,
+        },
     )
     .await?;
-    state
-        .repo
-        .commit_local_manifest(LocalManifestCommitParams {
-            package_id: pkg.id,
-            expected_full_dist_id: pkg.full_dist_id,
+    commit_manifest_candidate(
+        &state,
+        &pkg,
+        ManifestCommitChanges {
             tags,
             maintainers: None,
             delete_version_id: None,
-            abbrev_manifest: manifests.abbrev_dist,
-            full_manifest: manifests.full_dist,
-        })
-        .await
-        .map_err(WebError::CustomApiError)?;
-
-    if let Some(idx) = &state.search {
-        crate::search::upsert_search_document(
-            &*state.repo,
-            idx,
-            pkg.id,
-            &pkg.access,
-            &manifests.full_manifest,
-        )
-        .await;
-    }
+        },
+        manifests,
+    )
+    .await?;
 
     log::info!(
         action = "dist_tag_set";
@@ -240,7 +200,7 @@ pub async fn remove_dist_tag(
         ));
     }
 
-    let _unlock = lock_package(&state, &fullname)?;
+    let _unlock = lock_package(&state, &fullname, LockOwner::Publish)?;
 
     let pkg = state
         .repo
@@ -262,39 +222,28 @@ pub async fn remove_dist_tag(
 
     let manifests = prepare_manifest_candidate(
         &state,
-        Some(&pkg),
-        &fullname,
-        pkg.description.as_deref(),
-        &tags,
-        None,
-        None,
-        None,
+        ManifestCandidateParams {
+            package: Some(&pkg),
+            fullname: &fullname,
+            description: pkg.description.as_deref(),
+            dist_tags: &tags,
+            added_version: None,
+            removed_version: None,
+            maintainers: None,
+        },
     )
     .await?;
-    state
-        .repo
-        .commit_local_manifest(LocalManifestCommitParams {
-            package_id: pkg.id,
-            expected_full_dist_id: pkg.full_dist_id,
+    commit_manifest_candidate(
+        &state,
+        &pkg,
+        ManifestCommitChanges {
             tags,
             maintainers: None,
             delete_version_id: None,
-            abbrev_manifest: manifests.abbrev_dist,
-            full_manifest: manifests.full_dist,
-        })
-        .await
-        .map_err(WebError::CustomApiError)?;
-
-    if let Some(idx) = &state.search {
-        crate::search::upsert_search_document(
-            &*state.repo,
-            idx,
-            pkg.id,
-            &pkg.access,
-            &manifests.full_manifest,
-        )
-        .await;
-    }
+        },
+        manifests,
+    )
+    .await?;
 
     log::info!(
         action = "dist_tag_rm";

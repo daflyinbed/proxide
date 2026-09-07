@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "DELETE d FROM dists d\n               JOIN JSON_TABLE(?, '$[*]' COLUMNS(id BIGINT PATH '$')) selected\n                 ON selected.id = d.id",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "029e36f04e75b9bf1cfa374636634be0832ed7229940f9f28d7f71784022973a"
+}

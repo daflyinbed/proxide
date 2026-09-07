@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "UPDATE sync_tasks SET status = 'pending', started_at = NULL\n               WHERE status = 'running'\n                 AND started_at < DATE_SUB(NOW(), INTERVAL ? SECOND)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "a010005b75af9f27ea8eb5b3cb5ce8e34488abdcb5c15e953e0f1abdf0961d34"
+}

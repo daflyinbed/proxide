@@ -1,6 +1,6 @@
 {
   "db_name": "MySQL",
-  "query": "SELECT id, source FROM packages WHERE name = ?",
+  "query": "SELECT id, source FROM packages WHERE name = ? FOR UPDATE",
   "describe": {
     "columns": [
       {
@@ -30,5 +30,5 @@
       true
     ]
   },
-  "hash": "30ddfd898301b49147ca3c260ee1de6ce6195e0885c508186448c9272dbee8b7"
+  "hash": "be88a2882cf04aef92249e5976c9e3bc74eddb7537756bb7406260c4d0231d8f"
 }

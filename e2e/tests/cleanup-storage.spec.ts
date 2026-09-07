@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createServer, type Server } from "node:http";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, openSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -67,10 +68,10 @@ function runMysqlRoot(sql: string): void {
 }
 
 async function waitForWorkerReady(): Promise<void> {
+  const namespace = createHash("sha256").update(DB_NAME).digest("hex").slice(0, 16);
   await waitForCondition(async () => {
     try {
-      runMysql("SELECT 1 FROM sync_tasks LIMIT 1");
-      return true;
+      return runMysql(`SELECT IS_USED_LOCK('proxide:${namespace}:worker-writer') IS NOT NULL`) === "1";
     } catch {
       return false;
     }
@@ -224,16 +225,10 @@ beforeAll(async () => {
     `[server]\nport = 14874\nrootUrl = "${BASE_URL}"\n\n` +
     `[storage.S3]\nendpoint = "http://127.0.0.1:9000"\naccessKeyId = "proxide"\nsecretAccessKey = "proxide123"\nbucketName = "${BUCKET}"\ncompressJson = true\nzstdLevel = 3\n\n` +
     `[log]\nlevel = "info"\n\n` +
-    `[worker]\nupstreamRegistry = "http://127.0.0.1:${upstreamPort}"\nchangesStreamUrl = "http://127.0.0.1:${upstreamPort}/_changes"\nconsumerCount = 1\nconsumerPollIntervalMs = 100\ncronIntervalSecs = 3600\n`;
+    `[worker]\nupstreamRegistry = "http://127.0.0.1:${upstreamPort}"\nchangesStreamUrl = "http://127.0.0.1:${upstreamPort}/_changes"\npollerEnabled = false\nconsumerCount = 1\nconsumerPollIntervalMs = 100\ncronIntervalSecs = 3600\n\n` +
+    `[storageGc]\nstartupEnabled = false\nmaxDurationSecs = 0\nminAgeSecs = 0\n`;
 
   await writeFile(join(RUN_DIR, "proxide.toml"), workerConfig);
-
-  workerChild = spawn(BINARY, ["worker"], {
-    cwd: RUN_DIR,
-    stdio: ["ignore", "inherit", "inherit"],
-  });
-
-  await waitForWorkerReady();
 
   const logFd = openSync(join(RUN_DIR, "proxide-server.log"), "w");
   serverChild = spawn(BINARY, ["server"], {
@@ -243,21 +238,32 @@ beforeAll(async () => {
   });
 
   await waitFor(`${BASE_URL}/-/ping`);
+
+  workerChild = spawn(BINARY, ["worker"], {
+    cwd: RUN_DIR,
+    stdio: ["ignore", "inherit", "inherit"],
+  });
+
+  await waitForWorkerReady();
 });
 
-afterAll(async () => {
-  if (serverChild && serverChild.exitCode === null && !serverChild.killed) {
-    serverChild.kill("SIGTERM");
-    await new Promise<void>((resolve) => {
-      serverChild!.once("exit", () => resolve());
-    });
-  }
+async function stopWriters(): Promise<void> {
   if (workerChild && workerChild.exitCode === null && !workerChild.killed) {
     workerChild.kill("SIGTERM");
     await new Promise<void>((resolve) => {
       workerChild!.once("exit", () => resolve());
     });
   }
+  if (serverChild && serverChild.exitCode === null && !serverChild.killed) {
+    serverChild.kill("SIGTERM");
+    await new Promise<void>((resolve) => {
+      serverChild!.once("exit", () => resolve());
+    });
+  }
+}
+
+afterAll(async () => {
+  await stopWriters();
   await new Promise<void>((resolve) => {
     if (!upstreamServer.listening) {
       resolve();
@@ -283,10 +289,24 @@ async function runSyncTask(): Promise<void> {
   }, 30_000);
 }
 
-async function assertS3ObjectsExist(prefix: string, shouldExist: boolean): Promise<void> {
-  const list = await s3.send(new ListObjectsV2Command({ Bucket: BUCKET, Prefix: prefix }));
-  const exists = (list.Contents ?? []).length > 0;
+async function assertS3ObjectExists(path: string, shouldExist: boolean): Promise<void> {
+  let exists = true;
+  try {
+    await s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key: path }));
+  } catch (error: any) {
+    if (error?.$metadata?.httpStatusCode === 404 || error?.name === "NotFound") {
+      exists = false;
+    } else {
+      throw error;
+    }
+  }
   expect(exists).toBe(shouldExist);
+}
+
+function tarDistPath(version: string): string {
+  return runMysql(
+    `SELECT d.path FROM package_versions pv JOIN packages p ON p.id = pv.package_id JOIN dists d ON d.id = pv.tar_dist_id WHERE p.name = '${PACKAGE_NAME}' AND pv.version = '${version}'`,
+  );
 }
 
 async function touchJsdelivrFiles(version: string): Promise<void> {
@@ -296,17 +316,21 @@ async function touchJsdelivrFiles(version: string): Promise<void> {
   }
 }
 
-describe("cleanup-storage reclaims orphan dists", () => {
+describe.sequential("cleanup-storage reclaims orphan CAS objects", () => {
   it(
-    "deletes removed-version tarball objects when a version is removed by sync",
+    "keeps an unreferenced object while writers are running",
     async () => {
       await runSyncTask();
 
       await touchJsdelivrFiles(VERSION_1);
       await touchJsdelivrFiles(VERSION_2);
 
-      await assertS3ObjectsExist(`packages/${PACKAGE_NAME}/${VERSION_1}/`, true);
-      await assertS3ObjectsExist(`packages/${PACKAGE_NAME}/${VERSION_2}/`, true);
+      const version1Path = tarDistPath(VERSION_1);
+      const version2Path = tarDistPath(VERSION_2);
+      expect(version1Path).toMatch(/^objects\/raw\/sha256\//);
+      expect(version2Path).toMatch(/^objects\/raw\/sha256\//);
+      await assertS3ObjectExists(version1Path, true);
+      await assertS3ObjectExists(version2Path, true);
 
       upstreamServer.close();
       await new Promise<void>((resolve) => upstreamServer.once("close", resolve));
@@ -326,21 +350,27 @@ describe("cleanup-storage reclaims orphan dists", () => {
         return count === 1;
       }, 30_000);
 
-      await waitForCondition(async () => {
-        await assertS3ObjectsExist(`packages/${PACKAGE_NAME}/${VERSION_1}/`, false);
-        return true;
-      });
-      await assertS3ObjectsExist(`packages/${PACKAGE_NAME}/${VERSION_2}/`, true);
+      await assertS3ObjectExists(version1Path, true);
+      await assertS3ObjectExists(version2Path, true);
 
       const res = await fetch(`${BASE_URL}/jsdelivr/npm/${PACKAGE_NAME}@${VERSION_2}/package.json`);
       expect(res.status).toBe(200);
 
       const orphanFileCount = Number(
         runMysql(
-          `SELECT COUNT(*) FROM dists d LEFT JOIN packages p ON p.abbreviated_dist_id = d.id OR p.full_dist_id = d.id LEFT JOIN package_versions pv ON pv.abbrev_dist_id = d.id OR pv.manifest_dist_id = d.id OR pv.tar_dist_id = d.id OR pv.readme_dist_id = d.id WHERE p.id IS NULL AND pv.id IS NULL`,
+          `SELECT COUNT(*) FROM dists d WHERE NOT EXISTS (SELECT 1 FROM packages p WHERE p.abbreviated_dist_id = d.id) AND NOT EXISTS (SELECT 1 FROM packages p WHERE p.full_dist_id = d.id) AND NOT EXISTS (SELECT 1 FROM package_versions pv WHERE pv.tar_dist_id = d.id) AND NOT EXISTS (SELECT 1 FROM package_versions pv WHERE pv.readme_dist_id = d.id)`,
         ),
       );
-      expect(orphanFileCount).toBe(0);
+      expect(orphanFileCount).toBeGreaterThan(0);
+
+      const manifestPath = runMysql(`
+        SELECT d.path FROM packages p
+        JOIN dists d ON d.id = p.full_dist_id
+        WHERE p.name = '${PACKAGE_NAME}'
+      `);
+      await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: manifestPath }));
+      const missingManifest = await fetch(`${BASE_URL}/npm/${PACKAGE_NAME}`);
+      expect(missingManifest.status).toBe(503);
     },
     120_000,
   );
@@ -350,10 +380,14 @@ describe("cleanup-storage reclaims orphan dists", () => {
     async () => {
       await runSyncTask();
 
-      await assertS3ObjectsExist(`packages/${PACKAGE_NAME}/${VERSION_2}/`, true);
+      await touchJsdelivrFiles(VERSION_2);
+      const paths = runMysql("SELECT path FROM dists ORDER BY id").split("\n").filter(Boolean);
+      expect(paths.length).toBeGreaterThan(0);
 
+      await stopWriters();
       runMysql(`DELETE FROM package_versions WHERE package_id = (SELECT id FROM packages WHERE name = '${PACKAGE_NAME}');`);
       runMysql(`DELETE FROM packages WHERE name = '${PACKAGE_NAME}';`);
+      runMysql("UPDATE dists SET created_at = DATE_SUB(NOW(), INTERVAL 1 SECOND)");
 
       const cleanupChild = spawn(BINARY, ["cleanup-storage"], {
         cwd: RUN_DIR,
@@ -372,9 +406,12 @@ describe("cleanup-storage reclaims orphan dists", () => {
         });
       });
 
-      expect(cleanupOutput).toContain("object(s) deleted");
+      expect(cleanupOutput).toContain("Deleted");
 
-      await assertS3ObjectsExist(`packages/${PACKAGE_NAME}/`, false);
+      for (const path of paths) {
+        await assertS3ObjectExists(path, false);
+      }
+      expect(Number(runMysql("SELECT COUNT(*) FROM dists"))).toBe(0);
     },
     120_000,
   );

@@ -2,10 +2,13 @@ use crate::error::{WebError, WebResult};
 use crate::handlers::orgs::require_org_member;
 use crate::middleware::auth::{AuthContext, is_admin};
 use crate::npm::types::*;
-use crate::npm::{build_abbreviated_manifest, is_prerelease, pad_version, split_scope_name};
+use crate::npm::{
+    build_abbreviated_manifest, is_prerelease, pad_version, split_scope_name,
+    verify_integrity_digests,
+};
 use crate::repository::{
-    CommitVersionParams, MAINTAINER_SOURCE_MANUAL, MAINTAINER_SOURCE_TEAM, PendingDist,
-    upload_and_commit_manifests,
+    LocalManifestCommitParams, MAINTAINER_SOURCE_MANUAL, PackageRow, PreparedDist,
+    PublishCommitParams,
 };
 use crate::state::{AppState, LockOwner, UnlockGuard};
 use axum::Json;
@@ -52,28 +55,21 @@ fn validate_npm_command(headers: &HeaderMap) -> WebResult<()> {
     Ok(())
 }
 
-fn compute_shasum(data: &[u8]) -> String {
+pub(crate) fn compute_shasum(data: &[u8]) -> String {
     format!("{:x}", Sha1::digest(data))
 }
 
-fn compute_integrity_sha512(data: &[u8]) -> String {
+pub(crate) fn compute_integrity_sha512(data: &[u8]) -> String {
     format!(
         "sha512-{}",
         base64::engine::general_purpose::STANDARD.encode(Sha512::digest(data))
     )
 }
 
-fn verify_integrity(data: &[u8], integrity: &str) -> bool {
-    let Some((algo, hash_b64)) = integrity.split_once('-') else {
-        return false;
-    };
-    let computed = match algo {
-        "sha512" => Sha512::digest(data).to_vec(),
-        "sha1" => Sha1::digest(data).to_vec(),
-        _ => return false,
-    };
-    let expected = base64::engine::general_purpose::STANDARD.decode(hash_b64);
-    expected.is_ok_and(|bytes| computed.as_slice() == bytes.as_slice())
+pub(crate) fn verify_integrity(data: &[u8], integrity: &str) -> bool {
+    let sha1_digest = Sha1::digest(data);
+    let sha512_digest = Sha512::digest(data);
+    verify_integrity_digests(&sha1_digest, &sha512_digest, integrity)
 }
 
 fn validate_package_name(name: &str) -> WebResult<()> {
@@ -101,19 +97,18 @@ fn validate_package_name(name: &str) -> WebResult<()> {
 
 const DEVELOPERS_TEAM: &str = "developers";
 
-async fn apply_developers_team_default(
+async fn load_developers_team_default(
     state: &AppState,
-    package_id: i64,
     scope: &str,
     publisher_id: i64,
-) -> WebResult<()> {
+) -> WebResult<Option<(i64, Vec<i64>)>> {
     let org = state
         .repo
         .get_org_by_name(scope)
         .await
         .map_err(WebError::CustomApiError)?;
     let Some(org) = org else {
-        return Ok(());
+        return Ok(None);
     };
     let dev_team = state
         .repo
@@ -121,7 +116,7 @@ async fn apply_developers_team_default(
         .await
         .map_err(WebError::CustomApiError)?;
     let Some(dev_team) = dev_team else {
-        return Ok(());
+        return Ok(None);
     };
     let members = state
         .repo
@@ -132,23 +127,161 @@ async fn apply_developers_team_default(
     if !user_ids.contains(&publisher_id) {
         user_ids.push(publisher_id);
     }
-    state
+    Ok(Some((dev_team.id, user_ids)))
+}
+
+pub(crate) struct PreparedManifests {
+    pub full_manifest: Packument,
+    pub abbrev_dist: PreparedDist,
+    pub full_dist: PreparedDist,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn prepare_manifest_candidate(
+    state: &AppState,
+    package: Option<&PackageRow>,
+    fullname: &str,
+    description: Option<&str>,
+    dist_tags: &HashMap<String, String>,
+    added_version: Option<(PackageVersion, chrono::NaiveDateTime)>,
+    removed_version: Option<&str>,
+    maintainers: Option<Vec<Maintainer>>,
+) -> WebResult<PreparedManifests> {
+    let all_versions = if let Some(package) = package {
+        state
+            .repo
+            .list_versions(package.id)
+            .await
+            .map_err(WebError::CustomApiError)?
+    } else {
+        Vec::new()
+    };
+    let mut full_versions = if let Some(full_dist_id) = package.and_then(|p| p.full_dist_id) {
+        let (data, _) = state
+            .repo
+            .get_content(full_dist_id)
+            .await
+            .map_err(WebError::ServiceUnavailable)?;
+        serde_json::from_slice::<Packument>(&data)
+            .map_err(|error| WebError::ServiceUnavailable(error.into()))?
+            .versions
+    } else {
+        HashMap::new()
+    };
+    if let Some(version) = removed_version {
+        full_versions.remove(version);
+    }
+    if let Some((version, _)) = &added_version {
+        full_versions.insert(version.version.clone(), version.clone());
+    }
+    let mut time = HashMap::new();
+    for version in &all_versions {
+        if removed_version == Some(version.version.as_str()) {
+            continue;
+        }
+        time.insert(
+            version.version.clone(),
+            version
+                .publish_time
+                .format("%Y-%m-%dT%H:%M:%S%.f")
+                .to_string(),
+        );
+    }
+    if let Some((version, publish_time)) = &added_version {
+        time.insert(
+            version.version.clone(),
+            publish_time.format("%Y-%m-%dT%H:%M:%S%.f").to_string(),
+        );
+    }
+    let now = chrono::Utc::now().naive_utc();
+    time.insert(
+        "modified".to_string(),
+        now.format("%Y-%m-%dT%H:%M:%S%.f").to_string(),
+    );
+    let created = all_versions
+        .iter()
+        .filter(|version| removed_version != Some(version.version.as_str()))
+        .map(|version| version.publish_time)
+        .chain(added_version.iter().map(|(_, time)| *time))
+        .min();
+    if let Some(created) = created {
+        time.insert(
+            "created".to_string(),
+            created.format("%Y-%m-%dT%H:%M:%S%.f").to_string(),
+        );
+    }
+    let latest = dist_tags
+        .get("latest")
+        .and_then(|version| full_versions.get(version));
+    let (author, keywords, homepage, license, repository, bugs, contributors, readme_filename) =
+        if let Some(latest) = latest {
+            (
+                latest.author.clone(),
+                latest.keywords.clone(),
+                latest.homepage.clone(),
+                latest.license.clone(),
+                latest.repository.clone(),
+                latest.bugs.clone(),
+                latest.contributors.clone(),
+                latest.readme_filename.clone(),
+            )
+        } else {
+            (None, None, None, None, None, None, None, None)
+        };
+    let maintainers = if let Some(maintainers) = maintainers {
+        maintainers
+    } else if let Some(package) = package {
+        state
+            .repo
+            .list_maintainers(package.id)
+            .await
+            .map_err(WebError::CustomApiError)?
+    } else {
+        Vec::new()
+    };
+    let full_manifest = Packument {
+        id: Some(fullname.to_string()),
+        rev: None,
+        name: fullname.to_string(),
+        description: description.map(str::to_string),
+        dist_tags: dist_tags.clone(),
+        versions: full_versions,
+        time,
+        maintainers: (!maintainers.is_empty()).then_some(maintainers),
+        readme: Some(String::new()),
+        readme_filename,
+        keywords,
+        homepage,
+        license,
+        repository,
+        author,
+        bugs,
+        contributors,
+        users: None,
+        extra: HashMap::new(),
+    };
+    let abbreviated = build_abbreviated_manifest(&full_manifest);
+    let abbrev_dist = state
         .repo
-        .sync_maintainers_and_grant_team_permission(
-            package_id,
-            &user_ids,
-            MAINTAINER_SOURCE_TEAM,
-            dev_team.id,
-            "write",
+        .prepare_json_dist(
+            serde_json::to_vec(&abbreviated)
+                .map_err(|error| WebError::CustomApiError(error.into()))?,
         )
         .await
         .map_err(WebError::CustomApiError)?;
-    log::info!(
-        action = "developers_team_default";
-        "package_id={package_id} scope={scope} dev_team_id={} maintainers={}",
-        dev_team.id, user_ids.len()
-    );
-    Ok(())
+    let full_dist = state
+        .repo
+        .prepare_json_dist(
+            serde_json::to_vec(&full_manifest)
+                .map_err(|error| WebError::CustomApiError(error.into()))?,
+        )
+        .await
+        .map_err(WebError::CustomApiError)?;
+    Ok(PreparedManifests {
+        full_manifest,
+        abbrev_dist,
+        full_dist,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -261,11 +394,12 @@ pub async fn publish_package_inner(
         )));
     }
 
-    if let Some(ref integrity) = package_version.dist.integrity {
-        if !verify_integrity(&tarball_bytes, integrity) {
-            return Err(WebError::BadRequest("dist.integrity invalid".to_string()));
-        }
-    } else if let Some(ref shasum) = package_version.dist.shasum {
+    if let Some(ref integrity) = package_version.dist.integrity
+        && !verify_integrity(&tarball_bytes, integrity)
+    {
+        return Err(WebError::BadRequest("dist.integrity invalid".to_string()));
+    }
+    if let Some(ref shasum) = package_version.dist.shasum {
         let computed = compute_shasum(&tarball_bytes);
         if computed != *shasum {
             return Err(WebError::BadRequest("dist.shasum invalid".to_string()));
@@ -303,6 +437,7 @@ pub async fn publish_package_inner(
         .map_err(WebError::CustomApiError)?;
 
     if let Some(ref pkg) = pkg {
+        ensure_local_package(pkg.source.as_deref(), &fullname)?;
         let existing = state
             .repo
             .get_version(pkg.id, &package_version.version)
@@ -341,7 +476,8 @@ pub async fn publish_package_inner(
             "unscoped packages are always public; restricted access requires a scope".to_string(),
         ));
     }
-    let (desired_access, package_access): (Option<&str>, &str) = if !pkg_exists && scope.is_some() {
+    let (desired_access, _package_access): (Option<&str>, &str) = if !pkg_exists && scope.is_some()
+    {
         let access = if requested_access == Some("public") {
             "public"
         } else {
@@ -378,22 +514,11 @@ pub async fn publish_package_inner(
         (None, "public")
     };
 
-    let (package_id, existing_source) = state
-        .repo
-        .upsert_package_for_publish(&fullname, scope, description, auth.user.id, desired_access)
-        .await
-        .map_err(WebError::CustomApiError)?;
-
-    if let Some(source) = existing_source {
-        return Err(WebError::Forbidden(format!(
-            "package {fullname} was synced from upstream ({source}), local publish is not allowed"
-        )));
-    }
     if !dist_tags.contains_key("latest") {
-        let needs_latest = if pkg_exists {
+        let needs_latest = if let Some(package) = &pkg {
             let existing_tags = state
                 .repo
-                .list_tags(package_id)
+                .list_tags(package.id)
                 .await
                 .map_err(WebError::CustomApiError)?;
             !existing_tags.iter().any(|t| t.tag == "latest")
@@ -410,10 +535,9 @@ pub async fn publish_package_inner(
     let padding_version = Some(pad_version(version_str));
     let publish_time = chrono::Utc::now().naive_utc();
 
-    let tar_storage_key = format!("packages/{fullname}/{version_str}/{attachment_filename}");
-    state
+    let tar_dist = state
         .repo
-        .put_storage(&tar_storage_key, tarball_bytes.clone())
+        .prepare_raw_dist(tarball_bytes.clone())
         .await
         .map_err(WebError::CustomApiError)?;
 
@@ -449,39 +573,87 @@ pub async fn publish_package_inner(
 
     let readme_content = payload.readme.as_deref().unwrap_or("");
     let readme_data = readme_content.as_bytes().to_vec();
-    let readme_base_key = format!("packages/{fullname}/{version_str}/readme.md");
-
-    let readme_storage_key = state
+    let readme_dist = state
         .repo
-        .put_storage_compressed(&readme_base_key, readme_data.clone())
+        .prepare_json_dist(readme_data.clone())
         .await
         .map_err(WebError::CustomApiError)?;
 
-    let version_params = CommitVersionParams {
-        package_id,
-        version: version_str.clone(),
-        publish_time,
-        is_pre_release,
-        padding_version,
-        tar_dist: Some(PendingDist {
-            name: format!("{fullname}@{version_str}-tar"),
-            path: tar_storage_key,
-            size: tarball_bytes.len() as i64,
-            shasum: Some(shasum),
-            integrity: Some(integrity),
-        }),
-        readme_dist: Some(PendingDist {
-            name: format!("{fullname}@{version_str}-readme"),
-            path: readme_storage_key,
-            size: readme_data.len() as i64,
-            shasum: None,
-            integrity: None,
-        }),
+    let developers_team = if !pkg_exists {
+        if let Some(scope) = scope {
+            load_developers_team_default(state, scope, auth.user.id).await?
+        } else {
+            None
+        }
+    } else {
+        None
     };
-
-    state
+    let mut maintainers = if let Some(package) = &pkg {
+        state
+            .repo
+            .list_maintainers(package.id)
+            .await
+            .map_err(WebError::CustomApiError)?
+    } else {
+        Vec::new()
+    };
+    if !maintainers.iter().any(|user| user.name == auth.user.name) {
+        maintainers.push(Maintainer {
+            name: auth.user.name.clone(),
+            email: auth.user.email.clone(),
+        });
+    }
+    if let Some((_, user_ids)) = &developers_team {
+        for user_id in user_ids {
+            if let Some(user) = state
+                .repo
+                .get_user_by_id(*user_id)
+                .await
+                .map_err(WebError::CustomApiError)?
+                && !maintainers.iter().any(|current| current.name == user.name)
+            {
+                maintainers.push(Maintainer {
+                    name: user.name,
+                    email: user.email,
+                });
+            }
+        }
+    }
+    let manifests = prepare_manifest_candidate(
+        state,
+        pkg.as_ref(),
+        &fullname,
+        description,
+        &dist_tags,
+        Some((stored_version, publish_time)),
+        None,
+        Some(maintainers),
+    )
+    .await?;
+    let expected_full_dist_id = pkg.as_ref().and_then(|package| package.full_dist_id);
+    let (package_id, committed_access) = state
         .repo
-        .commit_version(version_params)
+        .commit_publish(PublishCommitParams {
+            name: fullname.clone(),
+            scope: scope.map(str::to_string),
+            description: description.map(str::to_string),
+            publisher_id: auth.user.id,
+            access: desired_access.map(str::to_string),
+            expected_full_dist_id,
+            version: version_str.clone(),
+            publish_time,
+            is_pre_release,
+            padding_version,
+            tar_dist,
+            readme_dist,
+            tar_size: tarball_bytes.len() as i64,
+            tar_shasum: shasum,
+            tar_integrity: integrity,
+            tags: dist_tags,
+            abbrev_manifest: manifests.abbrev_dist,
+            full_manifest: manifests.full_dist,
+            developers_team,
+        })
         .await
         .map_err(|e| {
             if is_duplicate_key_error(&e) {
@@ -493,27 +665,13 @@ pub async fn publish_package_inner(
             }
         })?;
 
-    if !pkg_exists && let Some(scope) = scope {
-        apply_developers_team_default(state, package_id, scope, auth.user.id).await?;
-    }
-
-    let full_manifest = refresh_manifests(
-        state,
-        package_id,
-        &fullname,
-        description,
-        &dist_tags,
-        Some(stored_version),
-    )
-    .await?;
-
     if let Some(idx) = &state.search {
         crate::search::upsert_search_document(
             &*state.repo,
             idx,
             package_id,
-            package_access,
-            &full_manifest,
+            &committed_access,
+            &manifests.full_manifest,
         )
         .await;
     }
@@ -528,139 +686,6 @@ pub async fn publish_package_inner(
         ok: true,
         rev: format!("{package_id}-{version_str}"),
     }))
-}
-
-pub(crate) async fn refresh_manifests(
-    state: &AppState,
-    package_id: i64,
-    fullname: &str,
-    description: Option<&str>,
-    dist_tags: &HashMap<String, String>,
-    new_version: Option<PackageVersion>,
-) -> WebResult<Packument> {
-    let all_versions = state
-        .repo
-        .list_versions(package_id)
-        .await
-        .map_err(WebError::CustomApiError)?;
-
-    let pkg = state
-        .repo
-        .get_package_by_name(fullname)
-        .await
-        .map_err(WebError::CustomApiError)?
-        .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
-
-    let mut full_versions = if let Some(full_dist_id) = pkg.full_dist_id {
-        let (data, _) = state
-            .repo
-            .get_content(full_dist_id)
-            .await
-            .map_err(WebError::CustomApiError)?;
-        serde_json::from_slice::<Packument>(&data)
-            .map_err(|e| WebError::CustomApiError(e.into()))?
-            .versions
-    } else {
-        HashMap::new()
-    };
-    if let Some(version) = new_version {
-        full_versions.insert(version.version.clone(), version);
-    }
-
-    let remaining_versions: std::collections::HashSet<&str> = all_versions
-        .iter()
-        .map(|version| version.version.as_str())
-        .collect();
-    full_versions.retain(|version, _| remaining_versions.contains(version.as_str()));
-    let mut time_map: HashMap<String, String> = HashMap::new();
-
-    for v in &all_versions {
-        let v_str = &v.version;
-        time_map.insert(
-            v_str.clone(),
-            v.publish_time.format("%Y-%m-%dT%H:%M:%S%.f").to_string(),
-        );
-    }
-
-    time_map.insert(
-        "modified".to_string(),
-        chrono::Utc::now()
-            .format("%Y-%m-%dT%H:%M:%S%.f")
-            .to_string(),
-    );
-    if let Some(created) = all_versions.last() {
-        time_map.entry("created".to_string()).or_insert_with(|| {
-            created
-                .publish_time
-                .format("%Y-%m-%dT%H:%M:%S%.f")
-                .to_string()
-        });
-    }
-
-    let latest_version = dist_tags.get("latest").and_then(|v| full_versions.get(v));
-
-    let (author, keywords, homepage, license, repository, bugs, contributors, readme_filename) =
-        if let Some(latest) = latest_version {
-            (
-                latest.author.clone(),
-                latest.keywords.clone(),
-                latest.homepage.clone(),
-                latest.license.clone(),
-                latest.repository.clone(),
-                latest.bugs.clone(),
-                latest.contributors.clone(),
-                latest.readme_filename.clone(),
-            )
-        } else {
-            (None, None, None, None, None, None, None, None)
-        };
-
-    let maintainers_list = state
-        .repo
-        .list_maintainers(package_id)
-        .await
-        .map_err(WebError::CustomApiError)?;
-
-    let full_manifest = Packument {
-        id: Some(fullname.to_string()),
-        rev: Some(package_id.to_string()),
-        name: fullname.to_string(),
-        description: description.map(String::from),
-        dist_tags: dist_tags.clone(),
-        versions: full_versions,
-        time: time_map,
-        maintainers: if maintainers_list.is_empty() {
-            None
-        } else {
-            Some(maintainers_list)
-        },
-        readme: Some(String::new()),
-        readme_filename,
-        keywords,
-        homepage,
-        license,
-        repository,
-        author,
-        bugs,
-        contributors,
-        users: None,
-    };
-    let abbrev_manifest = build_abbreviated_manifest(&full_manifest);
-    let abbrev_manifest_bytes = serde_json::to_vec(&abbrev_manifest).unwrap_or_default();
-    let full_manifest_bytes = serde_json::to_vec(&full_manifest).unwrap_or_default();
-
-    upload_and_commit_manifests(
-        &*state.repo,
-        package_id,
-        fullname,
-        dist_tags,
-        &abbrev_manifest_bytes,
-        &full_manifest_bytes,
-    )
-    .await
-    .map_err(WebError::CustomApiError)?;
-
-    Ok(full_manifest)
 }
 
 fn is_duplicate_key_error(err: &anyhow::Error) -> bool {
@@ -702,17 +727,6 @@ pub async fn update_maintainers_inner(
         ));
     }
 
-    let pkg = state
-        .repo
-        .get_package_by_name(&fullname)
-        .await
-        .map_err(WebError::CustomApiError)?
-        .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
-
-    crate::middleware::auth::ensure_package_readable_with_auth(state, auth, &pkg).await?;
-    crate::middleware::auth::ensure_package_write_access(state, auth, &pkg).await?;
-    ensure_local_package(pkg.source.as_deref(), &fullname)?;
-
     if !state.package_lock.try_lock(&fullname, LockOwner::Publish) {
         let owner = state
             .package_lock
@@ -731,6 +745,9 @@ pub async fn update_maintainers_inner(
         .await
         .map_err(WebError::CustomApiError)?
         .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
+    crate::middleware::auth::ensure_package_readable_with_auth(state, auth, &pkg).await?;
+    crate::middleware::auth::ensure_package_write_access(state, auth, &pkg).await?;
+    ensure_local_package(pkg.source.as_deref(), &fullname)?;
 
     let mut user_ids = Vec::with_capacity(payload.maintainers.len());
     for m in &payload.maintainers {
@@ -743,12 +760,6 @@ pub async fn update_maintainers_inner(
         user_ids.push(user.id);
     }
 
-    state
-        .repo
-        .replace_maintainers(pkg.id, &user_ids, MAINTAINER_SOURCE_MANUAL)
-        .await
-        .map_err(WebError::CustomApiError)?;
-
     let tags = state
         .repo
         .list_tags(pkg.id)
@@ -756,15 +767,30 @@ pub async fn update_maintainers_inner(
         .map_err(WebError::CustomApiError)?;
     let tag_map: HashMap<String, String> = tags.into_iter().map(|t| (t.tag, t.version)).collect();
 
-    let full_manifest = refresh_manifests(
+    let manifests = prepare_manifest_candidate(
         state,
-        pkg.id,
+        Some(&pkg),
         &fullname,
         pkg.description.as_deref(),
         &tag_map,
         None,
+        None,
+        Some(payload.maintainers.clone()),
     )
     .await?;
+    state
+        .repo
+        .commit_local_manifest(LocalManifestCommitParams {
+            package_id: pkg.id,
+            expected_full_dist_id: pkg.full_dist_id,
+            tags: tag_map,
+            maintainers: Some((user_ids, MAINTAINER_SOURCE_MANUAL.to_string())),
+            delete_version_id: None,
+            abbrev_manifest: manifests.abbrev_dist,
+            full_manifest: manifests.full_dist,
+        })
+        .await
+        .map_err(WebError::CustomApiError)?;
 
     if let Some(idx) = &state.search {
         crate::search::upsert_search_document(
@@ -772,7 +798,7 @@ pub async fn update_maintainers_inner(
             idx,
             pkg.id,
             &pkg.access,
-            &full_manifest,
+            &manifests.full_manifest,
         )
         .await;
     }
@@ -808,17 +834,6 @@ pub async fn unpublish_package_inner(
 
     let fullname = fullname.trim().to_string();
 
-    let pkg = state
-        .repo
-        .get_package_by_name(&fullname)
-        .await
-        .map_err(WebError::CustomApiError)?
-        .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
-
-    crate::middleware::auth::ensure_package_readable_with_auth(state, auth, &pkg).await?;
-    crate::middleware::auth::ensure_package_write_access(state, auth, &pkg).await?;
-    ensure_local_package(pkg.source.as_deref(), &fullname)?;
-
     if !state.package_lock.try_lock(&fullname, LockOwner::Publish) {
         let owner = state
             .package_lock
@@ -837,6 +852,9 @@ pub async fn unpublish_package_inner(
         .await
         .map_err(WebError::CustomApiError)?
         .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
+    crate::middleware::auth::ensure_package_readable_with_auth(state, auth, &pkg).await?;
+    crate::middleware::auth::ensure_package_write_access(state, auth, &pkg).await?;
+    ensure_local_package(pkg.source.as_deref(), &fullname)?;
 
     if let Ok(versions) = state.repo.list_versions(pkg.id).await {
         for v in &versions {
@@ -889,17 +907,6 @@ pub async fn unpublish_version_inner(
 
     let fullname = fullname.trim().to_string();
 
-    let pkg = state
-        .repo
-        .get_package_by_name(&fullname)
-        .await
-        .map_err(WebError::CustomApiError)?
-        .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
-
-    crate::middleware::auth::ensure_package_readable_with_auth(state, auth, &pkg).await?;
-    crate::middleware::auth::ensure_package_write_access(state, auth, &pkg).await?;
-    ensure_local_package(pkg.source.as_deref(), &fullname)?;
-
     if !state.package_lock.try_lock(&fullname, LockOwner::Publish) {
         let owner = state
             .package_lock
@@ -918,6 +925,9 @@ pub async fn unpublish_version_inner(
         .await
         .map_err(WebError::CustomApiError)?
         .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
+    crate::middleware::auth::ensure_package_readable_with_auth(state, auth, &pkg).await?;
+    crate::middleware::auth::ensure_package_write_access(state, auth, &pkg).await?;
+    ensure_local_package(pkg.source.as_deref(), &fullname)?;
 
     let version_name = crate::handlers::tarball::extract_version(&fullname, filename)
         .ok_or_else(|| WebError::NotFound(format!("{fullname} tarball {filename} not found")))?;
@@ -959,53 +969,18 @@ fn ensure_local_package(source: Option<&str>, fullname: &str) -> WebResult<()> {
     Ok(())
 }
 
-async fn delete_version_dist_objects(
-    state: &AppState,
-    version: &crate::repository::PackageVersionRow,
-) -> WebResult<()> {
-    let repo = &*state.repo;
-    let dist_ids: Vec<i64> = [
-        version.abbrev_dist_id,
-        version.manifest_dist_id,
-        version.tar_dist_id,
-        version.readme_dist_id,
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-
-    repo.delete_versions_by_ids(&[version.id])
-        .await
-        .map_err(WebError::CustomApiError)?;
-
-    for dist_id in dist_ids {
-        if let Err(e) = repo.delete_content(dist_id).await {
-            log::error!(
-                action = "delete_version_dist";
-                "failed to delete dist {dist_id}: {e:#}"
-            );
-        }
-    }
-
-    state.unpacked.remove_version(version.id).await;
-
-    Ok(())
-}
-
 async fn remove_version_and_refresh(
     state: &AppState,
     fullname: &str,
     pkg: &crate::repository::PackageRow,
     version: crate::repository::PackageVersionRow,
 ) -> WebResult<()> {
-    state.download_counters.remove(&version.id);
-    delete_version_dist_objects(state, &version).await?;
-
-    let remaining = state
+    let mut remaining = state
         .repo
         .list_versions(pkg.id)
         .await
         .map_err(WebError::CustomApiError)?;
+    remaining.retain(|candidate| candidate.id != version.id);
 
     if remaining.is_empty() {
         delete_package_completely(state, pkg)
@@ -1052,22 +1027,33 @@ async fn remove_version_and_refresh(
         }
 
         if tags_changed {
-            state
-                .repo
-                .sync_tags(pkg.id, &tag_map)
-                .await
-                .map_err(WebError::CustomApiError)?;
+            log::info!(action = "unpublish_tags_repaired"; "name={fullname}");
         }
 
-        let full_manifest = refresh_manifests(
+        let manifests = prepare_manifest_candidate(
             state,
-            pkg.id,
+            Some(pkg),
             fullname,
             pkg.description.as_deref(),
             &tag_map,
             None,
+            Some(&version.version),
+            None,
         )
         .await?;
+        state
+            .repo
+            .commit_local_manifest(LocalManifestCommitParams {
+                package_id: pkg.id,
+                expected_full_dist_id: pkg.full_dist_id,
+                tags: tag_map,
+                maintainers: None,
+                delete_version_id: Some(version.id),
+                abbrev_manifest: manifests.abbrev_dist,
+                full_manifest: manifests.full_dist,
+            })
+            .await
+            .map_err(WebError::CustomApiError)?;
 
         if let Some(idx) = &state.search {
             crate::search::upsert_search_document(
@@ -1075,11 +1061,14 @@ async fn remove_version_and_refresh(
                 idx,
                 pkg.id,
                 &pkg.access,
-                &full_manifest,
+                &manifests.full_manifest,
             )
             .await;
         }
     }
+
+    state.download_counters.remove(&version.id);
+    state.unpacked.remove_version(version.id).await;
 
     Ok(())
 }
@@ -1099,48 +1088,60 @@ async fn delete_package_completely(
     let repo = &*state.repo;
     let versions = repo.list_versions(pkg.id).await?;
 
-    let version_dist_ids: Vec<i64> = versions
-        .iter()
-        .flat_map(|v| {
-            [
-                v.abbrev_dist_id,
-                v.manifest_dist_id,
-                v.tar_dist_id,
-                v.readme_dist_id,
-            ]
-            .into_iter()
-            .flatten()
-        })
-        .collect();
-
     let version_ids: Vec<i64> = versions.iter().map(|v| v.id).collect();
 
-    let package_dist_ids: Vec<i64> = [pkg.abbreviated_dist_id, pkg.full_dist_id]
-        .into_iter()
-        .flatten()
-        .collect();
-
-    repo.delete_package_by_id(pkg.id).await?;
-
-    for dist_id in version_dist_ids {
-        if let Err(e) = repo.delete_content(dist_id).await {
-            log::error!(
-                action = "delete_package_dist";
-                "failed to delete dist {dist_id}: {e:#}"
-            );
-        }
-    }
+    repo.delete_local_package(pkg.id, pkg.full_dist_id).await?;
     for version_id in version_ids {
         state.unpacked.remove_version(version_id).await;
     }
-    for dist_id in package_dist_ids {
-        if let Err(e) = repo.delete_content(dist_id).await {
-            log::error!(
-                action = "delete_package_manifest_dist";
-                "failed to delete dist {dist_id}: {e:#}"
-            );
-        }
-    }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn integrity_sha1(data: &[u8]) -> String {
+        format!(
+            "sha1-{}",
+            base64::engine::general_purpose::STANDARD.encode(Sha1::digest(data))
+        )
+    }
+
+    #[test]
+    fn verify_integrity_accepts_multiple_digests() {
+        let data = b"proxide";
+        let integrity = format!(
+            "{} {}",
+            integrity_sha1(data),
+            compute_integrity_sha512(data)
+        );
+
+        assert!(verify_integrity(data, &integrity));
+    }
+
+    #[test]
+    fn verify_integrity_does_not_fall_back_from_mismatched_sha512() {
+        let data = b"proxide";
+        let integrity = format!(
+            "{} {}",
+            compute_integrity_sha512(b"different"),
+            integrity_sha1(data)
+        );
+
+        assert!(!verify_integrity(data, &integrity));
+    }
+
+    #[test]
+    fn verify_integrity_accepts_any_matching_digest_of_strongest_algorithm() {
+        let data = b"proxide";
+        let integrity = format!(
+            "{} {}?source=test",
+            compute_integrity_sha512(b"different"),
+            compute_integrity_sha512(data)
+        );
+
+        assert!(verify_integrity(data, &integrity));
+    }
 }

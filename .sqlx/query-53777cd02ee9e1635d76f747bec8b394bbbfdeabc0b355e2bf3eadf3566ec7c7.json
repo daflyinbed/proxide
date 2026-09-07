@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "UPDATE packages\n                   SET description = COALESCE(?, description), access = COALESCE(?, access)\n                   WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "53777cd02ee9e1635d76f747bec8b394bbbfdeabc0b355e2bf3eadf3566ec7c7"
+}

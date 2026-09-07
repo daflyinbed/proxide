@@ -1,0 +1,34 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT source, full_dist_id FROM packages WHERE id = ? FOR UPDATE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "source",
+        "type_info": {
+          "type": "VarString",
+          "flags": "",
+          "max_size": 256
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "full_dist_id",
+        "type_info": {
+          "type": "LongLong",
+          "flags": "MULTIPLE_KEY",
+          "max_size": 20
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "5e45a0efb1728d3081af46378fe3b12cdf90e788d1c46afe1150048212bf7154"
+}

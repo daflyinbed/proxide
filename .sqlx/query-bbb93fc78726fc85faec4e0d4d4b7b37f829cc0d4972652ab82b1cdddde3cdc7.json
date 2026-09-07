@@ -1,0 +1,44 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT tar_dist_id, tar_shasum as \"tar_shasum: String\",\n                      tar_integrity as \"tar_integrity: String\"\n               FROM package_versions WHERE id = ? FOR UPDATE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "tar_dist_id",
+        "type_info": {
+          "type": "LongLong",
+          "flags": "MULTIPLE_KEY",
+          "max_size": 20
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "tar_shasum: String",
+        "type_info": {
+          "type": "VarString",
+          "flags": "BINARY",
+          "max_size": 512
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "tar_integrity: String",
+        "type_info": {
+          "type": "VarString",
+          "flags": "BINARY",
+          "max_size": 4096
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "bbb93fc78726fc85faec4e0d4d4b7b37f829cc0d4972652ab82b1cdddde3cdc7"
+}

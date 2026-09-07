@@ -1,0 +1,24 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT pv.id\n               FROM package_versions pv\n               JOIN JSON_TABLE(?, '$[*]' COLUMNS(id BIGINT PATH '$')) selected\n                 ON selected.id = pv.id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": {
+          "type": "LongLong",
+          "flags": "NOT_NULL | PRIMARY_KEY | AUTO_INCREMENT",
+          "max_size": 20
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "de5719efcb487fdc0337cdeeb568d434e03f2b36b0b336576712fc75b541f11f"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "UPDATE sync_tasks\n                           SET status = 'failed', finished_at = NOW(), error = ?\n                           WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "5d0727894043a66c2178cac92db70d6f0ffacfba3d00f2e5e74b55abfa4d672c"
+}

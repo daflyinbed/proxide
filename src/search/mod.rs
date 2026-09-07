@@ -171,6 +171,25 @@ impl SearchIndex {
         Ok(())
     }
 
+    pub async fn remove_package_and_wait(&self, package_id: i64) -> Result<()> {
+        let index = self.client.index(&self.index_uid);
+        let task = index
+            .delete_document(&package_id.to_string())
+            .await
+            .context("failed to submit delete task")?;
+        let outcome = task
+            .wait_for_completion(&self.client, None, None)
+            .await
+            .context("delete task wait failed")?;
+        match outcome {
+            Task::Succeeded { .. } => Ok(()),
+            Task::Failed { content } => Err(content.error).context("delete task failed"),
+            other => Err(anyhow::anyhow!(
+                "delete task ended in unexpected state: {other:?}"
+            )),
+        }
+    }
+
     pub async fn search(
         &self,
         text: &str,

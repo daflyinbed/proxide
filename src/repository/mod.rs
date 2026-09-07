@@ -5,7 +5,9 @@ pub mod mysql;
 use crate::npm::types::Maintainer;
 use anyhow::Result;
 use async_trait::async_trait;
-use std::collections::HashMap;
+use futures::stream::BoxStream;
+use sqlx::{Connection, MySqlConnection};
+use std::collections::{HashMap, HashSet};
 
 pub const MAINTAINER_SOURCE_TEAM: &str = "team";
 pub const MAINTAINER_SOURCE_MANUAL: &str = "manual";
@@ -34,10 +36,11 @@ pub struct PackageVersionRow {
     pub id: i64,
     pub package_id: i64,
     pub version: String,
-    pub abbrev_dist_id: Option<i64>,
-    pub manifest_dist_id: Option<i64>,
     pub tar_dist_id: Option<i64>,
     pub readme_dist_id: Option<i64>,
+    pub tar_size: Option<i64>,
+    pub tar_shasum: Option<String>,
+    pub tar_integrity: Option<String>,
     pub publish_time: chrono::NaiveDateTime,
     pub is_pre_release: bool,
     pub padding_version: Option<String>,
@@ -49,10 +52,11 @@ impl<'r> sqlx::FromRow<'r, sqlx::mysql::MySqlRow> for PackageVersionRow {
             id: row.try_get("id")?,
             package_id: row.try_get("package_id")?,
             version: row.try_get("version")?,
-            abbrev_dist_id: row.try_get("abbrev_dist_id")?,
-            manifest_dist_id: row.try_get("manifest_dist_id")?,
             tar_dist_id: row.try_get("tar_dist_id")?,
             readme_dist_id: row.try_get("readme_dist_id")?,
+            tar_size: row.try_get("tar_size")?,
+            tar_shasum: row.try_get("tar_shasum")?,
+            tar_integrity: row.try_get("tar_integrity")?,
             publish_time: row.try_get("publish_time")?,
             is_pre_release: {
                 let v: i8 = row.try_get("is_pre_release")?;
@@ -74,11 +78,9 @@ pub struct PackageTagRow {
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct DistRow {
     pub id: i64,
-    pub name: String,
+    pub storage_sha256: Vec<u8>,
     pub path: String,
-    pub size: i64,
-    pub shasum: Option<String>,
-    pub integrity: Option<String>,
+    pub stored_size: i64,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -108,31 +110,174 @@ pub struct TokenRow {
 }
 
 #[derive(Debug, Clone)]
-pub struct PendingDist {
-    pub name: String,
-    pub path: String,
-    pub size: i64,
-    pub shasum: Option<String>,
-    pub integrity: Option<String>,
+pub struct PreparedDist {
+    dist_id: i64,
+    path: String,
+    storage_sha256: [u8; 32],
+    stored_size: i64,
+}
+
+impl PreparedDist {
+    pub fn id(&self) -> i64 {
+        self.dist_id
+    }
+
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    pub fn storage_sha256(&self) -> &[u8; 32] {
+        &self.storage_sha256
+    }
+
+    pub fn stored_size(&self) -> i64 {
+        self.stored_size
+    }
+
+    pub(crate) fn new(
+        dist_id: i64,
+        path: String,
+        storage_sha256: [u8; 32],
+        stored_size: i64,
+    ) -> Self {
+        Self {
+            dist_id,
+            path,
+            storage_sha256,
+            stored_size,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
-pub struct CommitVersionParams {
-    pub package_id: i64,
+pub struct PublishCommitParams {
+    pub name: String,
+    pub scope: Option<String>,
+    pub description: Option<String>,
+    pub publisher_id: i64,
+    pub access: Option<String>,
+    pub expected_full_dist_id: Option<i64>,
     pub version: String,
     pub publish_time: chrono::NaiveDateTime,
     pub is_pre_release: bool,
     pub padding_version: Option<String>,
-    pub tar_dist: Option<PendingDist>,
-    pub readme_dist: Option<PendingDist>,
+    pub tar_dist: PreparedDist,
+    pub readme_dist: PreparedDist,
+    pub tar_size: i64,
+    pub tar_shasum: String,
+    pub tar_integrity: String,
+    pub tags: HashMap<String, String>,
+    pub abbrev_manifest: PreparedDist,
+    pub full_manifest: PreparedDist,
+    pub developers_team: Option<(i64, Vec<i64>)>,
 }
 
 #[derive(Debug, Clone)]
-pub struct SyncManifestParams {
+pub struct LocalManifestCommitParams {
     pub package_id: i64,
+    pub expected_full_dist_id: Option<i64>,
     pub tags: HashMap<String, String>,
-    pub abbrev_manifest: PendingDist,
-    pub full_manifest: PendingDist,
+    pub maintainers: Option<(Vec<i64>, String)>,
+    pub delete_version_id: Option<i64>,
+    pub abbrev_manifest: PreparedDist,
+    pub full_manifest: PreparedDist,
+}
+
+#[derive(Debug, Clone)]
+pub struct SyncVersionInput {
+    pub version: String,
+    pub publish_time: Option<chrono::NaiveDateTime>,
+    pub is_pre_release: bool,
+    pub padding_version: Option<String>,
+    pub tar_shasum: Option<String>,
+    pub tar_integrity: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SyncPackageCommitParams {
+    pub name: String,
+    pub scope: Option<String>,
+    pub description: Option<String>,
+    pub source: String,
+    pub maintainer_user_ids: Vec<i64>,
+    pub versions: Vec<SyncVersionInput>,
+    pub tags: HashMap<String, String>,
+    pub abbrev_manifest: PreparedDist,
+    pub full_manifest: PreparedDist,
+}
+
+#[derive(Debug, Clone)]
+pub struct SyncPackageCommitResult {
+    pub package_id: i64,
+    pub deleted_version_ids: Vec<i64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AttachDistOutcome {
+    Attached,
+    AlreadyAttached,
+    VersionDeleted,
+}
+
+#[derive(Debug, Clone)]
+pub struct StorageObjectMeta {
+    pub path: String,
+    pub last_modified: chrono::DateTime<chrono::Utc>,
+}
+
+pub struct ProcessLock {
+    name: String,
+    connection: Option<MySqlConnection>,
+}
+
+impl ProcessLock {
+    pub(crate) fn new(name: String, connection: MySqlConnection) -> Self {
+        Self {
+            name,
+            connection: Some(connection),
+        }
+    }
+
+    pub async fn check(&mut self) -> Result<()> {
+        let connection = self
+            .connection
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("process lock {} was released", self.name))?;
+        let held = sqlx::query_scalar!(
+            r#"SELECT IF(IS_USED_LOCK(?) = CONNECTION_ID(), 1, 0) AS `held!`"#,
+            self.name
+        )
+        .fetch_one(&mut *connection)
+        .await?;
+        if held != 1 {
+            anyhow::bail!("lost process lock {}", self.name);
+        }
+        Ok(())
+    }
+
+    pub async fn release(mut self) -> Result<()> {
+        if let Some(mut connection) = self.connection.take() {
+            let released =
+                sqlx::query_scalar!(r#"SELECT RELEASE_LOCK(?) AS `released`"#, self.name)
+                    .fetch_one(&mut connection)
+                    .await?;
+            connection.close().await?;
+            if released != Some(1) {
+                anyhow::bail!("failed to release process lock {}", self.name);
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Drop for ProcessLock {
+    fn drop(&mut self) {
+        if let Some(connection) = self.connection.take() {
+            tokio::spawn(async move {
+                let _ = connection.close().await;
+            });
+        }
+    }
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -280,61 +425,29 @@ pub struct PackageTeamPermissionRow {
 #[async_trait]
 pub trait Repository: Send + Sync + 'static {
     async fn migrate(&self) -> Result<()>;
+    async fn try_acquire_process_lock(&self, name: &str) -> Result<Option<ProcessLock>>;
 
-    async fn storage_exists(&self, key: &str) -> Result<bool>;
     async fn storage_get_result(&self, key: &str) -> Result<object_store::GetResult>;
-    async fn storage_put_multipart(&self, key: &str) -> Result<object_store::WriteMultipart>;
+    async fn delete_storage_objects(&self, keys: &[String]) -> Vec<(String, Result<()>)>;
+    fn list_storage_objects(&self, prefix: &str) -> BoxStream<'static, Result<StorageObjectMeta>>;
 
     // ── content ──
 
     async fn get_content(&self, dist_id: i64) -> Result<(Vec<u8>, DistRow)>;
-    async fn put_content(
+    async fn prepare_raw_dist(&self, data: Vec<u8>) -> Result<PreparedDist>;
+    async fn prepare_raw_dist_file(
         &self,
-        name: &str,
-        storage_key: &str,
-        data: Vec<u8>,
-        shasum: Option<&str>,
-        integrity: Option<&str>,
-    ) -> Result<i64>;
-    async fn create_dist(
-        &self,
-        name: &str,
-        storage_key: &str,
-        size: i64,
-        shasum: Option<&str>,
-        integrity: Option<&str>,
-    ) -> Result<i64>;
-    async fn delete_content(&self, dist_id: i64) -> Result<()>;
-    async fn put_storage(&self, storage_key: &str, data: Vec<u8>) -> Result<()>;
-    async fn put_storage_compressed(&self, storage_key: &str, data: Vec<u8>) -> Result<String>;
+        path: &std::path::Path,
+        storage_sha256: [u8; 32],
+        stored_size: i64,
+    ) -> Result<PreparedDist>;
+    async fn prepare_json_dist(&self, data: Vec<u8>) -> Result<PreparedDist>;
 
     // ── packages ──
 
     async fn get_package_by_name(&self, name: &str) -> Result<Option<PackageRow>>;
     async fn list_packages(&self, offset: i64, limit: i64) -> Result<Vec<PackageRow>>;
-    async fn upsert_package(
-        &self,
-        name: &str,
-        scope: Option<&str>,
-        description: Option<&str>,
-        source: Option<&str>,
-    ) -> Result<(i64, Option<String>)>;
-    async fn update_package_dists(
-        &self,
-        package_id: i64,
-        abbreviated_dist_id: Option<i64>,
-        full_dist_id: Option<i64>,
-    ) -> Result<()>;
     async fn set_package_access(&self, package_id: i64, access: &str) -> Result<()>;
-    async fn delete_package_by_id(&self, package_id: i64) -> Result<()>;
-    async fn upsert_package_for_publish(
-        &self,
-        name: &str,
-        scope: Option<&str>,
-        description: Option<&str>,
-        user_id: i64,
-        access: Option<&str>,
-    ) -> Result<(i64, Option<String>)>;
     async fn count_packages(&self) -> Result<i64>;
 
     // ── package_versions ──
@@ -345,39 +458,24 @@ pub trait Repository: Send + Sync + 'static {
         version: &str,
     ) -> Result<Option<PackageVersionRow>>;
     async fn list_versions(&self, package_id: i64) -> Result<Vec<PackageVersionRow>>;
-    async fn insert_version(
-        &self,
-        package_id: i64,
-        version: &str,
-        publish_time: chrono::NaiveDateTime,
-        is_pre_release: bool,
-        padding_version: Option<&str>,
-    ) -> Result<i64>;
-    async fn update_version_dists(
+    async fn attach_tar_dist(
         &self,
         version_id: i64,
-        abbrev_dist_id: Option<i64>,
-        manifest_dist_id: Option<i64>,
-        tar_dist_id: Option<i64>,
-        readme_dist_id: Option<i64>,
-    ) -> Result<()>;
-    async fn get_versions_not_in(
-        &self,
-        package_id: i64,
-        keep_versions: &[String],
-    ) -> Result<Vec<PackageVersionRow>>;
-    async fn delete_versions_by_ids(&self, version_ids: &[i64]) -> Result<()>;
+        dist: &PreparedDist,
+        tar_size: i64,
+        sha1_digest: &[u8],
+        sha512_digest: &[u8],
+    ) -> Result<AttachDistOutcome>;
 
     // ── package_tags ──
 
     async fn list_tags(&self, package_id: i64) -> Result<Vec<PackageTagRow>>;
-    async fn sync_tags(&self, package_id: i64, tags: &HashMap<String, String>) -> Result<()>;
 
     // ── dists ──
 
     async fn get_dist(&self, id: i64) -> Result<Option<DistRow>>;
-    async fn get_dist_by_path(&self, path: &str) -> Result<Option<DistRow>>;
-    async fn list_orphan_dists(&self) -> Result<Vec<DistRow>>;
+    async fn existing_dist_paths(&self, paths: &[String]) -> Result<HashSet<String>>;
+    async fn list_orphan_dists(&self, min_age_secs: u64, limit: u32) -> Result<Vec<DistRow>>;
     async fn delete_dists_by_ids(&self, ids: &[i64]) -> Result<u64>;
 
     // ── change_stream_cursors ──
@@ -387,8 +485,17 @@ pub trait Repository: Send + Sync + 'static {
 
     // ── sync ──
 
-    async fn commit_version(&self, params: CommitVersionParams) -> Result<()>;
-    async fn sync_manifest_commit(&self, params: SyncManifestParams) -> Result<()>;
+    async fn commit_publish(&self, params: PublishCommitParams) -> Result<(i64, String)>;
+    async fn commit_local_manifest(&self, params: LocalManifestCommitParams) -> Result<()>;
+    async fn commit_sync_package(
+        &self,
+        params: SyncPackageCommitParams,
+    ) -> Result<SyncPackageCommitResult>;
+    async fn delete_local_package(
+        &self,
+        package_id: i64,
+        expected_full_dist_id: Option<i64>,
+    ) -> Result<()>;
 
     // ── sync_tasks ──
 
@@ -440,22 +547,6 @@ pub trait Repository: Send + Sync + 'static {
 
     async fn save_maintainer(&self, package_id: i64, user_id: i64, source: &str) -> Result<()>;
     async fn is_maintainer(&self, package_id: i64, user_id: i64) -> Result<bool>;
-    async fn sync_maintainers(&self, package_id: i64, user_ids: &[i64], source: &str)
-    -> Result<()>;
-    async fn replace_maintainers(
-        &self,
-        package_id: i64,
-        user_ids: &[i64],
-        source: &str,
-    ) -> Result<()>;
-    async fn sync_maintainers_and_grant_team_permission(
-        &self,
-        package_id: i64,
-        user_ids: &[i64],
-        source: &str,
-        team_id: i64,
-        permission: &str,
-    ) -> Result<()>;
     async fn list_maintainers(&self, package_id: i64) -> Result<Vec<Maintainer>>;
     async fn list_packages_by_user_id(&self, user_id: i64) -> Result<Vec<PackageRow>>;
     async fn list_packages_by_user_id_readable(
@@ -585,44 +676,4 @@ pub trait Repository: Send + Sync + 'static {
         end_year: u16,
         end_month: u8,
     ) -> Result<Vec<UpstreamPackageDownloadRow>>;
-}
-
-pub async fn upload_and_commit_manifests(
-    repo: &dyn Repository,
-    package_id: i64,
-    fullname: &str,
-    tags: &HashMap<String, String>,
-    abbrev_bytes: &[u8],
-    full_bytes: &[u8],
-) -> Result<()> {
-    let abbrev_storage_key = format!("packages/{fullname}/abbreviated_manifests.json");
-    let full_storage_key = format!("packages/{fullname}/full_manifests.json");
-
-    let abbrev_actual_key = repo
-        .put_storage_compressed(&abbrev_storage_key, abbrev_bytes.to_vec())
-        .await?;
-    let full_actual_key = repo
-        .put_storage_compressed(&full_storage_key, full_bytes.to_vec())
-        .await?;
-
-    let params = SyncManifestParams {
-        package_id,
-        tags: tags.clone(),
-        abbrev_manifest: PendingDist {
-            name: format!("{fullname}-abbrev-manifests"),
-            path: abbrev_actual_key,
-            size: abbrev_bytes.len() as i64,
-            shasum: None,
-            integrity: None,
-        },
-        full_manifest: PendingDist {
-            name: format!("{fullname}-full-manifests"),
-            path: full_actual_key,
-            size: full_bytes.len() as i64,
-            shasum: None,
-            integrity: None,
-        },
-    };
-
-    repo.sync_manifest_commit(params).await
 }

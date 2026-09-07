@@ -1,13 +1,14 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createServer, type Server } from "node:http";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, openSync } from "node:fs";
-import { mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import {
   CreateBucketCommand,
-  DeleteObjectCommand,
   HeadObjectCommand,
+  PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
 
@@ -22,7 +23,6 @@ const BUCKET = "proxide-e2e-tarball-cache";
 const PACKAGE_NAME = "e2e-upstream-cache-pkg";
 const VERSION = "1.0.0";
 const FILENAME = `${PACKAGE_NAME}-${VERSION}.tgz`;
-const STORAGE_KEY = `packages/${PACKAGE_NAME}/${VERSION}/${FILENAME}`;
 const CHUNK_A = Buffer.alloc(256 * 1024, 0x61);
 const CHUNK_B = Buffer.alloc(256 * 1024, 0x62);
 const CHUNK_C = Buffer.alloc(256 * 1024, 0x63);
@@ -33,13 +33,10 @@ let proxideChild: ChildProcess | undefined;
 let upstreamRequestCount = 0;
 let proxidePort = 0;
 let upstreamPort = 0;
+let upstreamTailGate: Promise<void> | undefined;
 
 function proxideUrl(): string {
   return `http://localhost:${proxidePort}`;
-}
-
-function cacheFilePath(): string {
-  return join(CACHE_DIR, STORAGE_KEY);
 }
 
 async function getFreePort(): Promise<number> {
@@ -119,16 +116,28 @@ async function waitForCondition(check: () => Promise<boolean>, timeoutMs = 30_00
   throw new Error("timed out waiting for condition");
 }
 
-async function readRemaining(reader: ReadableStreamDefaultReader<Uint8Array<ArrayBufferLike>>) {
-  const chunks: Buffer[] = [];
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) {
-      break;
+function pauseNextUpstreamTail(): () => void {
+  let release = () => {};
+  upstreamTailGate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return release;
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error("operation timed out")), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
     }
-    chunks.push(Buffer.from(value));
   }
-  return Buffer.concat(chunks);
 }
 
 async function ensureBucket() {
@@ -141,26 +150,32 @@ async function ensureBucket() {
   }
 }
 
-async function resetFixture() {
+async function resetFixture(invalidChecksum = false) {
   upstreamRequestCount = 0;
-  await rm(cacheFilePath(), { force: true });
-  await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: STORAGE_KEY }));
+  const checksumBytes = invalidChecksum ? Buffer.from("invalid tarball") : TARBALL_BYTES;
+  const shasum = createHash("sha1").update(checksumBytes).digest("hex");
+  const integrity = `sha512-${createHash("sha512").update(checksumBytes).digest("base64")}`;
 
   runMysql(`
     DELETE FROM package_versions WHERE package_id IN (
       SELECT id FROM packages WHERE name = '${PACKAGE_NAME}'
     );
     DELETE FROM packages WHERE name = '${PACKAGE_NAME}';
-    DELETE FROM dists WHERE path = '${STORAGE_KEY}';
+    DELETE FROM dists;
     INSERT INTO packages (name, scope, description, source)
     VALUES ('${PACKAGE_NAME}', NULL, 'e2e upstream tarball cache test', 'npmjs');
-    INSERT INTO package_versions (package_id, version, publish_time, is_pre_release, padding_version)
+    INSERT INTO package_versions (
+      package_id, version, publish_time, is_pre_release, padding_version,
+      tar_shasum, tar_integrity
+    )
     VALUES (
       (SELECT id FROM packages WHERE name = '${PACKAGE_NAME}'),
       '${VERSION}',
       NOW(),
       0,
-      '${VERSION}'
+      '${VERSION}',
+      '${shasum}',
+      '${integrity}'
     );
   `);
 }
@@ -187,7 +202,16 @@ beforeAll(async () => {
     res.statusCode = 200;
     res.setHeader("content-type", "application/octet-stream");
     res.setHeader("content-length", String(TARBALL_BYTES.length));
+    const tailGate = upstreamTailGate;
+    upstreamTailGate = undefined;
     res.write(CHUNK_A);
+    if (tailGate) {
+      void tailGate.then(() => {
+        res.write(CHUNK_B);
+        res.end(CHUNK_C);
+      });
+      return;
+    }
     setTimeout(() => {
       res.write(CHUNK_B);
       setTimeout(() => {
@@ -242,50 +266,43 @@ describe("tarball cache miss flow", () => {
       await resetFixture();
 
       const tarballUrl = `${proxideUrl()}/npm/${PACKAGE_NAME}/-/${FILENAME}`;
-
-      const firstResponse = await fetch(tarballUrl);
+      const releaseUpstreamTail = pauseNextUpstreamTail();
+      let firstResponse: Response;
+      let secondResponse: Response;
+      let firstReader: ReadableStreamDefaultReader<Uint8Array>;
+      let firstChunk: ReadableStreamReadResult<Uint8Array>;
+      try {
+        [firstResponse, secondResponse] = await withTimeout(
+          Promise.all([fetch(tarballUrl), fetch(tarballUrl)]),
+          5_000,
+        );
+        firstReader = firstResponse.body!.getReader();
+        firstChunk = await withTimeout(firstReader.read(), 5_000);
+        const cacheEntries = await readdir(CACHE_DIR, { withFileTypes: true });
+        expect(cacheEntries).toHaveLength(1);
+        expect(cacheEntries[0].isFile()).toBe(true);
+        expect(cacheEntries[0].name).toMatch(/^[0-9a-f]{32}\.tmp$/);
+      } finally {
+        releaseUpstreamTail();
+      }
       expect(firstResponse.status).toBe(200);
-      expect(firstResponse.body).toBeTruthy();
-
-      const firstReader = firstResponse.body!.getReader();
-      const firstChunk = await firstReader.read();
-      expect(firstChunk.done).toBe(false);
-      expect(firstChunk.value?.byteLength ?? 0).toBeGreaterThan(0);
-
-      await waitForCondition(async () => {
-        try {
-          const cacheStat = await stat(cacheFilePath());
-          return cacheStat.size >= CHUNK_A.length + CHUNK_B.length && upstreamRequestCount === 1;
-        } catch {
-          return false;
-        }
-      });
-
-      const secondResponse = await fetch(tarballUrl);
-
       expect(secondResponse.status).toBe(200);
-
-      const [firstTail, secondBody] = await Promise.all([
-        readRemaining(firstReader),
-        secondResponse.arrayBuffer(),
-      ]);
-
-      const firstBody = Buffer.concat([Buffer.from(firstChunk.value!), firstTail]);
-      expect(firstBody.equals(TARBALL_BYTES)).toBe(true);
-      expect(Buffer.from(secondBody).equals(TARBALL_BYTES)).toBe(true);
-      expect(upstreamRequestCount).toBe(1);
-
-      await waitForCondition(async () => {
-        try {
-          const s3Head = await s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key: STORAGE_KEY }));
-          return s3Head.ContentLength === TARBALL_BYTES.length;
-        } catch {
-          return false;
+      expect(firstChunk.done).toBe(false);
+      const firstChunks = [Buffer.from(firstChunk.value!)];
+      while (true) {
+        const chunk = await firstReader.read();
+        if (chunk.done) {
+          break;
         }
-      });
+        firstChunks.push(Buffer.from(chunk.value));
+      }
+      const firstBody = Buffer.concat(firstChunks);
+      const secondBody = Buffer.from(await secondResponse.arrayBuffer());
 
-      const s3Head = await s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key: STORAGE_KEY }));
-      expect(s3Head.ContentLength).toBe(TARBALL_BYTES.length);
+      expect(firstBody.equals(TARBALL_BYTES)).toBe(true);
+      expect(secondBody.equals(TARBALL_BYTES)).toBe(true);
+      expect(upstreamRequestCount).toBe(1);
+      await waitForCondition(async () => (await readdir(CACHE_DIR)).length === 0);
 
       await waitForCondition(async () => {
         const tarDistId = Number(
@@ -319,7 +336,82 @@ describe("tarball cache miss flow", () => {
         WHERE p.name = '${PACKAGE_NAME}' AND pv.version = '${VERSION}'
         LIMIT 1;
       `);
-      expect(distPath).toBe(STORAGE_KEY);
+      expect(distPath).toMatch(/^objects\/raw\/sha256\/[0-9a-f]{2}\/[0-9a-f]{2}\/[0-9a-f]{64}$/);
+      const s3Head = await s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key: distPath }));
+      expect(s3Head.ContentLength).toBe(TARBALL_BYTES.length);
+    },
+    120_000,
+  );
+
+  it(
+    "aborts an optimistic response without caching a checksum mismatch",
+    async () => {
+      await resetFixture(true);
+
+      const tarballUrl = `${proxideUrl()}/npm/${PACKAGE_NAME}/-/${FILENAME}`;
+      const response = await fetch(tarballUrl);
+      expect(response.status).toBe(200);
+      await expect(response.arrayBuffer()).rejects.toThrow();
+
+      const tarDistId = Number(
+        runMysql(`
+          SELECT COALESCE(pv.tar_dist_id, 0)
+          FROM package_versions pv
+          JOIN packages p ON p.id = pv.package_id
+          WHERE p.name = '${PACKAGE_NAME}' AND pv.version = '${VERSION}'
+          LIMIT 1;
+        `),
+      );
+      expect(tarDistId).toBe(0);
+      expect(Number(runMysql("SELECT COUNT(*) FROM dists;"))).toBe(0);
+      await waitForCondition(async () => (await readdir(CACHE_DIR)).length === 0);
+    },
+    120_000,
+  );
+
+  it(
+    "rejects a corrupted stored tarball",
+    async () => {
+      await resetFixture();
+
+      const tarballUrl = `${proxideUrl()}/npm/${PACKAGE_NAME}/-/${FILENAME}`;
+      const populateResponse = await fetch(tarballUrl);
+      expect(populateResponse.status).toBe(200);
+      expect(Buffer.from(await populateResponse.arrayBuffer()).equals(TARBALL_BYTES)).toBe(true);
+
+      await waitForCondition(async () => {
+        const tarDistId = Number(
+          runMysql(`
+            SELECT COALESCE(pv.tar_dist_id, 0)
+            FROM package_versions pv
+            JOIN packages p ON p.id = pv.package_id
+            WHERE p.name = '${PACKAGE_NAME}' AND pv.version = '${VERSION}'
+            LIMIT 1;
+          `),
+        );
+        return tarDistId > 0;
+      });
+
+      const distPath = runMysql(`
+        SELECT d.path
+        FROM dists d
+        JOIN package_versions pv ON pv.tar_dist_id = d.id
+        JOIN packages p ON p.id = pv.package_id
+        WHERE p.name = '${PACKAGE_NAME}' AND pv.version = '${VERSION}'
+        LIMIT 1;
+      `);
+      await s3.send(
+        new PutObjectCommand({
+          Bucket: BUCKET,
+          Key: distPath,
+          Body: Buffer.alloc(TARBALL_BYTES.length, 0x78),
+        }),
+      );
+
+      const corruptedResponse = await fetch(tarballUrl);
+      expect(corruptedResponse.status).toBe(200);
+      await expect(corruptedResponse.arrayBuffer()).rejects.toThrow();
+      expect(upstreamRequestCount).toBe(1);
     },
     120_000,
   );

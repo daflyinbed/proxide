@@ -197,29 +197,6 @@ pub async fn set_access(
         other => return Err(WebError::BadRequest(format!("invalid access: {other}"))),
     };
 
-    let pkg = state
-        .repo
-        .get_package_by_name(&fullname)
-        .await
-        .map_err(WebError::CustomApiError)?
-        .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
-
-    ensure_package_readable(&state, &headers, &pkg).await?;
-
-    if pkg.source.is_some() {
-        return Err(WebError::Forbidden(format!(
-            "package {fullname} was synced from upstream, access mutation is not allowed"
-        )));
-    }
-
-    if pkg.scope.is_none() && normalized != "public" {
-        return Err(WebError::BadRequest(
-            "unscoped packages are always public; restricted access requires a scope".to_string(),
-        ));
-    }
-
-    ensure_package_write_access(&state, &auth, &pkg).await?;
-
     if !state.package_lock.try_lock(&fullname, LockOwner::Access) {
         let owner = state
             .package_lock
@@ -238,10 +215,29 @@ pub async fn set_access(
         .await
         .map_err(WebError::CustomApiError)?
         .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
+    ensure_package_readable(&state, &headers, &pkg).await?;
+    if pkg.source.is_some() {
+        return Err(WebError::Forbidden(format!(
+            "package {fullname} was synced from upstream, access mutation is not allowed"
+        )));
+    }
+    if pkg.scope.is_none() && normalized != "public" {
+        return Err(WebError::BadRequest(
+            "unscoped packages are always public; restricted access requires a scope".to_string(),
+        ));
+    }
+    ensure_package_write_access(&state, &auth, &pkg).await?;
 
-    let old_access = pkg.access.as_str();
     let pkg_id = pkg.id;
     let full_dist_id = pkg.full_dist_id;
+
+    if normalized == "restricted"
+        && let Some(idx) = &state.search
+    {
+        idx.remove_package_and_wait(pkg_id)
+            .await
+            .map_err(WebError::CustomApiError)?;
+    }
 
     state
         .repo
@@ -249,7 +245,8 @@ pub async fn set_access(
         .await
         .map_err(WebError::CustomApiError)?;
 
-    if let Some(idx) = &state.search
+    if normalized == "public"
+        && let Some(idx) = &state.search
         && let Some(full_dist_id) = full_dist_id
     {
         let reindex_result: Result<(), anyhow::Error> = async {
@@ -266,17 +263,7 @@ pub async fn set_access(
             Ok(())
         }
         .await;
-        if let Err(e) = reindex_result {
-            if old_access != normalized
-                && let Err(rb_err) = state.repo.set_package_access(pkg_id, old_access).await
-            {
-                log::error!(
-                    action = "set_access_rollback_failed";
-                    "name={fullname} failed to roll back access from {normalized} to {old_access}: {rb_err}"
-                );
-            }
-            return Err(WebError::CustomApiError(e));
-        }
+        reindex_result.map_err(WebError::CustomApiError)?;
     }
 
     log::info!(

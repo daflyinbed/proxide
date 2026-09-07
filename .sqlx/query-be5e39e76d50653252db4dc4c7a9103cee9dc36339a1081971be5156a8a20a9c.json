@@ -1,0 +1,34 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT status, COUNT(*) AS `count` FROM sync_tasks GROUP BY status",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "status",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL | MULTIPLE_KEY",
+          "max_size": 64
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "count",
+        "type_info": {
+          "type": "LongLong",
+          "flags": "NOT_NULL | BINARY",
+          "max_size": 21
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "be5e39e76d50653252db4dc4c7a9103cee9dc36339a1081971be5156a8a20a9c"
+}

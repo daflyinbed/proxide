@@ -1,8 +1,71 @@
 pub mod types;
 
 use crate::npm::types::{AbbreviatedPackument, AbbreviatedVersion, PackageVersion, Packument};
+use base64::Engine;
+use chrono::{DateTime, NaiveDateTime};
 use percent_encoding::percent_decode_str;
 use std::collections::HashMap;
+
+pub(crate) fn verify_integrity_digests(
+    sha1_digest: &[u8],
+    sha512_digest: &[u8],
+    integrity: &str,
+) -> bool {
+    let mut sha1_found = false;
+    let mut sha1_matches = false;
+    let mut sha512_found = false;
+    let mut sha512_matches = false;
+
+    for metadata in integrity.split_ascii_whitespace() {
+        let Some((algorithm, encoded)) = metadata.split_once('-') else {
+            continue;
+        };
+        let encoded = encoded
+            .split_once('?')
+            .map_or(encoded, |(digest, _)| digest);
+
+        match algorithm {
+            "sha1" => {
+                sha1_found = true;
+                sha1_matches |= base64::engine::general_purpose::STANDARD
+                    .decode(encoded)
+                    .is_ok_and(|expected| expected == sha1_digest);
+            }
+            "sha512" => {
+                sha512_found = true;
+                sha512_matches |= base64::engine::general_purpose::STANDARD
+                    .decode(encoded)
+                    .is_ok_and(|expected| expected == sha512_digest);
+            }
+            _ => {}
+        }
+    }
+
+    if sha512_found {
+        sha512_matches
+    } else {
+        sha1_found && sha1_matches
+    }
+}
+
+pub(crate) fn validate_tarball_digests(
+    sha1_digest: &[u8],
+    sha512_digest: &[u8],
+    shasum: Option<&str>,
+    integrity: Option<&str>,
+) -> anyhow::Result<()> {
+    if let Some(expected) = integrity
+        && !verify_integrity_digests(sha1_digest, sha512_digest, expected)
+    {
+        anyhow::bail!("upstream integrity mismatch");
+    }
+    if let Some(expected) = shasum
+        && hex::encode(sha1_digest) != expected
+    {
+        anyhow::bail!("upstream shasum mismatch");
+    }
+    Ok(())
+}
 
 pub fn build_abbreviated_manifest(packument: &Packument) -> AbbreviatedPackument {
     let mut versions = HashMap::new();
@@ -53,6 +116,13 @@ pub fn pad_version(version: &str) -> String {
     }
 }
 
+pub fn parse_npm_time(value: &str) -> Option<NaiveDateTime> {
+    DateTime::parse_from_rfc3339(value)
+        .ok()
+        .map(|dt| dt.naive_utc())
+        .or_else(|| NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M:%S%.f").ok())
+}
+
 pub fn detect_install_script(ver: &PackageVersion) -> Option<bool> {
     let scripts = ver.scripts.as_ref()?;
     let has_install = scripts.contains_key("install")
@@ -81,11 +151,9 @@ pub fn build_abbreviated_version_entry(
     let workspaces = ver.workspaces.clone();
     let accept_dependencies = ver.accept_dependencies.clone();
 
-    let publish_time = publish_time_str.and_then(|t| {
-        chrono::NaiveDateTime::parse_from_str(t, "%Y-%m-%dT%H:%M:%S%.f")
-            .ok()
-            .map(|dt| dt.and_utc().timestamp_millis() / 1000)
-    });
+    let publish_time = publish_time_str
+        .and_then(|t| parse_npm_time(t))
+        .map(|dt| dt.and_utc().timestamp());
 
     AbbreviatedVersion {
         name: ver.name.clone(),
@@ -110,5 +178,21 @@ pub fn build_abbreviated_version_entry(
         workspaces,
         accept_dependencies,
         publish_time,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_npm_time;
+
+    #[test]
+    fn parses_npm_times() {
+        let expected = parse_npm_time("2024-01-01T00:00:00.000Z").unwrap();
+        assert_eq!(
+            parse_npm_time("2024-01-01T08:00:00.000+08:00"),
+            Some(expected)
+        );
+        assert_eq!(parse_npm_time("2024-01-01T00:00:00.000"), Some(expected));
+        assert_eq!(parse_npm_time("not-a-time"), None);
     }
 }

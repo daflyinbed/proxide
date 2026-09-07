@@ -1,0 +1,24 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT GET_LOCK(?, 0) AS `acquired`",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "acquired",
+        "type_info": {
+          "type": "LongLong",
+          "flags": "BINARY",
+          "max_size": 1
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "c363d882cdc69dfa261c9a25b658b5c03e06b4cf80819d3d78578de287a09c7e"
+}

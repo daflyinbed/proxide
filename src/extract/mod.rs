@@ -10,7 +10,8 @@ use anyhow::{Context, Result};
 use base64::Engine;
 use flate2::read::GzDecoder;
 use futures::StreamExt;
-use sha2::{Digest, Sha256};
+use sha1::Sha1;
+use sha2::{Digest, Sha256, Sha512};
 use std::collections::BTreeMap;
 use std::io::Cursor;
 use std::io::Read;
@@ -140,25 +141,8 @@ async fn acquire_tarball(
             .repo
             .get_content(tar_dist_id)
             .await
-            .map_err(WebError::CustomApiError)?;
+            .map_err(WebError::ServiceUnavailable)?;
         return Ok(data);
-    }
-
-    let storage_key = format!("packages/{fullname}/{}/{tarball_filename}", version.version);
-
-    if state
-        .repo
-        .storage_exists(&storage_key)
-        .await
-        .map_err(WebError::CustomApiError)?
-    {
-        return read_tarball_from_storage(state, &storage_key).await;
-    }
-
-    if let Some(inflight) = state.tarball_downloads.get_inflight(&storage_key) {
-        if inflight.wait_for_completion().await.is_ok() {
-            return read_tarball_from_storage(state, &storage_key).await;
-        }
     }
 
     let request = crate::handlers::tarball::build_tarball_request(
@@ -202,35 +186,48 @@ async fn acquire_tarball(
         bytes.extend_from_slice(&chunk);
     }
 
-    state
+    let sha1_digest = Sha1::digest(&bytes);
+    let sha512_digest = Sha512::digest(&bytes);
+    if let Some(expected) = version.tar_integrity.as_deref()
+        && !crate::npm::verify_integrity_digests(&sha1_digest, &sha512_digest, expected)
+    {
+        return Err(WebError::CustomApiError(anyhow::anyhow!(
+            "upstream integrity mismatch for {fullname}@{}",
+            version.version
+        )));
+    }
+    if let Some(expected) = version.tar_shasum.as_deref()
+        && hex::encode(sha1_digest.as_slice()) != expected
+    {
+        return Err(WebError::CustomApiError(anyhow::anyhow!(
+            "upstream shasum mismatch for {fullname}@{}",
+            version.version
+        )));
+    }
+    let prepared = state
         .repo
-        .put_storage(&storage_key, bytes.clone())
+        .prepare_raw_dist(bytes.clone())
         .await
         .map_err(WebError::CustomApiError)?;
-
-    crate::handlers::tarball::ensure_tarball_dist_link(
-        state,
-        fullname,
-        tarball_filename,
-        &storage_key,
-        version,
-    )
-    .await?;
+    let outcome = state
+        .repo
+        .attach_tar_dist(
+            version.id,
+            &prepared,
+            bytes.len() as i64,
+            &sha1_digest,
+            &sha512_digest,
+        )
+        .await
+        .map_err(WebError::CustomApiError)?;
+    if outcome == crate::repository::AttachDistOutcome::VersionDeleted {
+        return Err(WebError::NotFound(format!(
+            "{fullname}@{} not found",
+            version.version
+        )));
+    }
 
     Ok(bytes)
-}
-
-async fn read_tarball_from_storage(state: &AppState, storage_key: &str) -> WebResult<Vec<u8>> {
-    let result = state
-        .repo
-        .storage_get_result(storage_key)
-        .await
-        .map_err(WebError::CustomApiError)?;
-    result
-        .bytes()
-        .await
-        .map_err(|e| WebError::CustomApiError(anyhow::anyhow!("{e:#}")))
-        .map(|b| b.to_vec())
 }
 
 fn extract_to_dir(

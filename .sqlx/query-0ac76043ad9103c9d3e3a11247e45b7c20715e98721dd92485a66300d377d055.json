@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO packages (name, scope, description, source, access)\n               VALUES (?, ?, ?, NULL, ?)\n               ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "0ac76043ad9103c9d3e3a11247e45b7c20715e98721dd92485a66300d377d055"
+}

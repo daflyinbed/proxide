@@ -15,6 +15,8 @@ pub struct Config {
     pub search: SearchConfig,
     #[serde(default)]
     pub cdn: CdnConfig,
+    #[serde(default)]
+    pub storage_gc: StorageGcConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -284,6 +286,28 @@ impl Default for CdnConfig {
             unpacked_dir: default_unpacked_dir(),
             unpacked_max_bytes: default_unpacked_max_bytes(),
             unpacked_eviction_interval_secs: default_unpacked_eviction_interval_secs(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct StorageGcConfig {
+    pub startup_enabled: bool,
+    pub batch_size: u32,
+    pub max_duration_secs: u64,
+    pub min_age_secs: u64,
+    pub full_scan_min_age_secs: u64,
+}
+
+impl Default for StorageGcConfig {
+    fn default() -> Self {
+        Self {
+            startup_enabled: true,
+            batch_size: 1000,
+            max_duration_secs: 60,
+            min_age_secs: 600,
+            full_scan_min_age_secs: 86400,
         }
     }
 }

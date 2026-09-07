@@ -1,0 +1,54 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT d.id, d.storage_sha256, d.path as \"path: String\", d.stored_size\n               FROM dists d\n               WHERE d.created_at < DATE_SUB(NOW(), INTERVAL ? SECOND)\n                 AND NOT EXISTS (SELECT 1 FROM packages p WHERE p.abbreviated_dist_id = d.id)\n                 AND NOT EXISTS (SELECT 1 FROM packages p WHERE p.full_dist_id = d.id)\n                 AND NOT EXISTS (SELECT 1 FROM package_versions pv WHERE pv.tar_dist_id = d.id)\n                 AND NOT EXISTS (SELECT 1 FROM package_versions pv WHERE pv.readme_dist_id = d.id)\n               ORDER BY d.created_at, d.id\n               LIMIT ?",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": {
+          "type": "LongLong",
+          "flags": "NOT_NULL | PRIMARY_KEY | AUTO_INCREMENT",
+          "max_size": 20
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "storage_sha256",
+        "type_info": {
+          "type": "String",
+          "flags": "NOT_NULL | MULTIPLE_KEY | BINARY | NO_DEFAULT_VALUE",
+          "max_size": 32
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "path: String",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL | UNIQUE_KEY | BINARY | NO_DEFAULT_VALUE",
+          "max_size": 1020
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "stored_size",
+        "type_info": {
+          "type": "LongLong",
+          "flags": "NOT_NULL | NO_DEFAULT_VALUE",
+          "max_size": 20
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "47ee8b6f27beb7429f5bec18ff3ca48454f8ae05c4b34b5babf221e92b7a717e"
+}

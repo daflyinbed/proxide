@@ -1,10 +1,11 @@
 use crate::error::{WebError, WebResult};
-use crate::handlers::publish::refresh_manifests;
+use crate::handlers::publish::prepare_manifest_candidate;
 use crate::middleware::auth::{
     RequireAuth, ensure_package_readable, ensure_package_readable_with_auth,
     ensure_package_write_access,
 };
 use crate::npm::types::PublishResponse;
+use crate::repository::LocalManifestCommitParams;
 use crate::state::{AppState, LockOwner, UnlockGuard};
 use axum::Json;
 use axum::extract::{Path, State};
@@ -126,17 +127,6 @@ pub async fn set_dist_tag(
         return Err(WebError::BadRequest(format!("invalid version: {version}")));
     }
 
-    let pkg = state
-        .repo
-        .get_package_by_name(&fullname)
-        .await
-        .map_err(WebError::CustomApiError)?
-        .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
-
-    ensure_package_readable_with_auth(&state, &auth, &pkg).await?;
-    ensure_package_write_access(&state, &auth, &pkg).await?;
-    ensure_local_package(pkg.source.as_deref(), &fullname)?;
-
     let _unlock = lock_package(&state, &fullname)?;
 
     let pkg = state
@@ -145,6 +135,9 @@ pub async fn set_dist_tag(
         .await
         .map_err(WebError::CustomApiError)?
         .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
+    ensure_package_readable_with_auth(&state, &auth, &pkg).await?;
+    ensure_package_write_access(&state, &auth, &pkg).await?;
+    ensure_local_package(pkg.source.as_deref(), &fullname)?;
 
     let version_exists = state
         .repo
@@ -167,15 +160,30 @@ pub async fn set_dist_tag(
     }
     tags.insert(tag.clone(), version.clone());
 
-    let full_manifest = refresh_manifests(
+    let manifests = prepare_manifest_candidate(
         &state,
-        pkg.id,
+        Some(&pkg),
         &fullname,
         pkg.description.as_deref(),
         &tags,
         None,
+        None,
+        None,
     )
     .await?;
+    state
+        .repo
+        .commit_local_manifest(LocalManifestCommitParams {
+            package_id: pkg.id,
+            expected_full_dist_id: pkg.full_dist_id,
+            tags,
+            maintainers: None,
+            delete_version_id: None,
+            abbrev_manifest: manifests.abbrev_dist,
+            full_manifest: manifests.full_dist,
+        })
+        .await
+        .map_err(WebError::CustomApiError)?;
 
     if let Some(idx) = &state.search {
         crate::search::upsert_search_document(
@@ -183,7 +191,7 @@ pub async fn set_dist_tag(
             idx,
             pkg.id,
             &pkg.access,
-            &full_manifest,
+            &manifests.full_manifest,
         )
         .await;
     }
@@ -232,17 +240,6 @@ pub async fn remove_dist_tag(
         ));
     }
 
-    let pkg = state
-        .repo
-        .get_package_by_name(&fullname)
-        .await
-        .map_err(WebError::CustomApiError)?
-        .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
-
-    ensure_package_readable_with_auth(&state, &auth, &pkg).await?;
-    ensure_package_write_access(&state, &auth, &pkg).await?;
-    ensure_local_package(pkg.source.as_deref(), &fullname)?;
-
     let _unlock = lock_package(&state, &fullname)?;
 
     let pkg = state
@@ -251,6 +248,9 @@ pub async fn remove_dist_tag(
         .await
         .map_err(WebError::CustomApiError)?
         .ok_or_else(|| WebError::NotFound(format!("{fullname} not found")))?;
+    ensure_package_readable_with_auth(&state, &auth, &pkg).await?;
+    ensure_package_write_access(&state, &auth, &pkg).await?;
+    ensure_local_package(pkg.source.as_deref(), &fullname)?;
 
     let mut tags = load_tag_map(&state, pkg.id).await?;
     if tags.remove(&tag).is_none() {
@@ -260,15 +260,30 @@ pub async fn remove_dist_tag(
         }));
     }
 
-    let full_manifest = refresh_manifests(
+    let manifests = prepare_manifest_candidate(
         &state,
-        pkg.id,
+        Some(&pkg),
         &fullname,
         pkg.description.as_deref(),
         &tags,
         None,
+        None,
+        None,
     )
     .await?;
+    state
+        .repo
+        .commit_local_manifest(LocalManifestCommitParams {
+            package_id: pkg.id,
+            expected_full_dist_id: pkg.full_dist_id,
+            tags,
+            maintainers: None,
+            delete_version_id: None,
+            abbrev_manifest: manifests.abbrev_dist,
+            full_manifest: manifests.full_dist,
+        })
+        .await
+        .map_err(WebError::CustomApiError)?;
 
     if let Some(idx) = &state.search {
         crate::search::upsert_search_document(
@@ -276,7 +291,7 @@ pub async fn remove_dist_tag(
             idx,
             pkg.id,
             &pkg.access,
-            &full_manifest,
+            &manifests.full_manifest,
         )
         .await;
     }

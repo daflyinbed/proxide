@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "UPDATE sync_tasks\n                           SET status = 'pending', started_at = NULL, error = ?\n                           WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "603ce1c1990fc89b461ebd5cf436fb8797c8f46ceb68a2febefaacbf9a427412"
+}

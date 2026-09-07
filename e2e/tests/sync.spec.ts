@@ -3,6 +3,7 @@ import { createServer, type Server } from "node:http";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { apiJson, uniqueName, uniqueScopedName } from "../helpers.js";
 
 describe("PUT /npm/-/package/{fullname}/syncs", () => {
@@ -64,28 +65,48 @@ describe("worker sync flow", () => {
 
   const SYNC_PKG = uniqueName("e2e-worker-sync");
   const SYNC_VERSION = "1.0.0";
+  const SYNC_TARBALL = "proxide checksum backfill tarball";
+  const SYNC_SHASUM = "a271046d13ec15e0d213c53d639b82be3dd060ce";
+  const SYNC_INTEGRITY =
+    "sha512-x164R/pfv72QyDhQ5qhE4cUPcFMA9/6JTUe1uRdWORtlFF3RAbOhXEUCas/duqG3mCEp0FbtltKJaD2RaAVyHw==";
+  const SYNC_STORAGE_SHA256 = "82dff324d69b20ec8cdaf7274680f5d383fead30954c83c90e05363fc0c09b0a";
+  const SYNC_STORAGE_PATH =
+    `objects/raw/sha256/82/df/${SYNC_STORAGE_SHA256}`;
+  const s3 = new S3Client({
+    endpoint: "http://127.0.0.1:9000",
+    region: "us-east-1",
+    credentials: { accessKeyId: "proxide", secretAccessKey: "proxide123" },
+    forcePathStyle: true,
+  });
 
   let upstreamServer: Server;
   let upstreamPort = 0;
   let workerChild: ChildProcess | undefined;
+  let upstreamVersionTime = "2024-01-01T00:00:00.000Z";
+  let upstreamChecksums = false;
 
-  const PACKUMENT = JSON.stringify({
-    name: SYNC_PKG,
-    "dist-tags": { latest: SYNC_VERSION },
-    versions: {
-      [SYNC_VERSION]: {
-        name: SYNC_PKG,
-        version: SYNC_VERSION,
-        dist: {
-          tarball: `http://127.0.0.1:0/${SYNC_PKG}/-/${SYNC_PKG}-${SYNC_VERSION}.tgz`,
+  function packument(): string {
+    return JSON.stringify({
+      name: SYNC_PKG,
+      "dist-tags": { latest: SYNC_VERSION },
+      versions: {
+        [SYNC_VERSION]: {
+          name: SYNC_PKG,
+          version: SYNC_VERSION,
+          dist: {
+            tarball: `http://127.0.0.1:0/${SYNC_PKG}/-/${SYNC_PKG}-${SYNC_VERSION}.tgz`,
+            ...(upstreamChecksums
+              ? { shasum: SYNC_SHASUM, integrity: SYNC_INTEGRITY }
+              : {}),
+          },
         },
       },
-    },
-    time: {
-      modified: "2024-01-01T00:00:00.000Z",
-      [SYNC_VERSION]: "2024-01-01T00:00:00.000Z",
-    },
-  });
+      time: {
+        modified: upstreamVersionTime,
+        [SYNC_VERSION]: upstreamVersionTime,
+      },
+    });
+  }
 
   function runMysql(sql: string): string {
     return execFileSync(
@@ -117,6 +138,19 @@ describe("worker sync flow", () => {
     });
   }
 
+  async function waitForLatestSyncTask(): Promise<void> {
+    const start = Date.now();
+    while (Date.now() - start < 15_000) {
+      const status = runMysql(
+        `SELECT status FROM sync_tasks WHERE name = '${SYNC_PKG}' ORDER BY id DESC LIMIT 1`,
+      );
+      if (status === "done") return;
+      if (status === "failed") throw new Error(`sync task failed for ${SYNC_PKG}`);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    throw new Error(`timed out waiting for sync task for ${SYNC_PKG}`);
+  }
+
   beforeAll(async () => {
     upstreamPort = await getFreePort();
 
@@ -130,7 +164,7 @@ describe("worker sync flow", () => {
       if (req.method === "GET" && req.url === `/${SYNC_PKG}`) {
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");
-        res.end(PACKUMENT);
+        res.end(packument());
         return;
       }
       res.statusCode = 404;
@@ -187,24 +221,65 @@ describe("worker sync flow", () => {
       expect(body.ok).toBe(true);
       expect(body.log).toBe("queued");
 
-      const start = Date.now();
-      while (Date.now() - start < 15_000) {
-        const status = runMysql(
-          `SELECT status FROM sync_tasks WHERE name = '${SYNC_PKG}' ORDER BY id DESC LIMIT 1`,
-        );
-        if (status === "done") break;
-        await new Promise((r) => setTimeout(r, 200));
-      }
-
-      const finalStatus = runMysql(
-        `SELECT status FROM sync_tasks WHERE name = '${SYNC_PKG}' ORDER BY id DESC LIMIT 1`,
-      );
-      expect(finalStatus).toBe("done");
+      await waitForLatestSyncTask();
 
       const pkgRes = await fetch(`${BASE_URL}/npm/${SYNC_PKG}`);
       expect(pkgRes.status).toBe(200);
       const pkgBody = await pkgRes.json();
       expect(pkgBody.versions[SYNC_VERSION]).toBeDefined();
+
+      const publishTime = runMysql(`
+        SELECT DATE_FORMAT(pv.publish_time, '%Y-%m-%dT%H:%i:%s.%fZ')
+        FROM package_versions pv
+        JOIN packages p ON p.id = pv.package_id
+        WHERE p.name = '${SYNC_PKG}' AND pv.version = '${SYNC_VERSION}'
+      `);
+      expect(publishTime).toBe("2024-01-01T00:00:00.000000Z");
+
+      await s3.send(
+        new PutObjectCommand({
+          Bucket: "proxide-e2e",
+          Key: SYNC_STORAGE_PATH,
+          Body: SYNC_TARBALL,
+        }),
+      );
+      runMysql(`
+        INSERT INTO dists (storage_sha256, path, stored_size)
+        VALUES (UNHEX('${SYNC_STORAGE_SHA256}'), '${SYNC_STORAGE_PATH}', ${SYNC_TARBALL.length})
+        ON DUPLICATE KEY UPDATE
+          storage_sha256 = VALUES(storage_sha256), stored_size = VALUES(stored_size);
+        UPDATE package_versions pv
+        JOIN packages p ON p.id = pv.package_id
+        JOIN dists d ON d.path = '${SYNC_STORAGE_PATH}'
+        SET pv.tar_dist_id = d.id, pv.tar_size = ${SYNC_TARBALL.length}
+        WHERE p.name = '${SYNC_PKG}' AND pv.version = '${SYNC_VERSION}';
+      `);
+
+      upstreamVersionTime = "not-a-time";
+      upstreamChecksums = true;
+      const { res: resyncRes, body: resyncBody } = await apiJson(
+        "/npm/-/package/" + encodeURIComponent(SYNC_PKG) + "/syncs",
+        { method: "PUT" },
+      );
+      expect(resyncRes.status).toBe(200);
+      expect(resyncBody.log).toBe("queued");
+      await waitForLatestSyncTask();
+
+      const preservedPublishTime = runMysql(`
+        SELECT DATE_FORMAT(pv.publish_time, '%Y-%m-%dT%H:%i:%s.%fZ')
+        FROM package_versions pv
+        JOIN packages p ON p.id = pv.package_id
+        WHERE p.name = '${SYNC_PKG}' AND pv.version = '${SYNC_VERSION}'
+      `);
+      expect(preservedPublishTime).toBe("2024-01-01T00:00:00.000000Z");
+
+      const checksums = runMysql(`
+        SELECT CONCAT(pv.tar_shasum, '|', pv.tar_integrity)
+        FROM package_versions pv
+        JOIN packages p ON p.id = pv.package_id
+        WHERE p.name = '${SYNC_PKG}' AND pv.version = '${SYNC_VERSION}'
+      `);
+      expect(checksums).toBe(`${SYNC_SHASUM}|${SYNC_INTEGRITY}`);
     },
     30_000,
   );

@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "UPDATE package_versions\n                       SET publish_time = COALESCE(?, publish_time),\n                           is_pre_release = ?, padding_version = ?,\n                           tar_shasum = ?, tar_integrity = ?\n                       WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "29196cc4b60e2e0349b43d090ccd5f28e016b1eb94129f82d0db94a73a635e75"
+}

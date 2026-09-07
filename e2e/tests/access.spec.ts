@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { api, apiJson, login, publishPackage, uniqueName, uniqueScopedName } from "../helpers.js";
+import { execFileSync } from "node:child_process";
+import {
+  api,
+  apiJson,
+  login,
+  publishPackage,
+  uniqueName,
+  uniqueScopedName,
+  waitForSearch,
+} from "../helpers.js";
 
 function visibilityPath(name: string): string {
   return "/npm/-/package/" + encodeURIComponent(name) + "/visibility";
@@ -7,6 +16,18 @@ function visibilityPath(name: string): string {
 
 function accessPath(name: string): string {
   return "/npm/-/package/" + encodeURIComponent(name) + "/access";
+}
+
+async function waitForMeilisearch(): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < 30_000) {
+    try {
+      const res = await fetch("http://127.0.0.1:7700/health");
+      if (res.ok) return;
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  throw new Error("timed out waiting for Meilisearch");
 }
 
 describe("GET /npm/-/package/{fullname}/visibility", () => {
@@ -142,6 +163,54 @@ describe("POST /npm/-/package/{fullname}/access", () => {
     });
     expect(body.public).toBe(false);
   });
+
+  it(
+    "returns an error when making a package public cannot be indexed and succeeds on retry",
+    async () => {
+      const name = uniqueScopedName("e2e-access", "public-index-retry");
+      const token = await login(uniqueName("e2e-access-index-retry-pub"), "pass1234");
+      await publishPackage(token, name, "1.0.0");
+
+      execFileSync("docker", ["stop", "proxide-meilisearch"], { stdio: "pipe" });
+      try {
+        const failed = await api(accessPath(name), {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ access: "public" }),
+        });
+        expect(failed.status).toBe(500);
+
+        const visibility = await apiJson(visibilityPath(name));
+        expect(visibility.res.status).toBe(200);
+        expect(visibility.body.public).toBe(true);
+      } finally {
+        execFileSync("docker", ["start", "proxide-meilisearch"], { stdio: "pipe" });
+        await waitForMeilisearch();
+      }
+
+      const retry = await api(accessPath(name), {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ access: "public" }),
+      });
+      expect(retry.status).toBe(200);
+
+      const unscoped = name.split("/")[1];
+      const searchBody = await waitForSearch(
+        unscoped,
+        (body) => body.objects.some((object: any) => object.package.name === name),
+      );
+      const hit = searchBody.objects.find((object: any) => object.package.name === name);
+      expect(hit.package.access).toBe("public");
+    },
+    60_000,
+  );
 
   it("returns 400 for an invalid access value", async () => {
     const name = uniqueScopedName("e2e-access", "invalid");

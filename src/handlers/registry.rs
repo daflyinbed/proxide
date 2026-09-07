@@ -18,22 +18,17 @@ fn is_abbreviated_request(headers: &HeaderMap) -> bool {
         .any(|media_type| media_type.trim().eq_ignore_ascii_case(ABBREVIATED_ACCEPT))
 }
 
-async fn load_manifest_json(
-    state: &AppState,
-    dist_id: i64,
-) -> WebResult<(serde_json::Value, Option<String>)> {
-    let (data, dist) = state
+async fn load_manifest_json(state: &AppState, dist_id: i64) -> WebResult<serde_json::Value> {
+    let (data, _) = state
         .repo
         .get_content(dist_id)
         .await
-        .map_err(WebError::CustomApiError)?;
-
-    let shasum = dist.shasum.clone();
+        .map_err(WebError::ServiceUnavailable)?;
 
     let json: serde_json::Value =
-        serde_json::from_slice(&data).map_err(|e| WebError::CustomApiError(e.into()))?;
+        serde_json::from_slice(&data).map_err(|e| WebError::ServiceUnavailable(e.into()))?;
 
-    Ok((json, shasum))
+    Ok(json)
 }
 
 #[utoipa::path(
@@ -79,18 +74,11 @@ pub async fn get_package_inner(
     }
     .ok_or_else(|| WebError::CustomApiError(anyhow::anyhow!("package manifest not yet synced")))?;
 
-    let (json, shasum) = load_manifest_json(state, dist_id).await?;
-    // todo(review): compare cache-control with cnpmcore
-    let mut response = if let Some(shasum) = shasum {
-        let etag = format!("W/\"{shasum}\"");
-        (
-            [("etag", etag), ("cache-control", "max-age=300".to_string())],
-            Json(json),
-        )
-            .into_response()
-    } else {
-        Json(json).into_response()
-    };
+    let json = load_manifest_json(state, dist_id).await?;
+    let mut response = Json(json).into_response();
+    response
+        .headers_mut()
+        .insert("cache-control", "max-age=300".parse().unwrap());
 
     if abbreviated {
         response
@@ -127,7 +115,7 @@ pub async fn get_package_version_inner(
     }
     .ok_or_else(|| WebError::CustomApiError(anyhow::anyhow!("package manifest not yet synced")))?;
 
-    let (mut json, _) = load_manifest_json(state, dist_id).await?;
+    let mut json = load_manifest_json(state, dist_id).await?;
     let version_json = json
         .get_mut("versions")
         .and_then(|versions| versions.as_object_mut())

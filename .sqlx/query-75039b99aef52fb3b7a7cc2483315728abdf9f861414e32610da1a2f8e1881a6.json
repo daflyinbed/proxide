@@ -1,0 +1,24 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT DATABASE() AS `database!`",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "database!",
+        "type_info": {
+          "type": "VarString",
+          "flags": "",
+          "max_size": 256
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "75039b99aef52fb3b7a7cc2483315728abdf9f861414e32610da1a2f8e1881a6"
+}

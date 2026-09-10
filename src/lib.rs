@@ -13,5 +13,6 @@ pub mod search;
 pub mod server;
 pub mod state;
 pub mod storage;
+pub(crate) mod tarball;
 pub mod unpacked;
 pub mod worker;

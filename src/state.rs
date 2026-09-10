@@ -137,6 +137,7 @@ impl Drop for LoginSessionMap {
 #[derive(Clone, Debug)]
 pub enum TarballInflightError {
     NotFound(String),
+    SizeLimitExceeded(String),
     Internal(String),
 }
 

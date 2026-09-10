@@ -5,6 +5,8 @@ import { createHash } from "node:crypto";
 import { existsSync, openSync } from "node:fs";
 import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { gunzipSync, gzipSync } from "node:zlib";
+import { TARBALL_BYTES as FIXTURE_TARBALL } from "../fixtures/tarball.js";
 import {
   CreateBucketCommand,
   HeadObjectCommand,
@@ -23,10 +25,10 @@ const BUCKET = "proxide-e2e-tarball-cache";
 const PACKAGE_NAME = "e2e-upstream-cache-pkg";
 const VERSION = "1.0.0";
 const FILENAME = `${PACKAGE_NAME}-${VERSION}.tgz`;
-const CHUNK_A = Buffer.alloc(256 * 1024, 0x61);
-const CHUNK_B = Buffer.alloc(256 * 1024, 0x62);
-const CHUNK_C = Buffer.alloc(256 * 1024, 0x63);
-const TARBALL_BYTES = Buffer.concat([CHUNK_A, CHUNK_B, CHUNK_C]);
+const TARBALL_BYTES = gzipSync(
+  Buffer.concat([gunzipSync(FIXTURE_TARBALL), Buffer.alloc(768 * 1024)]),
+  { level: 0 },
+);
 
 let upstreamServer: Server;
 let proxideChild: ChildProcess | undefined;
@@ -34,6 +36,8 @@ let upstreamRequestCount = 0;
 let proxidePort = 0;
 let upstreamPort = 0;
 let upstreamTailGate: Promise<void> | undefined;
+let upstreamTarballBytes = TARBALL_BYTES;
+let upstreamSendContentLength = true;
 
 function proxideUrl(): string {
   return `http://localhost:${proxidePort}`;
@@ -152,6 +156,8 @@ async function ensureBucket() {
 
 async function resetFixture(invalidChecksum = false) {
   upstreamRequestCount = 0;
+  upstreamTarballBytes = TARBALL_BYTES;
+  upstreamSendContentLength = true;
   const checksumBytes = invalidChecksum ? Buffer.from("invalid tarball") : TARBALL_BYTES;
   const shasum = createHash("sha1").update(checksumBytes).digest("hex");
   const integrity = `sha512-${createHash("sha512").update(checksumBytes).digest("base64")}`;
@@ -180,6 +186,29 @@ async function resetFixture(invalidChecksum = false) {
   `);
 }
 
+async function prepareCdnManifest() {
+  const manifest = Buffer.from(JSON.stringify({
+    name: PACKAGE_NAME,
+    "dist-tags": { latest: VERSION },
+    versions: {
+      [VERSION]: {
+        name: PACKAGE_NAME,
+        version: VERSION,
+        dist: { tarball: `${proxideUrl()}/npm/${PACKAGE_NAME}/-/${FILENAME}` },
+      },
+    },
+  }));
+  const hash = createHash("sha256").update(manifest).digest("hex");
+  const path = `objects/raw/sha256/${hash.slice(0, 2)}/${hash.slice(2, 4)}/${hash}`;
+  await s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: path, Body: manifest }));
+  runMysql(`
+    INSERT INTO dists (storage_sha256, path, stored_size)
+    VALUES (UNHEX('${hash}'), '${path}', ${manifest.length});
+    UPDATE packages SET abbreviated_dist_id = LAST_INSERT_ID()
+    WHERE name = '${PACKAGE_NAME}';
+  `);
+}
+
 beforeAll(async () => {
   if (!existsSync(BINARY)) {
     execFileSync("cargo", ["build"], { cwd: PROJECT_ROOT, stdio: "inherit" });
@@ -201,21 +230,26 @@ beforeAll(async () => {
     upstreamRequestCount += 1;
     res.statusCode = 200;
     res.setHeader("content-type", "application/octet-stream");
-    res.setHeader("content-length", String(TARBALL_BYTES.length));
+    if (upstreamSendContentLength) {
+      res.setHeader("content-length", String(upstreamTarballBytes.length));
+    }
+    const chunkA = upstreamTarballBytes.subarray(0, 256 * 1024);
+    const chunkB = upstreamTarballBytes.subarray(256 * 1024, 512 * 1024);
+    const chunkC = upstreamTarballBytes.subarray(512 * 1024);
     const tailGate = upstreamTailGate;
     upstreamTailGate = undefined;
-    res.write(CHUNK_A);
+    res.write(chunkA);
     if (tailGate) {
       void tailGate.then(() => {
-        res.write(CHUNK_B);
-        res.end(CHUNK_C);
+        res.write(chunkB);
+        res.end(chunkC);
       });
       return;
     }
     setTimeout(() => {
-      res.write(CHUNK_B);
+      res.write(chunkB);
       setTimeout(() => {
-        res.end(CHUNK_C);
+        res.end(chunkC);
       }, 150);
     }, 150);
   });
@@ -230,7 +264,10 @@ beforeAll(async () => {
   await mkdir(CACHE_DIR, { recursive: true });
 
   const config = `[database]\nuri = "mysql://root:root@127.0.0.1:3306/${DB_NAME}"\n\n[server]\nbinding = "0.0.0.0"\nport = ${proxidePort}\nrootUrl = "${proxideUrl()}"\ntarballCacheDir = "${CACHE_DIR}"\n\n[storage.S3]\nendpoint = "http://127.0.0.1:9000"\naccessKeyId = "proxide"\nsecretAccessKey = "proxide123"\nbucketName = "${BUCKET}"\n\n[log]\nlevel = "warn"\n\n[worker]\nupstreamRegistry = "http://127.0.0.1:${upstreamPort}"\nconsumerCount = 1\ncronIntervalSecs = 3600\n\n[auth]\nallowPublishNonScopePackage = true\n`;
-  await writeFile(join(RUN_DIR, "proxide.toml"), config);
+  await writeFile(
+    join(RUN_DIR, "proxide.toml"),
+    `${config}\n[cdn]\nmaxTarballSize = ${TARBALL_BYTES.length}\n`,
+  );
 
   const logFd = openSync(LOG_PATH, "w");
   proxideChild = spawn(BINARY, ["server"], {
@@ -260,6 +297,28 @@ afterAll(async () => {
 });
 
 describe("tarball cache miss flow", () => {
+  describe.each([true, false])("CDN size limit with Content-Length: %s", (sendContentLength) => {
+    it.each([
+      `/jsdelivr/npm/${PACKAGE_NAME}@${VERSION}/package.json`,
+      `/jsdelivr/api/npm/${PACKAGE_NAME}@${VERSION}`,
+    ])("returns 400 for an oversized tarball at %s", async (path) => {
+      await resetFixture();
+      await prepareCdnManifest();
+      upstreamTarballBytes = Buffer.concat([TARBALL_BYTES, Buffer.from([0])]);
+      upstreamSendContentLength = sendContentLength;
+
+      const response = await fetch(`${proxideUrl()}${path}`);
+      expect(response.status).toBe(400);
+      expect((await response.json()).error).toContain("exceeds cdn.maxTarballSize");
+      expect(Number(runMysql("SELECT COUNT(*) FROM package_versions WHERE tar_dist_id IS NOT NULL;"))).toBe(0);
+      expect(Number(runMysql("SELECT COUNT(*) FROM dists;"))).toBe(1);
+      const versionId = runMysql("SELECT id FROM package_versions;");
+      const unpackedFiles = await readdir(join(RUN_DIR, "unpacked"), { recursive: true });
+      expect(unpackedFiles.some((file) => file.endsWith(`v-${versionId}.meta.json`))).toBe(false);
+      await waitForCondition(async () => (await readdir(CACHE_DIR)).length === 0);
+    });
+  });
+
   it(
     "coalesces concurrent upstream tarball downloads and backfills storage",
     async () => {
@@ -339,6 +398,73 @@ describe("tarball cache miss flow", () => {
       expect(distPath).toMatch(/^objects\/raw\/sha256\/[0-9a-f]{2}\/[0-9a-f]{2}\/[0-9a-f]{64}$/);
       const s3Head = await s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key: distPath }));
       expect(s3Head.ContentLength).toBe(TARBALL_BYTES.length);
+    },
+    120_000,
+  );
+
+  it(
+    "shares a CDN download with npm streaming and reuses the stored tarball",
+    async () => {
+      await resetFixture();
+      await prepareCdnManifest();
+
+      const tarballUrl = `${proxideUrl()}/npm/${PACKAGE_NAME}/-/${FILENAME}`;
+      const cdnUrl = `${proxideUrl()}/jsdelivr/npm/${PACKAGE_NAME}@${VERSION}/package.json`;
+      const releaseUpstreamTail = pauseNextUpstreamTail();
+      const cdnResponse = fetch(cdnUrl);
+      let npmResponse: Response;
+      let reader: ReadableStreamDefaultReader<Uint8Array>;
+      let firstChunk: ReadableStreamReadResult<Uint8Array>;
+      try {
+        await waitForCondition(async () => upstreamRequestCount > 0);
+        npmResponse = await withTimeout(fetch(tarballUrl), 5_000);
+        reader = npmResponse.body!.getReader();
+        firstChunk = await withTimeout(reader.read(), 5_000);
+        expect(firstChunk.done).toBe(false);
+        expect(upstreamRequestCount).toBe(1);
+        expect(await readdir(CACHE_DIR)).toHaveLength(1);
+      } finally {
+        releaseUpstreamTail();
+      }
+
+      const chunks = [Buffer.from(firstChunk.value!)];
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        chunks.push(Buffer.from(chunk.value));
+      }
+      expect(npmResponse.status).toBe(200);
+      expect(Buffer.concat(chunks).equals(TARBALL_BYTES)).toBe(true);
+      const cdn = await cdnResponse;
+      expect(cdn.status).toBe(200);
+      expect((await cdn.json()).main).toBe("index.js");
+      await waitForCondition(async () => (await readdir(CACHE_DIR)).length === 0);
+
+      const stored = await fetch(tarballUrl);
+      expect(stored.status).toBe(200);
+      expect(Buffer.from(await stored.arrayBuffer()).equals(TARBALL_BYTES)).toBe(true);
+      expect(upstreamRequestCount).toBe(1);
+    },
+    120_000,
+  );
+
+  it(
+    "does not extract a tarball whose shared download fails checksum validation",
+    async () => {
+      await resetFixture(true);
+      await prepareCdnManifest();
+
+      const response = await fetch(
+        `${proxideUrl()}/jsdelivr/npm/${PACKAGE_NAME}@${VERSION}/package.json`,
+      );
+      expect(response.status).toBe(500);
+      expect((await response.json()).error).toContain("checksum validation failed");
+      expect(Number(runMysql("SELECT COUNT(*) FROM package_versions WHERE tar_dist_id IS NOT NULL;"))).toBe(0);
+      expect(Number(runMysql("SELECT COUNT(*) FROM dists;"))).toBe(1);
+      const versionId = runMysql("SELECT id FROM package_versions;");
+      const unpackedFiles = await readdir(join(RUN_DIR, "unpacked"), { recursive: true });
+      expect(unpackedFiles.some((path) => path.endsWith(`v-${versionId}.meta.json`))).toBe(false);
+      await waitForCondition(async () => (await readdir(CACHE_DIR)).length === 0);
     },
     120_000,
   );

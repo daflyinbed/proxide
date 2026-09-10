@@ -3,15 +3,14 @@ pub mod content_type;
 use crate::error::{WebError, WebResult};
 use crate::repository::PackageVersionRow;
 use crate::state::AppState;
+use crate::tarball;
 use crate::unpacked::{
     ManifestFile, VersionManifest, manifest_from_entries, validate_filepath, version_disk_usage,
 };
 use anyhow::{Context, Result};
 use base64::Engine;
 use flate2::read::GzDecoder;
-use futures::StreamExt;
-use sha1::Sha1;
-use sha2::{Digest, Sha256, Sha512};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::io::Cursor;
 use std::io::Read;
@@ -29,15 +28,10 @@ pub async fn ensure_version_files(
     version: &PackageVersionRow,
     tarball_filename: &str,
 ) -> WebResult<()> {
-    let tarball_bytes = acquire_tarball(state, fullname, version, tarball_filename).await?;
-
-    let limit = state.config.cdn.max_tarball_size;
-    if tarball_bytes.len() as u64 > limit {
-        return Err(WebError::BadRequest(format!(
-            "tarball for {fullname}@{} exceeds cdn.maxTarballSize ({limit})",
-            version.version
-        )));
-    }
+    let tarball_bytes = tarball::acquire(state, fullname, version, tarball_filename)
+        .await?
+        .into_bytes(state.config.cdn.max_tarball_size)
+        .await?;
 
     let max_unpacked_size = state.config.cdn.max_unpacked_size;
     let token = uuid::Uuid::new_v4().simple().to_string();
@@ -128,106 +122,6 @@ async fn commit_staging(
     drop(file);
     tokio::fs::rename(&tmp_path, &manifest_path).await?;
     Ok(())
-}
-
-async fn acquire_tarball(
-    state: &AppState,
-    fullname: &str,
-    version: &PackageVersionRow,
-    tarball_filename: &str,
-) -> WebResult<Vec<u8>> {
-    if let Some(tar_dist_id) = version.tar_dist_id {
-        let (data, _) = state
-            .repo
-            .get_content(tar_dist_id)
-            .await
-            .map_err(WebError::ServiceUnavailable)?;
-        return Ok(data);
-    }
-
-    let request = crate::handlers::tarball::build_tarball_request(
-        &state.http,
-        &state.config,
-        fullname,
-        tarball_filename,
-    );
-    let resp = request
-        .send()
-        .await
-        .map_err(|e| WebError::CustomApiError(anyhow::anyhow!("tarball fetch failed: {e:#}")))?;
-    if !resp.status().is_success() {
-        return Err(WebError::NotFound(format!(
-            "upstream tarball for {fullname}/-/{tarball_filename} returned status {}",
-            resp.status()
-        )));
-    }
-
-    let limit = state.config.cdn.max_tarball_size;
-    if let Some(len) = resp.content_length()
-        && len > limit
-    {
-        return Err(WebError::BadRequest(format!(
-            "tarball for {fullname}/-/{tarball_filename} exceeds cdn.maxTarballSize ({len} > {limit})"
-        )));
-    }
-
-    let mut bytes = Vec::new();
-    let mut total: u64 = 0;
-    let mut stream = resp.bytes_stream();
-    while let Some(chunk_result) = stream.next().await {
-        let chunk = chunk_result
-            .map_err(|e| WebError::CustomApiError(anyhow::anyhow!("tarball read failed: {e:#}")))?;
-        total += chunk.len() as u64;
-        if total > limit {
-            return Err(WebError::BadRequest(format!(
-                "tarball for {fullname}/-/{tarball_filename} exceeds cdn.maxTarballSize ({limit})"
-            )));
-        }
-        bytes.extend_from_slice(&chunk);
-    }
-
-    let sha1_digest = Sha1::digest(&bytes);
-    let sha512_digest = Sha512::digest(&bytes);
-    if let Some(expected) = version.tar_integrity.as_deref()
-        && !crate::npm::verify_integrity_digests(&sha1_digest, &sha512_digest, expected)
-    {
-        return Err(WebError::CustomApiError(anyhow::anyhow!(
-            "upstream integrity mismatch for {fullname}@{}",
-            version.version
-        )));
-    }
-    if let Some(expected) = version.tar_shasum.as_deref()
-        && hex::encode(sha1_digest.as_slice()) != expected
-    {
-        return Err(WebError::CustomApiError(anyhow::anyhow!(
-            "upstream shasum mismatch for {fullname}@{}",
-            version.version
-        )));
-    }
-    let prepared = state
-        .repo
-        .prepare_raw_dist(bytes.clone())
-        .await
-        .map_err(WebError::CustomApiError)?;
-    let outcome = state
-        .repo
-        .attach_tar_dist(
-            version.id,
-            &prepared,
-            bytes.len() as i64,
-            &sha1_digest,
-            &sha512_digest,
-        )
-        .await
-        .map_err(WebError::CustomApiError)?;
-    if outcome == crate::repository::AttachDistOutcome::VersionDeleted {
-        return Err(WebError::NotFound(format!(
-            "{fullname}@{} not found",
-            version.version
-        )));
-    }
-
-    Ok(bytes)
 }
 
 fn extract_to_dir(

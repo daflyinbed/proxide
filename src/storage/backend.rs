@@ -8,15 +8,20 @@ use object_store::PutPayload;
 use object_store::aws::AmazonS3Builder;
 use object_store::local::LocalFileSystem;
 use object_store::path::Path;
-use object_store::{GetResult, GetResultPayload, ObjectMeta, WriteMultipart};
+use object_store::{GetResult, GetResultPayload, MultipartUpload, ObjectMeta, PutPayloadMut};
 use sha2::{Digest, Sha256};
 use std::io::Read;
 use std::path::{Path as FsPath, PathBuf};
 use std::sync::Arc;
 use tokio::io::AsyncReadExt;
+use tokio::task::{JoinHandle, JoinSet};
+use tokio_util::io::ReaderStream;
 
 const ZSTD_DICTIONARY: &[u8] = include_bytes!("../../assets/zstd-dictionary.bin");
+const ZSTD_DICTIONARY_MAX_SIZE: usize = 10 * 1024 * 1024;
 const MULTIPART_THRESHOLD: usize = 10 * 1024 * 1024;
+const MULTIPART_PART_SIZE: usize = 5 * 1024 * 1024;
+const MULTIPART_CONCURRENCY: usize = 4;
 
 #[derive(Debug, Clone)]
 pub struct Storage {
@@ -51,6 +56,77 @@ enum StoredCodec<'a> {
     Raw,
     ZstdPlain,
     ZstdDict(&'a str),
+}
+
+struct MultipartUploadGuard {
+    upload: Option<Box<dyn MultipartUpload>>,
+    tasks: JoinSet<object_store::Result<()>>,
+}
+
+impl MultipartUploadGuard {
+    fn abort(&mut self) -> Option<JoinHandle<()>> {
+        let mut upload = self.upload.take()?;
+        let mut tasks = std::mem::take(&mut self.tasks);
+        Some(tokio::spawn(async move {
+            tasks.shutdown().await;
+            if let Err(error) = upload.abort().await {
+                log::warn!(action = "multipart_abort_failed"; "failed to abort multipart upload: {error:#}");
+            }
+        }))
+    }
+}
+
+impl Drop for MultipartUploadGuard {
+    fn drop(&mut self) {
+        drop(self.abort());
+    }
+}
+
+async fn upload_stream(
+    upload: Box<dyn MultipartUpload>,
+    mut stream: impl futures::Stream<Item = Result<Bytes>> + Unpin,
+) -> Result<()> {
+    let mut guard = MultipartUploadGuard {
+        upload: Some(upload),
+        tasks: JoinSet::new(),
+    };
+    let upload = guard.upload.as_mut().unwrap();
+    let tasks = &mut guard.tasks;
+    let result = async {
+        let mut buffer = PutPayloadMut::new();
+        while let Some(mut bytes) = stream.try_next().await? {
+            while !bytes.is_empty() {
+                let len = bytes
+                    .len()
+                    .min(MULTIPART_PART_SIZE - buffer.content_length());
+                buffer.push(bytes.split_to(len));
+                if buffer.content_length() == MULTIPART_PART_SIZE {
+                    if tasks.len() >= MULTIPART_CONCURRENCY {
+                        tasks.join_next().await.unwrap()??;
+                    }
+                    tasks.spawn(upload.put_part(std::mem::take(&mut buffer).into()));
+                }
+            }
+        }
+        if !buffer.is_empty() {
+            if tasks.len() >= MULTIPART_CONCURRENCY {
+                tasks.join_next().await.unwrap()??;
+            }
+            tasks.spawn(upload.put_part(buffer.into()));
+        }
+        while let Some(result) = tasks.join_next().await {
+            result??;
+        }
+        upload.complete().await?;
+        Ok(())
+    }
+    .await;
+    if result.is_err() {
+        guard.abort().unwrap().await.ok();
+    } else {
+        drop(guard.upload.take());
+    }
+    result
 }
 
 struct CasVerifyState {
@@ -166,7 +242,7 @@ impl Storage {
         if !self.compress_json {
             return self.encode_raw(data);
         }
-        if data.len() > MULTIPART_THRESHOLD {
+        if data.len() > ZSTD_DICTIONARY_MAX_SIZE {
             let bytes = zstd::encode_all(data.as_slice(), self.zstd_level)
                 .context("failed to zstd-compress object")?;
             return encoded_object("zstd/plain", bytes);
@@ -199,48 +275,28 @@ impl Storage {
     }
 
     pub async fn put_encoded_file(&self, object: &EncodedFile) -> Result<()> {
-        let path = Path::from(object.path.as_str());
-        let multipart = self
-            .inner
-            .put_multipart(&path)
+        let mut file = tokio::fs::File::open(&object.file_path)
             .await
-            .with_context(|| format!("failed to start multipart upload: {}", object.path))?;
-        let mut upload = WriteMultipart::new(multipart);
-        let mut file = match tokio::fs::File::open(&object.file_path).await {
-            Ok(file) => file,
-            Err(error) => {
-                upload.abort().await.ok();
-                return Err(error).with_context(|| {
-                    format!("failed to open object file: {}", object.file_path.display())
-                });
+            .with_context(|| {
+                format!("failed to open object file: {}", object.file_path.display())
+            })?;
+        let size = file.metadata().await?.len();
+        if size <= MULTIPART_THRESHOLD as u64 {
+            let mut bytes = Vec::with_capacity(size as usize);
+            (&mut file)
+                .take(MULTIPART_THRESHOLD as u64 + 1)
+                .read_to_end(&mut bytes)
+                .await
+                .with_context(|| {
+                    format!("failed to read object file: {}", object.file_path.display())
+                })?;
+            if bytes.len() as u64 != size {
+                anyhow::bail!("object file size changed: {}", object.file_path.display());
             }
-        };
-        let mut buffer = vec![0u8; 1024 * 1024];
-        loop {
-            let read = match file.read(&mut buffer).await {
-                Ok(read) => read,
-                Err(error) => {
-                    upload.abort().await.ok();
-                    return Err(error).with_context(|| {
-                        format!("failed to read object file: {}", object.file_path.display())
-                    });
-                }
-            };
-            if read == 0 {
-                break;
-            }
-            if let Err(error) = upload.wait_for_capacity(4).await {
-                upload.abort().await.ok();
-                return Err(error)
-                    .with_context(|| format!("multipart upload failed: {}", object.path));
-            }
-            upload.put(Bytes::copy_from_slice(&buffer[..read]));
+            return self.put(&object.path, bytes).await;
         }
-        upload
-            .finish()
-            .await
-            .with_context(|| format!("failed to finish multipart upload: {}", object.path))?;
-        Ok(())
+        let stream = ReaderStream::with_capacity(file, 1024 * 1024).map_err(anyhow::Error::from);
+        self.put_stream(&object.path, stream).await
     }
 
     pub async fn get_result(&self, key: &str) -> Result<GetResult> {
@@ -309,11 +365,31 @@ impl Storage {
 
     pub async fn put(&self, key: &str, data: impl Into<PutPayload>) -> Result<()> {
         let path = Path::from(key);
-        self.inner
-            .put(&path, data.into())
+        let data = data.into();
+        if data.content_length() <= MULTIPART_THRESHOLD {
+            self.inner
+                .put(&path, data)
+                .await
+                .with_context(|| format!("failed to put object: {key}"))?;
+            return Ok(());
+        }
+        self.put_stream(key, stream::iter(data.into_iter().map(Ok)))
             .await
-            .with_context(|| format!("failed to put object: {key}"))?;
-        Ok(())
+    }
+
+    async fn put_stream(
+        &self,
+        key: &str,
+        stream: impl futures::Stream<Item = Result<Bytes>> + Unpin,
+    ) -> Result<()> {
+        let upload = self
+            .inner
+            .put_multipart(&Path::from(key))
+            .await
+            .with_context(|| format!("failed to start multipart upload: {key}"))?;
+        upload_stream(upload, stream)
+            .await
+            .with_context(|| format!("multipart upload failed: {key}"))
     }
 
     pub async fn health_check(&self) -> bool {
@@ -417,6 +493,10 @@ mod tests {
     use super::*;
     use crate::config::{LocalConfig, StorageConfig};
     use std::path::Path;
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+    use tokio::sync::Notify;
 
     fn local_config(dir: &Path) -> StorageConfig {
         StorageConfig::Local(LocalConfig {
@@ -443,6 +523,232 @@ mod tests {
         let mut out = Vec::new();
         decoder.read_to_end(&mut out).unwrap();
         assert_eq!(out, original);
+    }
+
+    #[derive(Debug, Default)]
+    struct UploadStatus {
+        abort_count: usize,
+        completed: bool,
+        part_sizes: Vec<usize>,
+    }
+
+    #[derive(Debug)]
+    struct TestUpload {
+        fail_part: bool,
+        fail_complete: bool,
+        status: Arc<Mutex<UploadStatus>>,
+    }
+
+    #[async_trait::async_trait]
+    impl MultipartUpload for TestUpload {
+        fn put_part(&mut self, data: PutPayload) -> object_store::UploadPart {
+            let size = data.content_length();
+            self.status.lock().unwrap().part_sizes.push(size);
+            let fail = self.fail_part && size < MULTIPART_PART_SIZE;
+            Box::pin(async move {
+                if fail {
+                    return Err(object_store::Error::Generic {
+                        store: "test",
+                        source: std::io::Error::other("part failed").into(),
+                    });
+                }
+                Ok(())
+            })
+        }
+
+        async fn complete(&mut self) -> object_store::Result<object_store::PutResult> {
+            self.status.lock().unwrap().completed = true;
+            if self.fail_complete {
+                return Err(object_store::Error::Generic {
+                    store: "test",
+                    source: std::io::Error::other("complete failed").into(),
+                });
+            }
+            Ok(object_store::PutResult {
+                e_tag: None,
+                version: None,
+            })
+        }
+
+        async fn abort(&mut self) -> object_store::Result<()> {
+            self.status.lock().unwrap().abort_count += 1;
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn multipart_completion_and_errors() {
+        for (fail_part, fail_read, fail_complete) in [
+            (true, false, false),
+            (false, true, false),
+            (false, false, true),
+            (false, false, false),
+        ] {
+            let status = Arc::new(Mutex::new(UploadStatus::default()));
+            let upload = TestUpload {
+                fail_part,
+                fail_complete,
+                status: status.clone(),
+            };
+            let mut chunks = vec![Ok(Bytes::from(vec![0; MULTIPART_THRESHOLD + 1]))];
+            if fail_read {
+                chunks.push(Err(anyhow::anyhow!("read failed")));
+            }
+            let result = upload_stream(Box::new(upload), stream::iter(chunks)).await;
+            tokio::task::yield_now().await;
+            let status = status.lock().unwrap();
+            let failed = fail_part || fail_read || fail_complete;
+            assert_eq!(status.abort_count, usize::from(failed));
+            assert_eq!(status.completed, !fail_part && !fail_read);
+            if failed {
+                let error = result.unwrap_err();
+                let expected = if fail_read {
+                    "read failed"
+                } else if fail_part {
+                    "part failed"
+                } else {
+                    "complete failed"
+                };
+                assert!(error.to_string().contains(expected));
+            } else {
+                result.unwrap();
+            }
+            if fail_read {
+                assert_eq!(
+                    status.part_sizes,
+                    [MULTIPART_PART_SIZE, MULTIPART_PART_SIZE]
+                );
+            } else {
+                assert_eq!(
+                    status.part_sizes,
+                    [MULTIPART_PART_SIZE, MULTIPART_PART_SIZE, 1]
+                );
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    enum PauseAt {
+        Part,
+        Complete,
+        Abort,
+    }
+
+    #[derive(Debug)]
+    struct PausedUpload {
+        pause_at: PauseAt,
+        entered: Arc<Notify>,
+        aborted: Arc<Notify>,
+        resume_abort: Arc<Notify>,
+        active_parts: Arc<AtomicUsize>,
+        abort_count: Arc<AtomicUsize>,
+    }
+
+    struct ActivePart(Arc<AtomicUsize>);
+
+    impl Drop for ActivePart {
+        fn drop(&mut self) {
+            self.0.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MultipartUpload for PausedUpload {
+        fn put_part(&mut self, _data: PutPayload) -> object_store::UploadPart {
+            let pause_at = self.pause_at;
+            let entered = self.entered.clone();
+            let active_parts = self.active_parts.clone();
+            Box::pin(async move {
+                active_parts.fetch_add(1, Ordering::SeqCst);
+                let _active = ActivePart(active_parts);
+                if matches!(pause_at, PauseAt::Part) {
+                    entered.notify_one();
+                    std::future::pending::<()>().await;
+                }
+                Ok(())
+            })
+        }
+
+        async fn complete(&mut self) -> object_store::Result<object_store::PutResult> {
+            if matches!(self.pause_at, PauseAt::Complete) {
+                self.entered.notify_one();
+                std::future::pending::<()>().await;
+            }
+            Err(object_store::Error::Generic {
+                store: "test",
+                source: std::io::Error::other("complete failed").into(),
+            })
+        }
+
+        async fn abort(&mut self) -> object_store::Result<()> {
+            assert_eq!(self.active_parts.load(Ordering::SeqCst), 0);
+            self.abort_count.fetch_add(1, Ordering::SeqCst);
+            if matches!(self.pause_at, PauseAt::Abort) {
+                self.entered.notify_one();
+                self.resume_abort.notified().await;
+            }
+            self.aborted.notify_one();
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn cancelled_multipart_uploads_abort_after_stopping_parts() {
+        for pause_at in [PauseAt::Part, PauseAt::Complete, PauseAt::Abort] {
+            let entered = Arc::new(Notify::new());
+            let aborted = Arc::new(Notify::new());
+            let resume_abort = Arc::new(Notify::new());
+            let abort_count = Arc::new(AtomicUsize::new(0));
+            let upload = PausedUpload {
+                pause_at,
+                entered: entered.clone(),
+                aborted: aborted.clone(),
+                resume_abort: resume_abort.clone(),
+                active_parts: Arc::new(AtomicUsize::new(0)),
+                abort_count: abort_count.clone(),
+            };
+            let chunks = vec![Ok(Bytes::from(vec![0; MULTIPART_THRESHOLD + 1]))];
+            let task = tokio::spawn(upload_stream(Box::new(upload), stream::iter(chunks)));
+            tokio::time::timeout(Duration::from_secs(5), entered.notified())
+                .await
+                .unwrap();
+            task.abort();
+            assert!(task.await.unwrap_err().is_cancelled());
+            resume_abort.notify_one();
+            tokio::time::timeout(Duration::from_secs(5), aborted.notified())
+                .await
+                .unwrap();
+            assert_eq!(abort_count.load(Ordering::SeqCst), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn upload_roundtrip_across_multipart_threshold() {
+        let base = std::env::temp_dir().join(format!("proxide-upload-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&base).unwrap();
+        let storage = Storage::new(&local_config(&base)).unwrap();
+        for size in [
+            0,
+            MULTIPART_THRESHOLD,
+            MULTIPART_THRESHOLD + 1,
+            21 * 1024 * 1024,
+        ] {
+            let data: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
+            let encoded = storage.encode_raw(data.clone()).unwrap();
+            storage.put_encoded(&encoded).await.unwrap();
+            assert_eq!(storage.get(&encoded.path).await.unwrap(), data);
+            storage.delete_many(&[encoded.path.clone()]).await[0]
+                .1
+                .as_ref()
+                .unwrap();
+
+            let file_path = base.join("upload-input");
+            tokio::fs::write(&file_path, &data).await.unwrap();
+            let file = storage.encode_raw_file(&file_path, encoded.storage_sha256, size as i64);
+            storage.put_encoded_file(&file).await.unwrap();
+            assert_eq!(storage.get(&file.path).await.unwrap(), data);
+        }
+        std::fs::remove_dir_all(base).unwrap();
     }
 
     #[tokio::test]
